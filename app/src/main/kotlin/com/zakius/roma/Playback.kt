@@ -115,13 +115,15 @@ object Playback {
         }
         val source = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(resolving)
         cached = source
+        // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays. It buffers
+        // 50 s ahead, or with "Download songs ahead" the whole song (at most 10 min).
+        val load = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 10 * 60_000, 500, 2_000).build()
         player = ExoPlayer.Builder(c)
             .setMediaSourceFactory(DefaultMediaSourceFactory(source).setLoadErrorHandlingPolicy(WaitForNetwork))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
-            // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays.
-            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 50_000, 500, 2_000).build())
+            .setLoadControl(AheadLoadControl(load))
             .build()
         scope.launch {
             liked = withContext(Dispatchers.IO) { runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet()) }
@@ -141,7 +143,7 @@ object Playback {
                 if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_POSITION_DISCONTINUITY)) savePosition()
                 if (p.isPlaying) startSideWork()
                 // Radio songs arrive after the song started, and queue edits can change what comes next.
-                if (p.isPlaying && sideWorkFor == null && events.contains(Player.EVENT_TIMELINE_CHANGED)) prefetchNext()
+                if (p.isPlaying && sideWorkFor == null && events.contains(Player.EVENT_TIMELINE_CHANGED)) { prefetchNext(); downloadAhead() }
             }
 
             override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
@@ -324,6 +326,30 @@ object Playback {
         loadLyrics(e.song)
         topUpRadio()
         prefetchNext()
+        downloadAhead()
+    }
+
+    private var aheadJob: Job? = null
+
+    /**
+     * Opt-in ("Download songs ahead"): the next 3 songs go into the audio cache in full, one after another, after the
+     * next song's first bytes. With the current song buffered in full (the load control above), a network drop
+     * costs nothing for the next quarter of an hour or so. Songs already cached are skipped.
+     */
+    fun downloadAhead() {
+        if (!Store.bool("play.ahead", false) || aheadJob?.isActive == true) return
+        val ids = entries().drop(player.currentMediaItemIndex + 1).take(3).map { it.song.id }
+        if (ids.isEmpty()) return
+        aheadJob = scope.launch {
+            precacheAsync(ids[0]).await()
+            withContext(Dispatchers.IO) {
+                for (id in ids) {
+                    if (fullyCached(id)) continue
+                    val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setKey(id).build()
+                    runCatching { androidx.media3.datasource.cache.CacheWriter(cached.createDataSource(), spec, null, null).cache() }
+                }
+            }
+        }
     }
 
     // Resolves the stream URL and caches the first 32 KB: the container header plus about 1.5 s of audio at YouTube's
@@ -879,6 +905,25 @@ object Playback {
         val (fm, sk) = lastFm() ?: return
         scope.launch(Dispatchers.IO) { runCatching { scrobbleQueue().flush { fm.scrobble(sk, it) } } }
     }
+}
+
+/**
+ * [load] as is, except that it stops 50 s ahead unless "Download songs ahead" is on. Kotlin's `by` doesn't forward
+ * Java's default methods, so the ones the player calls are forwarded by hand.
+ */
+private class AheadLoadControl(val load: DefaultLoadControl) : androidx.media3.exoplayer.LoadControl {
+    override fun shouldContinueLoading(p: androidx.media3.exoplayer.LoadControl.Parameters) =
+        load.shouldContinueLoading(p) && (p.bufferedDurationUs < 50_000_000 || Store.prefs.getBoolean("play.ahead", false))
+    override fun getAllocator(id: androidx.media3.exoplayer.analytics.PlayerId) = load.getAllocator(id)
+    override fun onPrepared(id: androidx.media3.exoplayer.analytics.PlayerId) = load.onPrepared(id)
+    override fun onStopped(id: androidx.media3.exoplayer.analytics.PlayerId) = load.onStopped(id)
+    override fun onReleased(id: androidx.media3.exoplayer.analytics.PlayerId) = load.onReleased(id)
+    override fun onTracksSelected(p: androidx.media3.exoplayer.LoadControl.Parameters, groups: androidx.media3.exoplayer.source.TrackGroupArray, selections: Array<out androidx.media3.exoplayer.trackselection.ExoTrackSelection?>) = load.onTracksSelected(p, groups, selections)
+    override fun getBackBufferDurationUs(id: androidx.media3.exoplayer.analytics.PlayerId) = load.getBackBufferDurationUs(id)
+    override fun retainBackBufferFromKeyframe(id: androidx.media3.exoplayer.analytics.PlayerId) = load.retainBackBufferFromKeyframe(id)
+    override fun shouldStartPlayback(p: androidx.media3.exoplayer.LoadControl.Parameters) = load.shouldStartPlayback(p)
+    override fun shouldContinuePreloading(id: androidx.media3.exoplayer.analytics.PlayerId, t: androidx.media3.common.Timeline, period: androidx.media3.exoplayer.source.MediaSource.MediaPeriodId, bufferedDurationUs: Long) =
+        load.shouldContinuePreloading(id, t, period, bufferedDurationUs)
 }
 
 class PlaybackService : MediaSessionService() {

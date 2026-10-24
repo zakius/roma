@@ -115,6 +115,7 @@ object Store {
         }
         if (key.startsWith("rom.") || key == "cookie") dataChanged()
         version++
+        if (key == "play.ahead" && value == true && Playback.player.isPlaying) Playback.downloadAhead()
     }
 
     val signedIn get() = YouTube.cookie?.contains("SAPISID") == true

@@ -898,6 +898,7 @@ fun SettingsScreen() {
         Switch1("Skip banned songs and artists", "radio.skipBanned", true)
         Switch1("Stop when the queue ends", "queue.stopAtEnd", false)
         Switch1("Even out loudness", "play.normalize", true)
+        Switch1("Download songs ahead", "play.ahead", false, subtitle = "The whole song and the next 3, so playback goes on without a network. Uses more data: about 4 MB per song you skip")
         Switch1("Resume when headphones reconnect", "play.resumeOnHeadphones", false, subtitle = "Within an hour of them pausing the song by disconnecting")
 
         Header("Banned")

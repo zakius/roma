@@ -252,7 +252,9 @@ private fun QueueView() {
                 Text(header, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             } else {
                 val e = all[i]
-                SongRow(e.song, highlight = i == cur, extra = e.song.reason, onMenu = { menuFor = i }) { Playback.skipTo(i) }
+                // "saved": the whole song is on the phone, so it plays with no network.
+                val extra = listOfNotNull(e.song.reason, "saved".takeIf { Playback.fullyCached(e.song.id) }).joinToString(" · ").ifEmpty { null }
+                SongRow(e.song, highlight = i == cur, extra = extra, onMenu = { menuFor = i }) { Playback.skipTo(i) }
             }
         }
     }
