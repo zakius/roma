@@ -50,6 +50,7 @@ import roma.core.ScrobbleQueue
 import roma.core.Song
 import roma.core.Streams
 import roma.core.again
+import roma.core.filterMix
 import roma.core.filterRadio
 import roma.core.romanizeLyrics
 import roma.core.shouldScrobble
@@ -182,9 +183,13 @@ object Playback {
     }
 
     /** Plays [songs] from [start]; the rest of the list is queued and radio from the started song follows. */
-    fun play(songs: List<Song>, start: Int = 0) {
+    fun play(songs: List<Song>, start: Int = 0) = play(songs, start, null, null)
+
+    private fun play(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
         if (songs.isEmpty()) return
         Store.remember(songs)
+        mixId = mix
+        mixContinuation = mixNext
         radioSeed = songs[start]
         radioContinuation = null
         related = null
@@ -225,6 +230,7 @@ object Playback {
     /** Keeps the queued songs and replaces the radio with one seeded from [s]. */
     fun startRadio(s: Song) {
         if (current()?.song?.id != s.id) return play(listOf(s))
+        mixId = null
         radioSeed = s
         radioContinuation = null
         related = null
@@ -241,10 +247,11 @@ object Playback {
     private var radioJob: Job? = null
 
     private fun topUpRadio(force: Boolean = false) {
-        if (Store.stopAtEnd && !force) return
-        val seed = radioSeed ?: return
         val left = player.mediaItemCount - player.currentMediaItemIndex - 1
         if (left >= 3 || radioJob?.isActive == true) return
+        if (mixId != null) return topUpMix()
+        if (Store.stopAtEnd && !force) return
+        val seed = radioSeed ?: return
         radioJob = scope.launch {
             val settings = Store.radioSettings()
             val already = entries().map { it.song } // read on the main thread: ExoPlayer is single-threaded
@@ -265,6 +272,53 @@ object Playback {
             }
             Store.remember(added)
             player.addMediaItems(added.map { mediaItem(Entry(it, "radio")) })
+        }
+    }
+
+    // ---- Mixes and other generated playlists ----
+
+    private var mixId: String? = null
+    private var mixContinuation: String? = null
+
+    /**
+     * Plays a personal mix or another generated playlist (RD…) as a playlist: its songs go into "You queued", not radio,
+     * and its next page loads when the queue runs low. The radio filters apply; the leash doesn't.
+     */
+    fun playMix(id: String) {
+        scope.launch {
+            val page = withContext(Dispatchers.IO) { YouTube.playlist(id.removePrefix("VL")).getOrNull() }
+            if (page == null) { error = "Couldn't load this playlist."; return@launch }
+            val songs = withContext(Dispatchers.IO) { filterMix(page.songs.map { Store.romanizer.song(it) }, emptyList(), Store.bans(), Store.radioSettings()) }
+            play(songs, 0, id.removePrefix("VL"), page.songsContinuation)
+        }
+    }
+
+    private fun topUpMix() {
+        val id = mixId ?: return
+        radioJob = scope.launch {
+            val already = entries().map { it.song }
+            val added = withContext(Dispatchers.IO) {
+                var fresh = emptyList<Song>()
+                // Generated playlists' continuations loop back to songs already queued, and filtering can empty a
+                // page; a few pages with nothing new end the mix.
+                repeat(3) {
+                    val c = mixContinuation
+                    if (fresh.isNotEmpty() || c == null) return@repeat
+                    val page = YouTube.playlistContinuation(c).getOrNull() ?: return@repeat
+                    mixContinuation = page.continuation
+                    fresh = filterMix(page.songs.map { Store.romanizer.song(it) }, already, Store.bans(), Store.radioSettings())
+                }
+                fresh
+            }
+            if (mixId != id) return@launch // another queue started meanwhile
+            if (added.isEmpty()) {
+                // The mix is done (or the network failed): radio from here on, unless the queue should stop.
+                mixId = null
+                main.post { topUpRadio() }
+                return@launch
+            }
+            Store.remember(added)
+            player.addMediaItems(added.map { mediaItem(Entry(it, "queued")) })
         }
     }
 
