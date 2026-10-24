@@ -79,6 +79,7 @@ object Store {
         japaneseMacrons = bool("rom.macrons", true),
         chineseTones = bool("rom.tones", true),
         cyrillic = str("rom.cyrillic", "english"),
+        greek = str("rom.greek", "classical"),
         hanDefault = str("rom.han", "ja"),
     )
 
@@ -86,6 +87,13 @@ object Store {
 
     private fun loadOverrides(): List<Override> =
         runCatching { json.decodeFromString<List<Override>>(overridesFile.readText()) }.getOrDefault(emptyList())
+
+    /** "Don't romanize": a correction whose Latin form is the original. Saving it again removes it. */
+    fun keptOriginal(scope: String, id: String?, original: String) =
+        romanizer.overrides.any { it.scope == scope && it.id == id && it.original == original && it.latin == original }
+
+    fun toggleKeepOriginal(scope: String, id: String, original: String) =
+        saveOverride(Override(scope, id, original, if (keptOriginal(scope, id, original)) "" else original))
 
     fun saveOverride(o: Override) {
         val list = romanizer.overrides.filterNot { it.scope == o.scope && it.id == o.id && it.original == o.original }
@@ -144,6 +152,12 @@ object Store {
     }
 
     fun lyricsEnabled(p: LyricsProvider) = bool("lyrics.on.${p.id}", true)
+
+    /** Whether a translation in this language is shown: the chosen language, or by default the device's, then English. */
+    fun translationWanted(lang: String?): Boolean {
+        val set = str("lyrics.translationLang", "device")
+        return lang != null && lang in (if (set == "device") listOf(java.util.Locale.getDefault().language, "en") else listOf(set))
+    }
 
     // ---- Local index: every song that entered the app, searchable by its Latin form ----
 

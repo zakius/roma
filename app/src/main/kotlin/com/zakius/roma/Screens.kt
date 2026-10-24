@@ -181,6 +181,15 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             MenuItem("Go to artist", s.firstArtistId != null) { Nav.open(Page("artist", s.firstArtistId!!)); onClose() }
             MenuItem("Go to album", s.album?.id != null) { Nav.open(Page("album", s.album!!.id!!)); onClose() }
             MenuItem("Correct romanization…", true) { fixing = true }
+            val titleKept = Store.keptOriginal("song", s.id, s.title.original)
+            MenuItem(if (titleKept) "Romanize title" else "Don't romanize title", titleKept || !s.title.isLatin) {
+                Store.toggleKeepOriginal("song", s.id, s.title.original); onClose()
+            }
+            val artist = s.artists.firstOrNull { it.id != null }
+            val artistKept = artist != null && Store.keptOriginal("artist", artist.id, artist.name.original)
+            MenuItem(if (artistKept) "Romanize artist" else "Don't romanize artist", artist != null && (artistKept || !artist.name.isLatin)) {
+                Store.toggleKeepOriginal("artist", artist!!.id!!, artist.name.original); onClose()
+            }
             MenuItem("Remove from queue", inQueue) { Playback.remove(queueIndex!!); onClose() }
             MenuItem("Ban song", true) {
                 Store.ban("song", s.id, s.title.latin)
@@ -234,7 +243,16 @@ private fun CorrectDialog(s: Song, onDone: () -> Unit) {
                 onDone()
             }) { Text("Save") }
         },
-        dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = {
+                    val id = when (scope) { "song" -> s.id; "artist" -> s.firstArtistId ?: ""; else -> "" }
+                    Store.saveOverride(Override(scope, id, fields[field].original, fields[field].original))
+                    onDone()
+                }) { Text("Keep original") }
+                TextButton(onClick = onDone) { Text("Cancel") }
+            }
+        },
     )
 }
 
@@ -524,9 +542,16 @@ fun SettingsScreen() {
         Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true)
         Switch1("Chinese: pinyin with tone marks", "rom.tones", true)
         Options("Cyrillic", "rom.cyrillic", "english", listOf("english" to "English-style", "polish" to "Polish-style", "iso9" to "ISO 9"))
+        Options("Greek", "rom.greek", "classical", listOf("classical" to "Classical, no accents (β = b)", "elot" to "Modern, ELOT 743 (β = v)"))
         Options("Han text without kana is", "rom.han", "ja", listOf("ja" to "Japanese", "zh" to "Chinese"))
         Row1("Corrections: ${Store.romanizer.overrides.size}", "Export them to one file") { export.launch("roma-corrections.json") }
         Row1("Import corrections", "Replaces the current ones") { import.launch(arrayOf("application/json", "*/*")) }
+        Store.romanizer.overrides.forEach { o ->
+            val scope = when (o.scope) { "song" -> "This song"; "artist" -> "This artist"; else -> "Everywhere" }
+            Row1(if (o.latin == o.original) "${o.original}: not romanized" else "${o.original} → ${o.latin}", "$scope · Tap to remove") {
+                Store.saveOverride(Override(o.scope, o.id, o.original, ""))
+            }
+        }
 
         Header("Lyrics")
         val order = Store.lyricsOrder()
@@ -542,7 +567,11 @@ fun SettingsScreen() {
         Row1("Search lyrics again for this song", "After changing the providers") { Playback.refetchLyrics() }
         Switch1("Show original", "lyrics.layer.original", true)
         Switch1("Show romanization", "lyrics.layer.latin", true)
-        Switch1("Show translation", "lyrics.layer.translation", true)
+        // Dimmed when the current song's translation isn't in the chosen language: there is nothing to show.
+        val lyrics = Playback.lyrics?.lyrics
+        Switch1("Show translation", "lyrics.layer.translation", true, lyrics == null || Store.translationWanted(roma.core.translationLanguage(lyrics)))
+        val device = java.util.Locale.getDefault().let { it.getDisplayLanguage(it) }
+        Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device), then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
 
         Header("Queue and radio")
         Options("Radio may drift", "radio.leash", "medium", listOf("close" to "Close: same and related artists", "medium" to "Medium: at most half other artists", "free" to "Free"))
@@ -590,11 +619,11 @@ private fun Row1(title: String, subtitle: String, enabled: Boolean = true, onCli
 }
 
 @Composable
-private fun Switch1(title: String, key: String, def: Boolean) {
+private fun Switch1(title: String, key: String, def: Boolean, enabled: Boolean = true) {
     val on = Store.bool(key, def)
-    Row(Modifier.fillMaxWidth().clickable { Store.set(key, !on) }.padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clickable(enabled) { Store.set(key, !on) }.alpha(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, Modifier.weight(1f))
-        Switch(on, { Store.set(key, it) })
+        Switch(on, { Store.set(key, it) }, enabled = enabled)
     }
 }
 

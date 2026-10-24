@@ -235,7 +235,9 @@ private fun LyricsView(lines: List<Line>, synced: Boolean, songId: String?) {
     val state = rememberLazyListState()
     val showOriginal = Store.bool("lyrics.layer.original", true)
     val showLatin = Store.bool("lyrics.layer.latin", true)
-    val showTranslation = Store.bool("lyrics.layer.translation", true)
+    // KuGou and NetEase translate into Chinese: show a translation only in the chosen language.
+    val translationLang = remember(lines) { roma.core.translationLanguage(roma.core.Lyrics("", lines, synced)) }
+    val showTranslation = Store.bool("lyrics.layer.translation", true) && Store.translationWanted(translationLang)
     var fixWord by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = state) {
@@ -309,7 +311,7 @@ private fun wordAt(s: String, offset: Int): String {
 @Composable
 private fun FixReadingDialog(word: String, songId: String, onDone: () -> Unit) {
     val existing = Store.romanizer.overrides.firstOrNull { it.scope == "song" && it.id == songId && it.original == word }?.latin
-    TextInputDialog("Reading of “$word” in this song", existing ?: Store.romanizer.machine(word), onDone) { latin ->
+    TextInputDialog("Reading of “$word” in this song", existing ?: Store.romanizer.machine(word, sentence = true), onDone) { latin ->
         Store.saveOverride(Override("song", songId, word, latin.trim()))
     }
 }
