@@ -213,4 +213,38 @@ class RomanizeTest {
         assertEquals("Terashitette moonlight", r.machine("照らしてってmoonlight", sentence = true))
         assertEquals("Burū raito", r.parts(listOf("ブル", "一", "ライト")).joinToString("").trim())
     }
+
+    @Test fun japaneseReadings() {
+        // Word splits IPADIC got wrong.
+        assertEquals("Yofukashi no Uta", r.machine("よふかしのうた"))
+        assertEquals("Futari", r.machine("二人"))
+        assertEquals("Sebuntīn", r.machine("セブンティーン"))
+        // Long vowels from the spelling: ō ū from オウ オオ ウウ, but eiga, ōkii, and a verb's own final u.
+        assertEquals("tōkyō", r.machine("東京", sentence = true).lowercase())
+        assertEquals("eiga", r.machine("映画", sentence = true).lowercase())
+        assertEquals("Ōkii", r.machine("大きい", sentence = true))
+        assertEquals("Kūki", r.machine("空気", sentence = true))
+        assertEquals("Omou", r.machine("思う", sentence = true))
+        assertEquals("Aitai to omou", r.machine("会いたいと思う", sentence = true))
+        assertEquals("Gakkō e ikō", r.machine("学校へ行こう", sentence = true))
+        // Particles は へ を.
+        assertEquals("Kyō wa hon o yomu", r.machine("今日は本を読む", sentence = true))
+        assertEquals("Ashita e", r.machine("明日へ", sentence = true))
+        // Lyric readings and 何.
+        assertEquals("Ashita", r.machine("明日"))
+        assertEquals("Watashitachi", r.machine("私達", sentence = true))
+        assertEquals("Mō ichido", r.machine("もう一度", sentence = true))
+        assertEquals("Otōsan to okāsan", r.machine("お父さんとお母さん", sentence = true))
+        assertEquals("Nani mo nai", r.machine("何もない", sentence = true))
+        assertEquals("Nan de", r.machine("何で", sentence = true))
+        assertEquals("Iu yo", r.machine("言うよ", sentence = true))
+        // Glue: number + counter, verb + subsidiary verb, negative adjective.
+        assertEquals("Sannin", r.machine("三人", sentence = true))
+        assertEquals("Hashiridasu", r.machine("走り出す", sentence = true))
+        assertEquals("Ureshikunai", r.machine("嬉しくない", sentence = true))
+        assertEquals("Iku deshō", r.machine("行くでしょう", sentence = true))
+        assertEquals("Kirei na Hana", r.machine("綺麗な花"))
+        // A reading in brackets (yomigana) is dropped; karaoke parts stay aligned.
+        assertEquals(listOf("Kimi", " no", " uta"), r.parts(listOf("君(きみ)", "の", "歌")))
+    }
 }
