@@ -168,8 +168,10 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     val context = LocalContext.current
     ModalBottomSheet(onDismissRequest = onClose) {
         Column(Modifier.padding(bottom = 24.dp)) {
-            Name(s.title, "both", MaterialTheme.typography.titleMedium)
-            Text(s.artistLatin, Modifier.padding(start = 0.dp), style = MaterialTheme.typography.bodySmall)
+            Column(Modifier.padding(horizontal = 24.dp)) {
+                Name(s.title, "both", MaterialTheme.typography.titleMedium)
+                Text(s.artistLatin, style = MaterialTheme.typography.bodySmall)
+            }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
             MenuItem("Play next", true) { Playback.playNext(s); onClose() }

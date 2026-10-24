@@ -206,7 +206,16 @@ object Playback {
     private fun insertQueued(s: Song, at: Int) {
         Store.remember(listOf(s))
         if (player.mediaItemCount == 0) return play(listOf(s))
-        player.addMediaItem(at.coerceAtMost(player.mediaItemCount), mediaItem(Entry(s, "queued")))
+        // A queued song leaves the radio section: radio entries aren't pinned, queued ones are.
+        val list = entries()
+        var insertAt = at.coerceAtMost(player.mediaItemCount)
+        for (i in list.indices.reversed()) {
+            if (i > player.currentMediaItemIndex && list[i].section == "radio" && list[i].song.id == s.id) {
+                player.removeMediaItem(i)
+                if (i < insertAt) insertAt--
+            }
+        }
+        player.addMediaItem(insertAt, mediaItem(Entry(s, "queued")))
     }
 
     fun remove(index: Int) {
