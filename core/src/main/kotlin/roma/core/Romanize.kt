@@ -231,7 +231,9 @@ class Romanizer(
                 pos == "形容詞" && t.pos[1] == "非自立可能" && afterInflected ||
                 t.pos[1] == "接続助詞" && (surface in setOf("て", "で", "ちゃ", "じゃ") || surface == "ば" && afterInflected) ||
                 surface == "って" && prev?.surface == "だ" ||
-                prev?.pos?.get(1) == "数詞" && pos == "名詞" || stray
+                prev?.pos?.get(1) == "数詞" && pos == "名詞" || stray ||
+                t.pos[1] == "準体助詞" && surface == "ん" || // こんなんじゃ "konnan ja", なんだ "nan da"
+                pos == "名詞" && surface in SUFFIX_KANJI && prevPos == "名詞" && hasHan(prev!!.surface) // 既視感 "kishikan"
             // A sentence-final particle can't start a phrase: there it is a misread first syllable. Sudachi reads
             // よふかし (夜更かし) as よ|ふかし, so it joins the next word: "Yofukashi no Uta".
             stray = t.pos[1] == "終助詞" && !prevWord && tokens.getOrNull(i + 1)?.surface?.any(::isKana) == true
@@ -600,6 +602,8 @@ class Romanizer(
         }
 
         // Auxiliaries (by conjugation type) that stay separate words after a verb: "iku deshō", "kuru rashii".
+        /** One-kanji nouns Sudachi splits off a compound, which read as its suffix: 既視|感, 安心|感, 可能|性. */
+        private const val SUFFIX_KANJI = "感性的化者力観界式系風論率法型"
         private val LOOSE_AUX = setOf("助動詞-デス", "助動詞-ラシイ", "助動詞-ダ")
         private val NOUN = listOf("名詞", "普通名詞", "一般", "*", "*", "*")
         private const val O_ROW = "オコソトノホモヨロゴゾドボポョォ"

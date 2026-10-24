@@ -248,4 +248,11 @@ class RomanizeTest {
         // A reading in brackets (yomigana) is dropped; karaoke parts stay aligned.
         assertEquals(listOf("Kimi", " no", " uta"), r.parts(listOf("君(きみ)", "の", "歌")))
     }
+
+    @Test fun nominalizerAndSuffixKanjiGlue() {
+        assertEquals("Konnan ja kitto monotarinai", r.machine("こんなんじゃきっと物足りない", sentence = true))
+        assertEquals("Kishikan nani ga sonna fuman nan da?", r.machine("既視感何がそんな不満なんだ?", sentence = true))
+        assertEquals("Anshinkan", r.machine("安心感", sentence = true))
+        assertEquals("Mono kin ai gen", r.machine("物 金 愛 言", sentence = true)) // separate words stay separate
+    }
 }

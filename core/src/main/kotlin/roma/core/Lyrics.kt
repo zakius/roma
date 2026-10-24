@@ -80,7 +80,7 @@ object LyricsProviders {
     fun find(q: LyricsQuery, providers: List<LyricsProvider>, icu: Icu? = null, timeoutMs: Long = 5000): LyricsSearch {
         val futures = pool.invokeAll(providers.map { p -> Callable { p.fetch(q) } }, timeoutMs, TimeUnit.MILLISECONDS)
         val got = providers.zip(futures).map { (p, f) -> p to runCatching { f.get() } }
-        val found = got.mapNotNull { (p, r) -> r.getOrNull()?.takeIf { it.lines.any { l -> l.text.isNotBlank() } }?.let { p to it } }
+        val found = got.mapNotNull { (p, r) -> r.getOrNull()?.let { withoutCredits(it, q) }?.takeIf { it.lines.any { l -> l.text.isNotBlank() } }?.let { p to it } }
         val complete = got.all { it.second.isSuccess }
         val ytm = found.firstOrNull { it.first == YouTubeLyrics }?.second
         val chosen = chooseLyrics(ytm, found.filter { it.first != YouTubeLyrics }.map { it.second }, icu) ?: return LyricsSearch(null, complete)
@@ -88,6 +88,23 @@ object LyricsProviders {
         val bare = Lyrics(chosen.first.source, chosen.first.lines.map { Line(it.startMs, it.text, it.words) }, chosen.first.synced)
         return LyricsSearch(LyricsResult(bare, translations, chosen.second), complete)
     }
+}
+
+// ---- Credits ----
+
+// "作词 : X", "作曲：X", "编曲 X", "Lyrics by X": a role, then a colon. Chinese providers put these at the top.
+private val CREDIT = Regex("""^\s*(作词|作詞|作曲|编曲|編曲|词|詞|曲|制作人|制作|製作|监制|監修|混音|混缩|母带|和声|吉他|贝斯|鼓|弦乐|录音|出品|发行|企划|OP|SP|Lyrics|Lyricist|Music|Composer|Arranger|Arrangement|Producer|Produced by|Written by)\s*(by)?\s*[:：]""", RegexOption.IGNORE_CASE)
+
+/**
+ * Drops credit lines anywhere, and a leading "Artist - Title" line (KuGou starts with one): they aren't sung.
+ * Word-timed lines lose their words with them, so karaoke stays aligned.
+ */
+fun withoutCredits(l: Lyrics, q: LyricsQuery): Lyrics {
+    val lines = l.lines.filterIndexed { i, line ->
+        val t = line.text.trim()
+        !CREDIT.containsMatchIn(t) && !(i < 3 && " - " in t && sameTitle(t.substringAfter(" - "), q.title))
+    }
+    return if (lines.size == l.lines.size) l else Lyrics(l.source, lines, l.synced, l.translationSource)
 }
 
 // ---- Choosing ----
@@ -195,6 +212,10 @@ fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String):
         l.source,
         l.lines.map { line ->
             val lang = Romanizer.cyrillicLanguageOfLine(line.text, cyr)
+            // A correction of the whole line (or of the title, when a line repeats it) wins over per-word output. Karaoke
+            // then highlights the corrected line as one piece: it sits on the first word, the other words get nothing.
+            val whole = overrides.firstOrNull { it.original == line.text.trim() && (it.scope == "song" && it.id == songId || it.scope == "text") }?.latin
+            if (whole != null) return@map Line(line.startMs, line.text, line.words, line.translation, whole, line.words.indices.map { if (it == 0) whole else "" })
             val wordLatin = if (line.words.isEmpty()) emptyList() else parts(line.words.map { it.text }, sib, songId, lang)
             val latin = if (line.words.isEmpty()) parts(listOf(line.text), sib, songId, lang).single() else wordLatin.joinToString("").trim()
             Line(line.startMs, line.text, line.words, line.translation, latin, wordLatin)

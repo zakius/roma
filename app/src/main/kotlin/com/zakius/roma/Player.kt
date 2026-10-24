@@ -272,7 +272,10 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                     WordsText(line.words.map { it.text }, line.text, wordIndex, big, onTap = { if (synced) Playback.player.seekTo(line.startMs) }) { w -> fixWord = w }
                 }
                 if (showLatin && line.latin.isNotBlank() && line.latin != line.text) {
-                    WordsText(line.wordLatin, line.latin, wordIndex, MaterialTheme.typography.bodyLarge, onLongPressWord = null)
+                    // A romaji word covers every syllable of its Japanese word but sits on the first one's slot (さよなら:
+                    // "sayonara" on さ, nothing on よなら), so it stays lit while the later syllables play.
+                    val latinIndex = (wordIndex downTo 0).firstOrNull { line.wordLatin.getOrNull(it)?.isNotBlank() == true } ?: wordIndex
+                    WordsText(line.wordLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge, onLongPressWord = null)
                 }
                 val translation = line.translation
                 if (!translation.isNullOrBlank()) {

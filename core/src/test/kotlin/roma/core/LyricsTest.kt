@@ -176,4 +176,18 @@ class TitleMatchTest {
         assertTrue(sameTitle("IDOL", "Idol"))
         kotlin.test.assertFalse(sameTitle("夜に駆ける", "Into The Night"))
     }
+
+    @Test fun creditsDropped() {
+        val q = LyricsQuery("x", "夜に駆ける", "YOASOBI", null, 260)
+        val l = Lyrics("t", parseLrc("[00:00.00]YOASOBI - 夜に駆ける\n[00:00.50]作词 : Ayase\n[00:01.00]作曲：Ayase\n[00:02.00]Lyrics by someone: x\n[00:12.00]沈むように\n[00:15.00]曲がり角"), true)
+        assertEquals(listOf("Lyrics by someone: x", "沈むように", "曲がり角"), withoutCredits(l, q).lines.map { it.text })
+    }
+
+    @Test fun wholeLineCorrectionInKaraoke() {
+        val r = Romanizer(jvmIcu)
+        r.overrides = listOf(Override("song", "x", "君の声", "Kimi no Koe!"))
+        val l = r.romanizeLyrics(Lyrics("t", parseLrc("[00:01.00]<00:01.00>君<00:01.50>の<00:02.00>声<00:03.00>"), true), emptyList(), "x")
+        assertEquals("Kimi no Koe!", l.lines[0].latin)
+        assertEquals(listOf("Kimi no Koe!", "", ""), l.lines[0].wordLatin)
+    }
 }
