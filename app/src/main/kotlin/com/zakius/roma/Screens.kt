@@ -103,7 +103,8 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val mod = if (center) Modifier.fillMaxWidth() else Modifier
     when {
-        t.isLatin || mode == "romanized" -> Text(t.latin, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        t.isLatin -> Text(t.original, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        mode == "romanized" -> Text(t.latin, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "original" -> Text(t.original, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "ruby" -> Column(mod) {
             Text(t.latin, Modifier.fillMaxWidth(), style = small, color = dim, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)

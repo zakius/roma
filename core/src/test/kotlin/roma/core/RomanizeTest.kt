@@ -265,4 +265,10 @@ class RomanizeTest {
         assertEquals("kk", Romanizer.cyrillicLanguage("Ізі қалған"))
         assertEquals("mn", Romanizer.cyrillicLanguage("Өнөөдөр сайхан өдөр"))
     }
+
+    @Test fun widthAloneIsNotRomanization() {
+        assertTrue(r.text("you to the monster （Yeah）").isLatin)
+        assertTrue(r.text("ＬＯＶＥ").isLatin)
+        assertFalse(r.text("君の声").isLatin)
+    }
 }

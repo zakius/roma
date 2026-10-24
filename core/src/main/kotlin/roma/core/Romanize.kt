@@ -9,10 +9,14 @@ import kotlinx.serialization.Serializable
 import java.nio.ByteBuffer
 import java.text.Normalizer
 
-/** A string as it came from the service, next to its Latin form. Both are equal when the original is already Latin. */
+/**
+ * A string as it came from the service, next to its Latin form. It counts as Latin, with nothing to romanize, when it has
+ * no letters of another script: a difference made only by normalizing width or punctuation (（Yeah） → (Yeah)) is not a
+ * romanization. A kept original (latin == original) counts as Latin too.
+ */
 @Serializable
 class Text(val original: String, val latin: String) {
-    val isLatin get() = original == latin
+    val isLatin get() = original == latin || !Romanizer.hasNonLatin(original)
 }
 
 /** ICU transliteration, supplied by the platform: android.icu on Android, ICU4J on a desktop JVM. */

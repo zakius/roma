@@ -16,8 +16,8 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.1.9"
+        versionCode = 11
+        versionName = "0.1.10"
         // Phones are arm64; x86_64 is for the emulator. Only androidx's tiny path library is native.
         ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
     }

@@ -54,6 +54,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.text.SpanStyle
+import roma.core.Romanizer
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
@@ -284,7 +285,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                 if (showOriginal && line.text.isNotBlank()) {
                     WordsText(line.words.map { it.text }, line.text, wordIndex, big, onTap = { if (synced) Playback.player.seekTo(line.startMs) }) { w -> fixWord = w }
                 }
-                if (showLatin && line.latin.isNotBlank() && line.latin != line.text) {
+                if (showLatin && line.latin.isNotBlank() && line.latin != line.text && Romanizer.hasNonLatin(line.text)) {
                     // A romaji word covers every syllable of its Japanese word but sits on the first one's slot (さよなら:
                     // "sayonara" on さ, nothing on よなら), so it stays lit while the later syllables play.
                     val latinIndex = (wordIndex downTo 0).firstOrNull { line.wordLatin.getOrNull(it)?.isNotBlank() == true } ?: wordIndex
