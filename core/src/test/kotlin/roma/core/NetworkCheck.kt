@@ -20,10 +20,19 @@ fun main() = runBlocking {
     println("stream: HTTP ${c.responseCode}, read $n bytes")
     check(n > 1000)
 
-    // Lyrics providers, each on its own, with the song's original metadata.
-    val q = LyricsQuery(song.id, song.title, song.artists.joinToString { it.name }, song.album?.name, song.duration ?: 0)
-    for (p in LyricsProviders.all) {
-        val l = runCatching { p.fetch(q) }.onFailure { println("lyrics ${p.name}: ${it.message}") }.getOrNull()
-        println("lyrics ${p.name}: " + if (l == null) "none" else "${l.lines.size} lines, synced=${l.synced}, word=${l.wordLevel}, first=${l.lines.firstOrNull { it.text.isNotBlank() }?.text}")
+    // Lyrics providers, each on its own, with the song's original metadata, then the rule that picks one.
+    for (query in listOf("YOASOBI 夜に駆ける", "米津玄師 Lemon", "The Weeknd Blinding Lights", "周杰倫 晴天")) {
+        val s = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG).getOrThrow().items.first() as SongItem
+        val q = LyricsQuery(s.id, s.title, s.artists.joinToString { it.name }, s.album?.name, s.duration ?: 0)
+        println("\n${s.id} ${s.title} / ${q.artist}")
+        val ytm = runCatching { YouTubeLyrics.fetch(q) }.getOrNull()
+        for (p in LyricsProviders.all) {
+            val l = runCatching { p.fetch(q) }.onFailure { println("  ${p.name}: failed: ${it.message}") }.getOrNull()
+            val sim = if (l != null && ytm != null && p != YouTubeLyrics) " sim=%.2f".format(similarity(l.lines.joinToString("\n") { it.text }, ytm.lines.joinToString("\n") { it.text }, jvmIcu)) else ""
+            val tr = l?.lines?.mapNotNull { it.translation }?.let { translationLanguage(it) }
+            println("  ${p.name}: " + if (l == null) "none" else "${l.source}, ${l.lines.size} lines, synced=${l.synced}, word=${l.wordLevel}$sim, translation=$tr, first=${l.lines.firstOrNull { it.text.isNotBlank() }?.text}")
+        }
+        val r = LyricsProviders.find(q, LyricsProviders.all, jvmIcu)
+        println("  -> rule ${r.result?.rule}: ${r.result?.lyrics?.source}, complete=${r.complete}, translations=${r.result?.translations?.map { "${it.source}:${it.language}" }}")
     }
 }

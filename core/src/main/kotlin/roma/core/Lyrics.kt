@@ -12,10 +12,16 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.Base64
+import java.text.Normalizer
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.zip.Inflater
 import kotlin.math.abs
@@ -34,10 +40,23 @@ class Line(
     val wordLatin: List<String> = emptyList(),
 )
 
+/** translationSource is set by [attachTranslation]. */
 @Serializable
-class Lyrics(val source: String, val lines: List<Line>, val synced: Boolean) {
+class Lyrics(val source: String, val lines: List<Line>, val synced: Boolean, val translationSource: String? = null) {
     val wordLevel get() = lines.any { it.words.isNotEmpty() }
 }
+
+/**
+ * A translation layer, kept apart from the lyrics so it can come from another source than the lyrics (or later from
+ * an AI translator) and be merged in by [attachTranslation]. Each line holds the original text, its start (0 when
+ * unsynced) and the translation.
+ */
+@Serializable
+class Translation(val source: String, val language: String, val lines: List<Line>, val synced: Boolean)
+
+/** What is cached per song: the chosen lyrics without translations, every translation layer found, and the rule that chose. */
+@Serializable
+class LyricsResult(val lyrics: Lyrics, val translations: List<Translation> = emptyList(), val rule: Int = 0)
 
 /** What providers search with. Always the original (not romanized) metadata, so it matches their catalogues. */
 class LyricsQuery(val videoId: String, val title: String, val artist: String, val album: String?, val durationSec: Int)
@@ -46,27 +65,122 @@ interface LyricsProvider {
     val id: String
     val name: String
 
-    /** Blocking. Null when the provider has nothing. */
+    /** Blocking. Null when the provider has nothing; throws when it couldn't answer (network, HTTP error). */
     fun fetch(q: LyricsQuery): Lyrics?
 }
 
+/** [result] is null when no provider had lyrics. [complete]: every provider answered, so an empty result is real. */
+class LyricsSearch(val result: LyricsResult?, val complete: Boolean)
+
 object LyricsProviders {
     val all: List<LyricsProvider> = listOf(NetEase, KuGou, LrcLib, YouTubeLyrics)
+    private val pool = Executors.newCachedThreadPool { r -> Thread(r, "lyrics").apply { isDaemon = true } }
 
-    /**
-     * Asks the providers in order. Word timing beats line timing beats plain text: the first word-level result
-     * wins at once, otherwise the first synced one, otherwise the first plain one.
-     */
-    fun find(q: LyricsQuery, providers: List<LyricsProvider>): Lyrics? {
-        val found = ArrayList<Lyrics>()
-        for (p in providers) {
-            val l = runCatching { p.fetch(q) }.getOrNull() ?: continue
-            if (l.lines.isEmpty()) continue
-            if (l.wordLevel) return l
-            found.add(l)
-        }
-        return found.firstOrNull { it.synced } ?: found.firstOrNull()
+    /** Asks every provider at once, each for at most [timeoutMs], then picks by [chooseLyrics]. */
+    fun find(q: LyricsQuery, providers: List<LyricsProvider>, icu: Icu? = null, timeoutMs: Long = 5000): LyricsSearch {
+        val futures = pool.invokeAll(providers.map { p -> Callable { p.fetch(q) } }, timeoutMs, TimeUnit.MILLISECONDS)
+        val got = providers.zip(futures).map { (p, f) -> p to runCatching { f.get() } }
+        val found = got.mapNotNull { (p, r) -> r.getOrNull()?.takeIf { it.lines.any { l -> l.text.isNotBlank() } }?.let { p to it } }
+        val complete = got.all { it.second.isSuccess }
+        val ytm = found.firstOrNull { it.first == YouTubeLyrics }?.second
+        val chosen = chooseLyrics(ytm, found.filter { it.first != YouTubeLyrics }.map { it.second }, icu) ?: return LyricsSearch(null, complete)
+        val translations = found.mapNotNull { translationOf(it.second) }
+        val bare = Lyrics(chosen.first.source, chosen.first.lines.map { Line(it.startMs, it.text, it.words) }, chosen.first.synced)
+        return LyricsSearch(LyricsResult(bare, translations, chosen.second), complete)
     }
+}
+
+// ---- Choosing ----
+
+/** Lowercase, NFKC, letters and digits only: what [similarity] compares. */
+fun normalizeLyrics(s: String): String =
+    Normalizer.normalize(s, Normalizer.Form.NFKC).lowercase().filter { it.isLetterOrDigit() }
+
+/**
+ * Traditional Chinese as Simplified, when an ICU is given: YouTube Music often has Traditional where NetEase and
+ * KuGou have Simplified, which is the same text for this purpose.
+ */
+private fun Icu?.fold(s: String) = if (this == null || s.none { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN }) s else transliterate("Traditional-Simplified", s)
+
+/**
+ * Dice coefficient over character bigrams (as a multiset) of the normalized text, 0..1. Bigrams rather than edit
+ * distance: providers differ in whether repeated choruses are written out, and bigrams barely care about order.
+ * Text in another language or script shares almost no bigrams.
+ */
+fun similarity(a: String, b: String, icu: Icu? = null): Double {
+    fun grams(s: String): Map<String, Int> = normalizeLyrics(icu.fold(s)).windowed(2).groupingBy { it }.eachCount()
+    val x = grams(a)
+    val y = grams(b)
+    val total = x.values.sum() + y.values.sum()
+    if (total == 0) return 0.0
+    val common = x.entries.sumOf { (g, n) -> minOf(n, y[g] ?: 0) }
+    return 2.0 * common / total
+}
+
+/**
+ * Above this the lyrics count as the same text as YouTube Music's. Measured: the same lyrics from two providers score
+ * 0.8–1.0 (small spelling differences, a missing repeat); a translated or other-language version scores under 0.1;
+ * a different song in the same language around 0.2–0.35.
+ */
+const val SAME_LYRICS = 0.6
+
+private fun Lyrics.text() = lines.joinToString("\n") { it.text }
+
+/**
+ * The rules, YouTube Music's text being the reference. Returns the lyrics and the rule number (design.md, Lyrics):
+ * 1. word-level that matches YTM (any word-level when YTM has nothing), 2. YTM line-timed, 3. third-party synced that
+ * matches YTM, 4. YTM plain, 5. (YTM has nothing) third-party synced, then plain. [others] are in the user's order,
+ * which breaks ties in rule 5 and among equally similar candidates.
+ */
+fun chooseLyrics(ytm: Lyrics?, others: List<Lyrics>, icu: Icu? = null): Pair<Lyrics, Int>? {
+    if (ytm == null) {
+        others.firstOrNull { it.wordLevel }?.let { return it to 1 }
+        others.firstOrNull { it.synced }?.let { return it to 5 }
+        return others.firstOrNull()?.let { it to 5 }
+    }
+    val ref = ytm.text()
+    fun best(c: List<Lyrics>) = c.map { it to similarity(it.text(), ref, icu) }.filter { it.second > SAME_LYRICS }.maxByOrNull { it.second }?.first
+    best(others.filter { it.wordLevel })?.let { return it to 1 }
+    if (ytm.synced) return ytm to 2
+    best(others.filter { it.synced })?.let { return it to 3 }
+    return ytm to 4
+}
+
+// ---- Translations ----
+
+private fun translationOf(l: Lyrics): Translation? {
+    val lines = l.lines.filter { !it.translation.isNullOrBlank() }
+    val lang = translationLanguage(lines.map { it.translation!! }) ?: return null
+    return Translation(l.source, lang, lines.map { Line(it.startMs, it.text, translation = it.translation) }, l.synced)
+}
+
+/**
+ * The translation to show: one whose language is wanted, preferring the one from the same source as the lyrics,
+ * then the first found.
+ */
+fun pickTranslation(l: Lyrics, translations: List<Translation>, wanted: (String) -> Boolean): Translation? {
+    val ok = translations.filter { wanted(it.language) }
+    return ok.firstOrNull { l.source == it.source } ?: ok.firstOrNull()
+}
+
+/**
+ * Puts [t] on the lyrics' lines: a line takes the translation of the line with the same normalized text, else, when
+ * both are synced, of the line starting within 1 s. Lines with neither get none. Null [t] removes translations.
+ */
+fun attachTranslation(l: Lyrics, t: Translation?): Lyrics {
+    val byText = t?.lines?.associate { normalizeLyrics(it.text) to it.translation } ?: emptyMap()
+    return Lyrics(
+        l.source,
+        l.lines.map { line ->
+            val tr = t?.let {
+                byText[normalizeLyrics(line.text)].takeIf { normalizeLyrics(line.text).isNotEmpty() }
+                    ?: if (l.synced && it.synced) it.lines.filter { o -> abs(o.startMs - line.startMs) <= 1000 }.minByOrNull { o -> abs(o.startMs - line.startMs) }?.translation else null
+            }
+            Line(line.startMs, line.text, line.words, tr, line.latin, line.wordLatin)
+        },
+        l.synced,
+        t?.source,
+    )
 }
 
 /**
@@ -86,6 +200,7 @@ fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String):
             Line(line.startMs, line.text, line.words, line.translation, latin, wordLatin)
         },
         l.synced,
+        l.translationSource,
     )
 }
 
@@ -93,8 +208,8 @@ fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String):
  * The language of the translations, from their script, since no provider tags it: Han means Chinese.
  * Null when there are none.
  */
-fun translationLanguage(l: Lyrics): String? {
-    val t = l.lines.mapNotNull { it.translation }.joinToString("")
+fun translationLanguage(translations: List<String>): String? {
+    val t = translations.joinToString("")
     if (t.isBlank()) return null
     val scripts = t.codePoints().toArray().map { Character.UnicodeScript.of(it) }.toSet()
     return when {
@@ -213,10 +328,13 @@ fun withTranslation(lines: List<Line>, translationLrc: String?): List<Line> {
 
 private val http = OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
 
-private fun get(url: String, vararg headers: Pair<String, String>): String? {
-    val b = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 roma")
+/** Throws on an HTTP error, so a provider that couldn't answer isn't taken for one that has no lyrics. */
+private fun get(url: String, vararg headers: Pair<String, String>): String = call(Request.Builder().url(url), headers)
+
+private fun call(b: Request.Builder, headers: Array<out Pair<String, String>>): String {
+    if (headers.none { it.first == "User-Agent" }) b.header("User-Agent", "Mozilla/5.0 roma")
     for ((k, v) in headers) b.header(k, v)
-    http.newCall(b.build()).execute().use { r -> return if (r.isSuccessful) r.body.string() else null }
+    http.newCall(b.build()).execute().use { r -> if (r.isSuccessful) return r.body.string() else throw IOException("HTTP ${r.code}") }
 }
 
 private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
@@ -245,7 +363,7 @@ object LrcLib : LyricsProvider {
     override val name = "LRCLIB"
 
     override fun fetch(q: LyricsQuery): Lyrics? {
-        val body = get("https://lrclib.net/api/search?track_name=${enc(q.title)}&artist_name=${enc(q.artist)}") ?: return null
+        val body = get("https://lrclib.net/api/search?track_name=${enc(q.title)}&artist_name=${enc(q.artist)}")
         val items0 = Json.parseToJsonElement(body).arr()?.mapNotNull { it.obj() } ?: return null
         val items = items0.filter { sameTitle(it["trackName"].str() ?: "", q.title) }
         val withSynced = items.filter { !it["syncedLyrics"].str().isNullOrBlank() }
@@ -264,11 +382,11 @@ object NetEase : LyricsProvider {
     private val referer = "Referer" to "https://music.163.com/"
 
     override fun fetch(q: LyricsQuery): Lyrics? {
-        val body = get("https://music.163.com/api/cloudsearch/pc?s=${enc(q.title + " " + q.artist)}&type=1&limit=10", referer) ?: return null
+        val body = get("https://music.163.com/api/cloudsearch/pc?s=${enc(q.title + " " + q.artist)}&type=1&limit=10", referer)
         val songs = Json.parseToJsonElement(body).obj()?.get("result").obj()?.get("songs").arr()?.mapNotNull { it.obj() } ?: return null
         val song = closest(songs.filter { sameTitle(it["name"].str() ?: "", q.title) }, q.durationSec) { (it["dt"].str()?.toDoubleOrNull() ?: 0.0) / 1000 } ?: return null
         val id = song["id"].str() ?: return null
-        val lyr = Json.parseToJsonElement(get("https://music.163.com/api/song/lyric?id=$id&lv=-1&tv=-1&yv=-1", referer) ?: return null).obj() ?: return null
+        val lyr = Json.parseToJsonElement(get("https://music.163.com/api/song/lyric?id=$id&lv=-1&tv=-1&yv=-1", referer)).obj() ?: return null
         val translation = lyr["tlyric"].obj()?.get("lyric").str()
         val yrc = lyr["yrc"].obj()?.get("lyric").str()
         if (!yrc.isNullOrBlank()) {
@@ -289,15 +407,13 @@ object KuGou : LyricsProvider {
 
     override fun fetch(q: LyricsQuery): Lyrics? {
         val keyword = enc("${q.artist} - ${q.title}")
-        val search = get("https://mobileservice.kugou.com/api/v3/search/song?version=9108&plat=0&pagesize=8&showtype=0&keyword=$keyword") ?: return null
+        val search = get("https://mobileservice.kugou.com/api/v3/search/song?version=9108&plat=0&pagesize=8&showtype=0&keyword=$keyword")
         val songs = Json.parseToJsonElement(search).obj()?.get("data").obj()?.get("info").arr()?.mapNotNull { it.obj() } ?: return null
         val song = closest(songs.filter { sameTitle(it["songname"].str() ?: "", q.title) }, q.durationSec) { it["duration"].str()?.toDoubleOrNull() ?: 0.0 } ?: return null
         val hash = song["hash"].str() ?: return null
         val cands = get("https://krcs.kugou.com/search?ver=1&man=yes&client=mobi&keyword=$keyword&duration=${q.durationSec * 1000}&hash=$hash")
-            ?: return null
         val cand = Json.parseToJsonElement(cands).obj()?.get("candidates").arr()?.firstOrNull().obj() ?: return null
         val dl = get("https://krcs.kugou.com/download?ver=1&man=yes&client=pc&fmt=krc&charset=utf8&id=${cand["id"].str()}&accesskey=${cand["accesskey"].str()}")
-            ?: return null
         val content = Json.parseToJsonElement(dl).obj()?.get("content").str() ?: return null
         val lines = parseKrc(decrypt(content))
         return if (lines.isEmpty()) null else Lyrics(name, lines, true)
@@ -319,15 +435,35 @@ object KuGou : LyricsProvider {
     }
 }
 
-/** YouTube Music's own lyrics: plain text, no timing. */
+/**
+ * YouTube Music's own lyrics, as the Android app gets them: the lyrics browse ID through the ANDROID_MUSIC client
+ * gives line timing (timedLyricsData with cueRange) when there is any, otherwise the plain text from the web client.
+ * The source names YTM's own source ("Source: LyricFind").
+ */
 object YouTubeLyrics : LyricsProvider {
     override val id = "youtube"
     override val name = "YouTube Music"
+    private val mobile = arrayOf("User-Agent" to "com.google.android.apps.youtube.music/7.21.50 (Linux; U; Android 14) gzip")
 
     override fun fetch(q: LyricsQuery): Lyrics? = runBlocking {
-        val next = YouTube.next(WatchEndpoint(videoId = q.videoId)).getOrNull() ?: return@runBlocking null
+        val next = YouTube.next(WatchEndpoint(videoId = q.videoId)).getOrThrow()
         val endpoint = next.lyricsEndpoint ?: return@runBlocking null
-        val text = YouTube.lyrics(endpoint).getOrNull() ?: return@runBlocking null
+        timed(endpoint.browseId)?.let { return@runBlocking it }
+        val text = YouTube.lyrics(endpoint).getOrThrow() ?: return@runBlocking null
         Lyrics(name, text.lines().map { Line(0, it) }, false)
+    }
+
+    /** Null when the mobile response has no timedLyricsModel; plain lines when it has text without cueRange. */
+    fun timed(browseId: String): Lyrics? {
+        val body = """{"context":{"client":{"clientName":"ANDROID_MUSIC","clientVersion":"7.21.50","androidSdkVersion":34,"hl":"en"}},"browseId":"$browseId"}"""
+        val req = Request.Builder().url("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false").post(body.toRequestBody("application/json".toMediaType()))
+        val root = Json.parseToJsonElement(call(req, mobile)).obj()
+        val data = listOf("contents", "elementRenderer", "newElement", "type", "componentType", "model", "timedLyricsModel", "lyricsData")
+            .fold(root as JsonElement?) { e, k -> e.obj()?.get(k) }.obj() ?: return null
+        val rows = data["timedLyricsData"].arr()?.mapNotNull { it.obj() } ?: return null
+        val source = data["sourceMessage"].str()?.let { "$name · $it" } ?: name
+        val synced = rows.all { it["cueRange"] != null }
+        val lines = rows.map { Line(if (synced) it["cueRange"].obj()?.get("startTimeMilliseconds").str()?.toLongOrNull() ?: 0 else 0, it["lyricLine"].str() ?: "") }
+        return if (lines.isEmpty()) null else Lyrics(source, lines, synced)
     }
 }
