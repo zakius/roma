@@ -89,6 +89,8 @@ class RomanizeTest {
     @Test fun ownLatinForm() {
         assertEquals("Spica", r.text("スピカ - Spica", titleOf = true).latin)
         assertEquals("Idol", r.text("アイドル - Idol", titleOf = true).latin)
+        assertEquals("Suzume (feat. Toaka)", r.text("すずめ - Suzume (feat. Toaka)", titleOf = true).latin)
+        assertEquals("Yoru ni Kakeru - Live", r.text("夜に駆ける - Live", titleOf = true).latin)
         assertEquals("Silhouette", r.text("シルエット (Silhouette)", titleOf = true).latin)
         // Version tags are not a Latin form.
         assertEquals("Yoru ni Kakeru (Ballade Ver.)", r.text("夜に駆ける (Ballade Ver.)", titleOf = true).latin)

@@ -367,7 +367,9 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
             val n = normalize(s)
             val m = Regex("""^(.+?) (?:-|/) (.+)$""").find(n) ?: Regex("""^(.+?)\s*\(([^()]+)\)$""").find(n) ?: return null
             val (left, right) = m.destructured
-            if (!hasNonLatin(left) || hasNonLatin(right) || right.none { it.isLetter() } || VERSION_TAG.containsMatchIn(right)) return null
+            // The tag check skips the Latin part's own brackets: "すずめ - Suzume (feat. Toaka)" is still "Suzume (feat. Toaka)".
+            val tagged = VERSION_TAG.containsMatchIn(right.replace(Regex("""\(.*?\)"""), ""))
+            if (!hasNonLatin(left) || hasNonLatin(right) || right.none { it.isLetter() } || tagged) return null
             return right.trim()
         }
 

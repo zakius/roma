@@ -18,6 +18,7 @@ import roma.core.RadioSettings
 import roma.core.RomanizeSettings
 import roma.core.Romanizer
 import roma.core.Song
+import roma.core.again
 import roma.core.matches
 import java.io.File
 
@@ -174,5 +175,6 @@ object Store {
         }
     }
 
-    fun searchLocal(q: String): List<Song> = synchronized(index) { index.filter { matches(it, q) }.take(20) }
+    // The stored Latin forms date from when each song was seen; romanize the hits again so they follow today's rules.
+    fun searchLocal(q: String): List<Song> = synchronized(index) { index.filter { matches(it, q) }.take(20) }.map { romanizer.again(it) }
 }
