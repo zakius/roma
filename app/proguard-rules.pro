@@ -7,3 +7,5 @@
 -dontwarn org.slf4j.**
 # Kuromoji loads its dictionary by class-relative resource paths.
 -keep class com.atilika.kuromoji.** { *; }
+# Optional JDK classes referenced by Rhino and other JVM libraries, absent on Android.
+-dontwarn jdk.dynalink.**

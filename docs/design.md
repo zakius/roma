@@ -14,11 +14,11 @@ Working name; rename freely.
 
 | Concern | Choice |
 |---|---|
-| YT Music API (home, search, library, radio, likes, playlists) | `innertube` Kotlin module from the InnerTune / OuterTune / Metrolist lineage. Vendor it or depend on it, whichever is cleaner. |
+| YT Music API (home, search, library, radio, likes, playlists) | `innertube` Kotlin module from Metrolist, vendored into `core` (package `com.metrolist.innertube`, unchanged; a no-op `timber.log.Timber` stands in for its logger). Since October 2026 it is a facade over Metrolist's InnerTubeX library (Kotlin Multiplatform, JVM target, from JitPack), which pulls in QuackJS. Not published on its own, so vendoring is the only option. |
 | Stream URLs (signature / n-param / PoToken) | NewPipeExtractor. Its team fixes YouTube changes fastest. |
 | Playback, media session, notification | Media3 (ExoPlayer + MediaSessionService) |
 | Login | WebView sign-in to music.youtube.com, cookies kept. No GMS account picker. |
-| Romanization | `android.icu.text.Transliterator` (built in) for non-Japanese; Kuromoji or Sudachi (pick the smaller one that works) for Japanese. In `core`, use ICU4J via an interface so the JVM path works too. |
+| Romanization | Kuromoji with IPADIC (Apache-2.0, about 13 MB; Sudachi needs a 50 MB+ dictionary) for Japanese readings, then our own kana-to-Hepburn table. Our own tables for Korean (Revised Romanization) and Cyrillic (English-style, Polish-style, ISO 9). ICU through a one-method interface for Chinese (`Han-Latin`) and other scripts: `android.icu` in the app, ICU4J in `core` tests. |
 
 Step 0, before writing code: check that both libraries are maintained, that they build, and that they play a stream on the emulator without GMS. Note their licences. `innertube` is GPL-3, so the app will be GPL-3. Report blockers instead of working around them.
 
@@ -99,9 +99,28 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 - Filters in a fixed order: Songs, Albums, Artists, Playlists. Videos are excluded by default.
 - Results show Latin with the original underneath.
 
+## Implementation notes (2026-10-24)
+
+Decisions taken while building v1, where the spec left room or turned out different:
+
+- Licences: Metrolist innertube, InnerTubeX, QuackJS and NewPipeExtractor are GPL-3.0; Kuromoji and Media3 are Apache-2.0. The app is GPL-3.0 (LICENSE).
+- Extra dependency the spec didn't name: `desugar_jdk_libs_nio`, which NewPipeExtractor needs below API 33.
+- Streams: NewPipeExtractor's current YouTube client needs no PoToken, so no WebView token generator. Loudness comes from one extra `player` call (WEB_REMIX); it only turns loud tracks down, because the volume can't go above 1.
+- Official Latin names: the YouTube channel name is used as is. MusicBrainz aliases are not fetched (not cheap: rate-limited, needs matching).
+- Lyrics providers: NetEase (word timing as YRC, line LRC, Chinese translations) and KuGou (word timing as KRC, decrypted with the well-known key) use unofficial APIs with no token. LRCLIB is free and keyless. Musixmatch is left out: richsync needs a user token taken from their app, which breaks their ToS. Every provider must match the title as well as the duration, because duration alone picked an English cover. A song with no lyrics is cached as "none" too; Settings has "Search lyrics again".
+- Radio leash: close keeps only the seed's artist and the related artists from its artist page. Medium lets in other artists only while they stay fewer than the on-leash songs. Free applies no artist filter. Reasons shown are "same artist" and "related artist"; YouTube's radio gives no "often played after".
+- "Prefer audio tracks" drops a music video when the same title by the same artist exists as an audio track; a video with no audio twin stays.
+- Shuffle reorders only the "You queued" songs after the current one, and turning it off restores their order. Radio stays after them, as the pinning rule requires.
+- Playing from a list starts a new queue: the rest of the list goes into "You queued" and radio from the tapped song follows. Queueing a song that is already in the radio moves it out of the radio.
+- The ⋯ menu, in this order everywhere: Play next, Add to queue, Start radio, Like, Go to artist, Go to album, Correct romanization…, Remove from queue, Ban song, Ban artist. Unavailable items are dimmed, not hidden.
+- Library tabs: Playlists, Albums, Artists. Search's Playlists filter is community playlists.
+- Known romanization limit: IPADIC reads some compounds by their parts (二人 → "ninin", not "futari"). Overrides fix it per song.
+
 ## Process
 
 - Local git repo. Don't create a GitHub repo or a signing key without asking the user.
 - Build toolchain: mirror ~/dev/plainfin (AGP, Kotlin, Gradle, SDK at ~/Android/Sdk, JDK under ~/.local/share/JetBrains/Toolbox/apps/air/jbr). Read its build files first.
 - Test on an emulator. Never install on the user's own devices without asking first.
 - Leave one small runnable check per non-trivial piece: romanization (including the Japanese/Chinese decision), the lyrics parsers (LRC, enhanced LRC), queue filtering.
+  - `./gradlew :core:test`: romanization, lyrics parsers (LRC, enhanced LRC, KRC, YRC), radio filters, scrobble rule, Last.fm signature.
+  - `./gradlew :core:networkCheck`: live check that innertube search, NewPipe stream resolution and each lyrics provider still work.
