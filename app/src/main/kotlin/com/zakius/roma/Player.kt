@@ -106,7 +106,7 @@ import roma.core.pickTranslation
 @Composable
 fun PlayerScreen() {
     Playback.tick
-    var view by rememberSaveable { mutableStateOf("song") }
+    var view by Nav::playerView
     // Back closes the lyrics or queue view first, then leaves the player as usual.
     androidx.activity.compose.BackHandler(enabled = view != "song") { view = "song" }
     var menuOpen by remember { mutableStateOf(false) }
@@ -175,9 +175,11 @@ fun PlayerScreen() {
             Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
                 Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_shuffle_on), "Shuffle", entry != null, Playback.shuffled, iconSize = 26, state = if (Playback.shuffled) "on" else "off") { Playback.toggleShuffle() }
                 Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_previous), "Previous", entry != null, iconSize = 30) { Playback.previous() }
+                // Shows what the user asked for: Pause while a song buffers or waits for the network, too.
+                val showPlay = androidx.media3.common.util.Util.shouldShowPlayButton(p)
                 // Long press: the sleep timer. A hidden extra on a button that's there anyway, so the row stays as it is.
                 Slot(
-                    painterResource(if (p.isPlaying) androidx.media3.ui.R.drawable.exo_icon_pause else androidx.media3.ui.R.drawable.exo_icon_play), if (p.isPlaying) "Pause" else "Play", entry != null, iconSize = 44,
+                    painterResource(if (showPlay) androidx.media3.ui.R.drawable.exo_icon_play else androidx.media3.ui.R.drawable.exo_icon_pause), if (showPlay) "Play" else "Pause", entry != null, iconSize = 44,
                     onLongClick = { sleepOpen = true }, longClickLabel = "Sleep timer",
                 ) { Playback.togglePlay() }
                 Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_next), "Next", p.hasNextMediaItem(), iconSize = 30) { Playback.next() }
@@ -306,7 +308,8 @@ private fun SeekBar(onPreview: (Long) -> Unit) {
     Playback.clock
     val p = Playback.player
     val haptic = LocalHapticFeedback.current
-    val duration = Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: 0L
+    // A song restored after a restart isn't prepared until Play: its known length stands in.
+    val duration = Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: Playback.current()?.song?.durationSec?.let { it * 1000L } ?: 0L
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
     var snappedTo by remember { mutableLongStateOf(-1L) }
@@ -353,7 +356,7 @@ private fun time(ms: Long): String {
 @Composable
 private fun SongView() {
     Playback.tick
-    val s = Playback.shown() ?: return Centered("Nothing playing. Pick a song in Home, Search or Library.")
+    val s = Playback.shown() ?: return if (Playback.restoring) Unit else Centered("Nothing playing. Pick a song in Home, Search or Library.")
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     var dx by remember { mutableFloatStateOf(0f) }
@@ -466,6 +469,10 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
             Name(roma.core.Text(s.artistOriginal, s.artistLatin), Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true)
         }
         if (fixing) CorrectDialog(s) { fixing = false }
+        if (current && Playback.waitingForNetwork) {
+            Spacer(Modifier.height(8.dp))
+            Text("Waiting for network…", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        }
         if (current) Playback.error?.let {
             Spacer(Modifier.height(8.dp))
             Text("Can't play this song: $it", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
@@ -499,7 +506,9 @@ private fun QueueView() {
                 Text(header, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             } else {
                 val e = all[i]
-                SongRow(e.song, highlight = i == cur, extra = e.song.reason, onMenu = { menuFor = i }) { Playback.skipTo(i) }
+                // "saved": the whole song is on the phone, so it plays with no network.
+                val extra = listOfNotNull(e.song.reason, "saved".takeIf { Playback.fullyCached(e.song.id) }).joinToString(" · ").ifEmpty { null }
+                SongRow(e.song, highlight = i == cur, extra = extra, onMenu = { menuFor = i }) { Playback.skipTo(i) }
             }
         }
     }

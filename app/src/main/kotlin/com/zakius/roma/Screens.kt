@@ -990,6 +990,8 @@ fun SettingsScreen() {
         Switch1("Skip banned songs and artists", "radio.skipBanned", true)
         Switch1("Stop when the queue ends", "queue.stopAtEnd", false)
         Switch1("Even out loudness", "play.normalize", true)
+        Switch1("Download songs ahead", "play.ahead", false, subtitle = "The whole song and the next 3, so playback goes on without a network. Uses more data: about 4 MB per song you skip")
+        Switch1("Resume when headphones reconnect", "play.resumeOnHeadphones", false, subtitle = "Within an hour of them pausing the song by disconnecting")
 
         Header("Banned")
         val banned = Store.banned
@@ -1033,10 +1035,13 @@ private fun Row1(title: String, subtitle: String, enabled: Boolean = true, onCli
 }
 
 @Composable
-private fun Switch1(title: String, key: String, def: Boolean, enabled: Boolean = true) {
+private fun Switch1(title: String, key: String, def: Boolean, enabled: Boolean = true, subtitle: String? = null) {
     val on = Store.bool(key, def)
     Row(Modifier.fillMaxWidth().clickable(enabled) { Store.set(key, !on) }.alpha(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text(title)
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Switch(on, { Store.set(key, it) }, enabled = enabled)
     }
 }

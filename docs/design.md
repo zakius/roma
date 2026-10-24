@@ -204,6 +204,14 @@ Decisions taken while building v1, where the spec left room or turned out differ
   - Safety net: whatever is left goes through ICU's `Cyrillic-Latin`. Letters ICU doesn't know (Tatar җ, Tajik ҷ) become the letter they are built on, by Unicode name (җ → ж), and go through ICU again; if none fits, the letter is dropped. Only stylized words (ЯOCK) and kaomoji letters keep their Cyrillic, by the rules above.
 - Known romanization limit: IPADIC reads some compounds by their parts (二人 → "ninin", not "futari"). Overrides fix it per song.
 
+## Continuity (2026-10-25)
+
+- Restart: `Playback` writes the queue (songs, sections, index, repeat, shuffle order, radio seed and continuation, mix ID and continuation) to filesDir/queue.json after each burst of queue changes, and "<videoId> <ms>" to filesDir/position on pause, seek and every 10 s while playing; both via tmp file + rename. At start the queue comes back paused, at its position, with lyrics from their cache; no Last.fm "now playing", and radio top-up and prefetch wait for Play. A fully cached song is prepared at once; any other on Play, so opening the app costs no data. The tab and the player view (song, lyrics, queue) come back too (prefs `ui.tab`, `ui.playerView`). An expired radio continuation restarts the radio's pages.
+- Media buttons: `MediaButtonReceiver` plus `onPlaybackResumption` let a headset, car or the system's media controls resume after the process died.
+- Network drops (`WaitForNetwork`): with no connection, loads retry every 2 s for up to 10 min and the error reaches the player only when that gives up, so the buffer plays out, the player shows "Waiting for network…" (no validated default network, buffering, play wanted) and goes on by itself. Other errors keep 3 retries. The Play slot follows `Util.shouldShowPlayButton`: Pause while buffering.
+- Opt-in "Resume when headphones reconnect": a pause caused by audio becoming noisy is undone when a headset, A2DP/BLE, USB headset or hearing aid output appears within an hour (`AudioDeviceCallback`, no polling). Not testable on the emulator.
+- Opt-in "Download songs ahead": the load control buffers the whole current song (up to 10 min, else 50 s), and the next 3 songs are cached in full with `CacheWriter`. The current song can't use CacheWriter: the player's open read locks the cache span. Queue rows say "saved" for songs fully in the cache.
+
 ## Home and personal mixes (2026-10-24)
 
 - Home starts with a pinned "Your mixes" row, always first. Signed out it holds a dimmed "Sign in to see your mixes"; signed in with none found, "No mixes yet". Signed in, the row keeps a card's height while it loads or is empty, so the shelves below don't jump. The last mixes found are kept in prefs and shown until the next lookup finishes.
