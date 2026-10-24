@@ -1,5 +1,12 @@
 package com.zakius.roma
 
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.background
+import kotlinx.coroutines.launch
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
@@ -371,7 +378,7 @@ private fun <T : Any> Loader(
         val result = withContext(Dispatchers.IO) {
             runCatching { load { p -> withContext(Dispatchers.Main) { if (shown == null || partial) { shown = p; partial = true } } } }
         }
-        val fresh = result.getOrElse { if (shown == null || partial) failed = it.message ?: it.toString(); return@LaunchedEffect }
+        val fresh = result.getOrElse { if (shown == null || partial) failed = plainError(it); return@LaunchedEffect }
         loaded[key] = Kept(fresh, System.currentTimeMillis(), Store.dataVersion)
         if (disk != null) Store.writePage(key, fresh, disk)
         val old = shown
@@ -500,7 +507,7 @@ object Home {
                     }
                 }
             }
-            val (next, shelves) = result.getOrElse { failed = it.message ?: it.toString(); fetchedAt = 0; return@coroutineScope }
+            val (next, shelves) = result.getOrElse { failed = plainError(it); fetchedAt = 0; return@coroutineScope }
             page++
             cont = next
             more = next != null
@@ -675,7 +682,7 @@ fun SearchScreen() {
                             Text(action, style = style, color = color, maxLines = 1)
                         }
                     }
-                    if (found.items.isEmpty()) item { Text("No results for “$submitted”.", Modifier.padding(16.dp)) }
+                    if (found.items.isEmpty()) item { Text("No results for “$submitted”. Check the spelling, or try another filter above.", Modifier.padding(16.dp)) }
                     items(found.items) { item ->
                         val s = item.song
                         if (s != null) SongRow(s, onMenu = { menuFor = s }) { openItem(item) } else ItemRow(item) { openItem(item) }
@@ -706,8 +713,11 @@ fun LibraryScreen() {
         val id = tabs[tab].second
         val list = key(tab) { rememberLazyListState() }
         Loader("library:$id", { partial -> loadLibrary(id, partial) }, list, { items -> items.map { it.id } }, ListSerializer(Item.serializer())) { items ->
-            if (items.isEmpty()) Centered("Nothing here yet.")
-            LazyColumn(Modifier.fillMaxSize(), list) { items(items) { item -> ItemRow(item) { openItem(item) } } }
+            if (items.isEmpty()) Centered("Nothing here yet. ${tabs[tab].first} you save in YouTube Music show here.")
+            Box {
+                LazyColumn(Modifier.fillMaxSize(), list) { items(items) { item -> ItemRow(item) { openItem(item) } } }
+                FastScroll(list)
+            }
         }
     }
 }
@@ -723,6 +733,7 @@ fun PageScreen(p: Page) {
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val list = rememberLazyListState()
     Loader("${p.kind}:${p.id}", { partial -> loadDetail(p, partial) }, list, ::detailRows, Detail.serializer()) { d ->
+        Box {
         LazyColumn(Modifier.fillMaxSize(), list) {
             item {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -740,6 +751,8 @@ fun PageScreen(p: Page) {
                 item { Header("Albums and more") }
                 items(d.items) { item -> ItemRow(item) { openItem(item) } }
             }
+        }
+        FastScroll(list)
         }
     }
     menuFor?.let { SongMenu(it, null) { menuFor = null } }
@@ -976,4 +989,56 @@ private suspend fun loadLibrary(browseId: String, partial: suspend (List<Item>) 
         cont = more.continuation
     }
     return all
+}
+
+/** A failure in plain words, with what to do about it. */
+fun plainError(t: Throwable): String = when (generateSequence(t) { it.cause }.firstOrNull { it is java.io.IOException } ?: t) {
+    is java.net.UnknownHostException, is java.net.ConnectException, is java.net.NoRouteToHostException -> "No connection. Check Wi-Fi or mobile data, then Retry."
+    is java.net.SocketTimeoutException -> "YouTube took too long to answer. Retry in a moment."
+    else -> t.message ?: t.toString()
+}
+
+/**
+ * A thumb on the right edge of a long list (over 3 screens) to drag through it. It shows while the list scrolls and
+ * for a moment after, and only then takes touches, so the rows' ⋯ buttons under it work the rest of the time.
+ */
+@Composable
+fun androidx.compose.foundation.layout.BoxScope.FastScroll(list: LazyListState) {
+    val info = list.layoutInfo
+    val visible = info.visibleItemsInfo.size
+    val total = info.totalItemsCount
+    if (total <= visible * 3 || visible == 0) return
+    var dragging by remember { mutableStateOf(false) }
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(list.isScrollInProgress, dragging) {
+        if (list.isScrollInProgress || dragging) shown = true else { kotlinx.coroutines.delay(1500); shown = false }
+    }
+    val alpha by androidx.compose.animation.core.animateFloatAsState(if (shown) 1f else 0f, label = "fastScroll")
+    if (alpha == 0f) return
+    val scope = rememberCoroutineScope()
+    var height by remember { mutableIntStateOf(1) }
+    val thumb = with(LocalDensity.current) { 56.dp.toPx() }
+    val fraction = list.firstVisibleItemIndex.toFloat() / (total - visible).coerceAtLeast(1)
+    Box(
+        Modifier.align(Alignment.TopEnd).fillMaxHeight().width(32.dp).onSizeChanged { height = it.height }
+            .pointerInput(total) {
+                detectVerticalDragGestures(
+                    onDragStart = { dragging = true },
+                    onDragEnd = { dragging = false },
+                    onDragCancel = { dragging = false },
+                ) { change, _ ->
+                    change.consume()
+                    val f = ((change.position.y - thumb / 2) / (height - thumb)).coerceIn(0f, 1f)
+                    scope.launch { list.scrollToItem((f * (total - visible)).toInt()) }
+                }
+            }
+            .alpha(alpha),
+    ) {
+        Box(
+            Modifier.align(Alignment.TopEnd).padding(end = 4.dp)
+                .offset { androidx.compose.ui.unit.IntOffset(0, (fraction.coerceIn(0f, 1f) * (height - thumb)).toInt()) }
+                .size(width = 8.dp, height = 56.dp).clip(RoundedCornerShape(4.dp))
+                .background(if (dragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
+        )
+    }
 }

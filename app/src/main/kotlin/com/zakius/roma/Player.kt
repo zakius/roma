@@ -488,7 +488,8 @@ private fun QueueView() {
     if (queued.isNotEmpty()) { rows.add("You queued" to -1); queued.forEach { rows.add(null to it) } }
     if (radio.isNotEmpty()) { rows.add("Radio" to -1); radio.forEach { rows.add(null to it) } }
     if (queued.isEmpty() && radio.isEmpty()) rows.add((if (Store.stopAtEnd) "Nothing next: autoplay is off" else "Nothing next yet") to -1)
-    LazyColumn(Modifier.fillMaxSize()) {
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    Box { LazyColumn(Modifier.fillMaxSize(), list) {
         itemsIndexed(rows, contentType = { _, (header, _) -> header == null }) { _, (header, i) ->
             if (header != null) {
                 Text(header, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
@@ -498,6 +499,7 @@ private fun QueueView() {
             }
         }
     }
+    FastScroll(list) }
     menuFor?.let { i -> if (i in all.indices) SongMenu(all[i].song, queueIndex = i) { menuFor = null } }
 }
 

@@ -111,6 +111,10 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 - Seek bar: while dragging, the lyric line at the drag position shows over the bottom of the upper area; near a timed line's start (12 dp of travel) the drag snaps to it with a haptic tick.
 - Haptics: like (button and double-tap), ban, a swipe passing the skip point, a seek snap.
 - Lyrics view background: the song's art, blurred (Android 12+; a 16 px copy stretched on older versions) at 20 % opacity, fading into the theme's background at the top and bottom.
+- Long lists (library, album and playlist pages, the queue; over three screens) show a fast-scroll thumb on the right edge while they scroll and for 1.5 s after. Only then does it take touches, so the rows' ⋯ buttons under it work otherwise.
+- Display options, off by default: true black in dark mode (OLED), and an accent colour from the playing song's art (a saturation-weighted average of a 24 px copy; grey art keeps the usual colours).
+- Large system fonts: the fixed rows (player controls, nav bar) follow the font size up to 1.3×, so their labels and times are never cut off; everything else scales fully. Search filters wrap onto a second line in the same order.
+- Errors say what to do: no connection → "Check Wi-Fi or mobile data, then Retry"; a timeout → "Retry in a moment". A song that can't play offers Retry and "Play the next song".
 
 ## Queue and radio
 
