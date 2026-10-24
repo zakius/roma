@@ -16,7 +16,7 @@ kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_21 } }
 
 dependencies {
     // YouTube Music API: the vendored com.metrolist.innertube sources sit on top of InnerTubeX.
-    api("com.github.MetrolistGroup.innertubex:innertubex:v0.11.0")
+    api("com.github.MetrolistGroup.innertubex:innertubex:v0.11.2")
     api("io.ktor:ktor-client-core:3.6.0")
     implementation("io.ktor:ktor-client-okhttp:3.6.0")
     implementation("io.ktor:ktor-client-content-negotiation:3.6.0")

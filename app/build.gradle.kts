@@ -18,6 +18,9 @@ android {
         targetSdk = 36
         versionCode = 19
         versionName = "0.1.18"
+        // Testing only: `-Proma.forceStreamFallback=true` skips NewPipe, so every song plays through the InnerTubeX
+        // fallback. Never set for a release.
+        buildConfigField("boolean", "FORCE_STREAM_FALLBACK", (findProperty("roma.forceStreamFallback") == "true").toString())
     }
 
     // One APK for both: phones are arm64, the emulator x86_64. The only native code is androidx's tiny path library

@@ -1,6 +1,18 @@
 package roma.core
 
+import com.metrolist.innertubex.InnerTubeLogger
+import com.metrolist.innertubex.cipher.PlayerConfigRepository
+import com.metrolist.innertubex.cipher.RemotePlayerConfigStore
+import com.metrolist.innertubex.cipher.YouTubeCipherService
+import com.metrolist.innertubex.extraction.AudioQuality
+import com.metrolist.innertubex.extraction.ContentHints
+import com.metrolist.innertubex.extraction.InnerTubeExtractor
+import com.metrolist.innertubex.extraction.StreamResolveException
+import com.metrolist.innertubex.extraction.TokenProvider
+import com.metrolist.innertubex.extraction.YtConfigParserImpl
+import com.metrolist.innertubex.extraction.generateClientPlaybackNonce
 import com.metrolist.innertubex.models.YouTubeClient.Companion.WEB
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.schabi.newpipe.extractor.NewPipe
@@ -13,12 +25,31 @@ import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import java.util.concurrent.TimeUnit
 
-/** A playable audio URL for one video, picked by NewPipeExtractor. */
+/** A playable audio URL for one video. */
 class AudioSource(val url: String, val mimeType: String, val bitrate: Int)
+
+/** No path found a stream. The message is the reason in plain words, as YouTube or the extractor gave it. */
+class StreamException(message: String) : java.io.IOException(message)
 
 object Streams {
     private val http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
     private var started = false
+
+    /** Skips both NewPipe paths, so only the InnerTubeX fallback runs. For testing the fallback; off in releases. */
+    @Volatile var skipNewPipe = false
+
+    /** The path that last found a stream for each song, tried first next time. In memory only. */
+    private val worked = java.util.concurrent.ConcurrentHashMap<String, Path>()
+
+    private enum class Path { FAST, FULL, INNERTUBEX }
+
+    /**
+     * Songs every path refused just now, with the reason and when. The precache and the player both look a song up;
+     * within [REFUSED_MS] the second one gets the same answer without asking YouTube again.
+     */
+    private val refused = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    private const val REFUSED_MS = 30_000L
+    private const val NO_CONNECTION = "No connection to YouTube."
 
     @Synchronized
     private fun start() {
@@ -28,29 +59,70 @@ object Streams {
     }
 
     /**
-     * Blocking: call off the main thread. The fast path asks NewPipe's stream extractor for the audio streams only,
-     * and the downloader answers the requests whose results roma doesn't use itself (see [stub]): 5 of 7 requests,
-     * about 1.2 s. If that fails, or [full] is set (the fast URL was refused), the full StreamInfo lookup runs.
+     * Blocking: call off the main thread. Tries, in order: NewPipe's fast path (the stream extractor alone, with the
+     * downloader answering the requests roma doesn't use itself, see [stub]; about 0.2 s), NewPipe's full StreamInfo
+     * lookup, then InnerTubeX's extractor ([InnerTubeXStreams]), which asks other clients with their own context.
+     * The path that worked for this song goes first next time. [full] (the last URL was refused) skips the fast path.
      */
     fun audio(videoId: String, full: Boolean = false): AudioSource {
         start()
-        val url = "https://music.youtube.com/watch?v=$videoId"
-        val streams = (if (full) null else try {
-            lean.set(true)
-            val e = ServiceList.YouTube.getStreamExtractor(url)
-            e.fetchPage()
-            e.audioStreams.filter { it.content.isNotEmpty() }.ifEmpty { null }
-        } catch (_: Exception) {
-            visitor = null // perhaps refused; the next fast path asks for fresh visitor data
-            null
-        } finally {
-            lean.set(false)
-        }) ?: StreamInfo.getInfo(ServiceList.YouTube, url).audioStreams.filter { it.content.isNotEmpty() }
-        // Prefer the original track over dubbed ones, then the highest bitrate.
-        val best = streams
+        refused[videoId]?.let { (why, at) -> if (System.currentTimeMillis() - at < REFUSED_MS) throw StreamException(why) }
+        val order = listOfNotNull(worked[videoId]) + Path.entries
+        val failures = mutableListOf<Exception>()
+        for (path in order.distinct()) {
+            if (path == Path.FAST && full) continue
+            if (path != Path.INNERTUBEX && skipNewPipe) continue
+            try {
+                val a = when (path) {
+                    Path.FAST -> fast(videoId)
+                    Path.FULL -> best(videoId, StreamInfo.getInfo(ServiceList.YouTube, watchUrl(videoId)).audioStreams)
+                    Path.INNERTUBEX -> InnerTubeXStreams.audio(videoId)
+                }
+                worked[videoId] = path
+                return a
+            } catch (e: Exception) {
+                if (path == Path.FAST) visitor = null // perhaps refused; the next fast path asks for fresh visitor data
+                failures += e
+            }
+        }
+        worked.remove(videoId)
+        val why = reason(failures)
+        if (why != NO_CONNECTION) refused[videoId] = why to System.currentTimeMillis() // offline: Retry asks again
+        throw StreamException(why)
+    }
+
+    private fun watchUrl(videoId: String) = "https://music.youtube.com/watch?v=$videoId"
+
+    private fun fast(videoId: String): AudioSource = try {
+        lean.set(true)
+        val e = ServiceList.YouTube.getStreamExtractor(watchUrl(videoId))
+        e.fetchPage()
+        best(videoId, e.audioStreams)
+    } finally {
+        lean.set(false)
+    }
+
+    // Prefer the original track over dubbed ones, then the highest bitrate.
+    private fun best(videoId: String, streams: List<AudioStream>): AudioSource {
+        val best = streams.filter { it.content.isNotEmpty() }
             .sortedWith(compareBy<AudioStream>({ it.audioTrackType != null && it.audioTrackType?.name != "ORIGINAL" }, { -it.averageBitrate }))
             .firstOrNull() ?: error("No audio stream for $videoId")
         return AudioSource(best.content, best.format?.mimeType ?: "audio/*", best.averageBitrate)
+    }
+
+    /**
+     * The reason to show when every path failed: the last one that says why (YouTube's playability text, an age
+     * check), over generic ones ("no playable stream"); a network failure in plain words.
+     */
+    internal fun reason(failures: List<Exception>): String {
+        fun plain(e: Throwable): String? = when {
+            e is java.net.UnknownHostException || e is java.net.SocketTimeoutException || e is java.net.ConnectException -> NO_CONNECTION
+            e is StreamResolveException && e.reason in setOf(StreamResolveException.Reason.NO_PLAYABLE_STREAM, StreamResolveException.Reason.UNKNOWN) -> null
+            e is StreamResolveException && e.reason == StreamResolveException.Reason.NETWORK -> e.cause?.let(::plain) ?: NO_CONNECTION
+            e is IllegalStateException && e.message?.startsWith("No audio stream") == true -> null
+            else -> e.message?.trim()?.takeIf { it.isNotEmpty() }
+        }
+        return failures.asReversed().firstNotNullOfOrNull(::plain) ?: "YouTube gave no playable stream for this song."
     }
 
     /**
@@ -58,6 +130,8 @@ object Streams {
      * response of the last [audio] lookup of this video, so it costs no request of its own; null if it had none.
      */
     fun loudness(videoId: String): Float? = loudnessDb[videoId]
+
+    internal fun putLoudness(videoId: String, db: Float) { loudnessDb[videoId] = db }
 }
 
 private val loudnessDb = java.util.concurrent.ConcurrentHashMap<String, Float>()
@@ -122,5 +196,53 @@ private class OkHttpDownloader(private val http: OkHttpClient) : Downloader() {
             }
             return Response(r.code, r.message, r.headers.toMultimap(), text, r.request.url.toString())
         }
+    }
+}
+
+/**
+ * The fallback: InnerTubeX's extractor, as Metrolist uses it. It rolls over its own client list (VISIONOS 0.1 with
+ * visitor data from a watch page, the embedded web player, others) and solves signatures with QuackJS and the
+ * cipher hints from [CIPHER_CONFIG]. Account cookies ([com.metrolist.innertube.YouTube.cookie]) go with clients
+ * that accept them. Without a PoToken provider it only picks clients that need no PoToken: the music web client
+ * (WEB_REMIX) answers, but its stream stops after about 1 MB without one.
+ */
+object InnerTubeXStreams {
+    private const val CIPHER_CONFIG = "https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/player_configs.json"
+
+    /** Hands PoTokens to the clients that need one (a WebView BotGuard generator in the app); none by default. */
+    @Volatile var tokenProvider: TokenProvider? = null
+
+    private class Bundle(val generation: Long, val extractor: InnerTubeExtractor)
+    @Volatile private var bundle: Bundle? = null
+
+    // The cipher config, kept for the process; RemotePlayerConfigStore refreshes it when a player hash is missing.
+    private val configRepository = object : PlayerConfigRepository {
+        override val enabled = true
+        override val sourceUrl = CIPHER_CONFIG
+        override val defaultSourceUrl = CIPHER_CONFIG
+        override var cachedJson = ""
+        override var cachedAtMs = 0L
+        override var cachedSourceUrl = ""
+        override var cachedEtag = ""
+    }
+
+    // Rebuilt when innertube recreates its HTTP client (a proxy change), as Metrolist does.
+    @Synchronized
+    private fun extractor(): InnerTubeExtractor {
+        val t = com.metrolist.innertube.YouTube.extractionTransport()
+        bundle?.takeIf { it.generation == t.generation }?.let { return it.extractor }
+        val store = RemotePlayerConfigStore(t.httpClient, configRepository, InnerTubeLogger.NONE)
+        val cipher = YouTubeCipherService(t.httpClient, store, InnerTubeLogger.NONE)
+        val parser = YtConfigParserImpl(t.httpClient, t.innerTube, store, InnerTubeLogger.NONE, cipher)
+        return InnerTubeExtractor(parser, cipher, t.innerTube, tokenProvider = tokenProvider).also { bundle = Bundle(t.generation, it) }
+    }
+
+    /** Blocking. Throws [StreamResolveException] with a plain reason ("This track is age-restricted.") on refusal. */
+    fun audio(videoId: String): AudioSource = runBlocking {
+        val hints = ContentHints().withStreamCapabilities(false, false, true) // direct URLs only: no HLS, no SABR
+        val s = extractor().extract(videoId, hints, emptySet(), AudioQuality.HIGH, generateClientPlaybackNonce())
+            ?: throw StreamResolveException(StreamResolveException.Reason.NO_PLAYABLE_STREAM, "No playable stream found for this track.", null, null)
+        s.loudnessDb?.let { Streams.putLoudness(videoId, it.toFloat()) }
+        AudioSource(s.audioUrl, s.mimeType ?: "audio/*", s.bitrate ?: 0)
     }
 }
