@@ -617,7 +617,7 @@ fun SettingsScreen() {
         Header("Romanization")
         Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true)
         Switch1("Chinese: pinyin with tone marks", "rom.tones", true)
-        Options("Cyrillic", "rom.cyrillic", "english", listOf("english" to "English-style", "polish" to "Polish-style", "iso9" to "ISO 9"))
+        Options("Cyrillic (other languages use their national Latin form)", "rom.cyrillic", "english", listOf("english" to "Russian: English-style", "polish" to "Russian: Polish-style", "iso9" to "ISO 9, every language"))
         Options("Greek", "rom.greek", "classical", listOf("classical" to "Classical, no accents (β = b)", "elot" to "Modern, ELOT 743 (β = v)"))
         Options("Han text without kana is", "rom.han", "ja", listOf("ja" to "Japanese", "zh" to "Chinese"))
         Row1("Corrections: ${Store.romanizer.overrides.size}", "Export them to one file") { export.launch("roma-corrections.json") }

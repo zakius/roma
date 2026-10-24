@@ -51,20 +51,22 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
         return capFirst(n, raw(n, siblings, !sentence))
     }
 
-    private fun raw(n: String, siblings: List<String>, title: Boolean) =
-        punctuation(if (isJapanese(n, siblings)) japanese(n, title).joinToString("") { it.second } else other(n, title))
+    private fun raw(n: String, siblings: List<String>, title: Boolean, cyrLang: String = cyrillicLanguage(n)) =
+        punctuation(if (isJapanese(n, siblings)) japanese(n, title).joinToString("") { it.second } else other(n, title, cyrLang))
 
     /**
      * Romanizes a line split into parts (karaoke words), one result per part, so word timings map 1:1.
      * Japanese is read as a whole line, so each reading stays right in context; a token that spans several parts
      * goes to the part where it starts. Lyrics are in sentence case: only the line's first letter is capitalized.
+     * [cyrLang] is the Cyrillic language decided for the whole song; by default it is read from this line.
      */
-    fun parts(parts: List<String>, siblings: List<String> = emptyList(), songId: String? = null): List<String> {
+    fun parts(parts: List<String>, siblings: List<String> = emptyList(), songId: String? = null, cyrLang: String? = null): List<String> {
         val norm = parts.map(::normalize)
         val line = norm.joinToString("")
         val override = overrides.filter { it.scope == "song" && it.id == songId }
         val out: MutableList<String> = if (!isJapanese(line, siblings)) {
-            norm.map { if (hasNonLatin(it)) raw(it, siblings, false) else it }.toMutableList()
+            val lang = cyrLang ?: cyrillicLanguage(line)
+            norm.map { if (hasNonLatin(it)) raw(it, siblings, false, lang) else it }.toMutableList()
         } else {
             val words = Array(norm.size) { StringBuilder() }
             val starts = norm.runningFold(0) { acc, p -> acc + p.length }
@@ -89,7 +91,7 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
     }
 
     // Non-Japanese text: convert each run of one script, keep a space between words. Stylized words stay as they are.
-    private fun other(s: String, title: Boolean): String {
+    private fun other(s: String, title: Boolean, cyrLang: String): String {
         val out = StringBuilder()
         for (chunk in Regex("""\s+|\S+""").findAll(s).map { it.value }) {
             if (chunk.isBlank() || stylized(chunk)) {
@@ -101,14 +103,17 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
             while (i < cps.size) {
                 val script = Character.UnicodeScript.of(cps[i])
                 var j = i + 1
-                while (j < cps.size && Character.UnicodeScript.of(cps[j]) == script) j++
+                // An apostrophe inside a Cyrillic word belongs to it: Ukrainian м'ясо, Belarusian сям'я.
+                while (j < cps.size && (Character.UnicodeScript.of(cps[j]) == script ||
+                        script == Character.UnicodeScript.CYRILLIC && cps[j].toChar() in APOSTROPHES &&
+                        cps.getOrNull(j + 1)?.let { Character.UnicodeScript.of(it) } == script)) j++
                 val run = String(cps, i, j - i)
                 // A lone Greek or Cyrillic letter between symbols is part of a kaomoji: (´・ω・`)
                 val kaomoji = j - i == 1 && i > 0 && j < cps.size && !Character.isLetter(cps[i - 1]) && !Character.isLetter(cps[j])
                 val converted = when (script) {
                     Character.UnicodeScript.HAN -> words(chinese(run), title)
                     Character.UnicodeScript.HANGUL -> words(hangul(run), title)
-                    Character.UnicodeScript.CYRILLIC -> if (kaomoji) run else cyrillic(run)
+                    Character.UnicodeScript.CYRILLIC -> if (kaomoji) run else cyrillic(run, cyrLang)
                     Character.UnicodeScript.GREEK -> if (kaomoji) run else greek(run)
                     Character.UnicodeScript.LATIN, Character.UnicodeScript.COMMON, Character.UnicodeScript.INHERITED -> run
                     else -> words(icu.transliterate("Any-Latin", run), title)
@@ -150,7 +155,7 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
                     val reading = if (t.reading == "*") toKatakana(surface) else t.reading
                     kana(spoken(reading, t.pronunciation))
                 }
-                hasNonLatin(surface) -> other(surface, title)
+                hasNonLatin(surface) -> other(surface, title, cyrillicLanguage(surface))
                 else -> surface
             }
             if (sokuon && japaneseText) {
@@ -296,12 +301,27 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
 
     // ---- Cyrillic ----
 
-    fun cyrillic(s: String): String {
-        val table = when (settings.cyrillic) {
-            "polish" -> return polish(s)
-            "iso9" -> ISO9
-            else -> ENGLISH
+    /**
+     * Russian uses the chosen scheme (English-style, Polish-style, ISO 9). Other languages use their national Latin
+     * form, unless ISO 9 is chosen. Whatever a table leaves goes through ICU's Cyrillic-Latin, so no Cyrillic remains.
+     */
+    fun cyrillic(s: String, lang: String = cyrillicLanguage(s)): String {
+        val out = when {
+            settings.cyrillic == "iso9" -> table(s, ISO9)
+            lang == "ru" && settings.cyrillic == "polish" -> polish(s)
+            lang == "ru" -> table(s, ENGLISH)
+            lang == "mn" -> runCatching { icu.transliterate("mn-mn_Latn/MNS", s) }.getOrDefault(s)
+            else -> national(s, lang)
         }
+        if (!hasCyrillic(out)) return out
+        val icuOut = icu.transliterate("Cyrillic-Latin", out)
+        if (!hasCyrillic(icuOut)) return icuOut
+        // ICU skips letters such as Tatar җ and Tajik ҷ: take the letter they are built on (ж, ч), or drop them.
+        val based = icuOut.map { c -> if (hasCyrillic(c.toString())) baseLetter(c)?.toString() ?: "" else c.toString() }.joinToString("")
+        return icu.transliterate("Cyrillic-Latin", based).filterNot { hasCyrillic(it.toString()) }
+    }
+
+    private fun table(s: String, table: Map<Char, String>): String {
         val out = StringBuilder()
         for ((i, c) in s.withIndex()) {
             val lower = c.lowercaseChar()
@@ -309,6 +329,41 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
             // English style writes е as "ye" at the start of a word and after a vowel.
             if (table === ENGLISH && lower == 'е' && (i == 0 || s[i - 1].lowercaseChar() in VOWELS_CYR || !s[i - 1].isLetter())) r = "ye"
             out.append(if (c.isUpperCase()) capitalize(r, s.getOrNull(i + 1)?.isUpperCase() == true) else r)
+        }
+        return out.toString()
+    }
+
+    // Kazakh: the 2021 Latin alphabet. Ukrainian: the 2010 national transliteration. Belarusian: the 2007 national
+    // system. Serbian: Gaj's alphabet. Macedonian: the official romanization. Bulgarian: the 2009 Streamlined System.
+    private fun national(s: String, lang: String): String {
+        val table = NATIONAL.getValue(lang)
+        val out = StringBuilder()
+        for ((i, c) in s.withIndex()) {
+            val lower = c.lowercaseChar()
+            val prev = s.getOrNull(i - 1)?.lowercaseChar()
+            val next = s.getOrNull(i + 1)?.lowercaseChar()
+            val initial = prev == null || !prev.isLetter() && prev !in APOSTROPHES
+            if (lower in APOSTROPHES && (lang == "uk" || lang == "be")) continue
+            var r = when {
+                lang == "uk" && lower in "єїйюя" -> if (initial) UK_INITIAL.getValue(lower) else table.getValue(lower)
+                lang == "uk" && lower == 'г' && prev == 'з' -> "gh" // зг: zgh
+                lang == "be" && lower in "еёюя" -> {
+                    val soft = initial || prev in VOWELS_CYR || prev in APOSTROPHES || prev == 'ь' || prev == 'ў'
+                    (if (soft) "j" else "i") + table.getValue(lower)
+                }
+                lang == "be" && lower == 'ь' -> {
+                    // зь ль нь сь ць (and дзь) take an acute: ź ĺ ń ś ć. ь elsewhere is silent.
+                    if (prev != null && prev in "злнсц") out.setCharAt(out.length - 1, Normalizer.normalize(out.last() + "\u0301", Normalizer.Form.NFC).single())
+                    continue
+                }
+                lang == "bg" && lower == 'я' && prev == 'и' && (next == null || !next.isLetter()) -> "a" // final ия: ia
+                else -> table[lower] ?: c.toString()
+            }
+            if (c.isUpperCase()) {
+                r = capitalize(r, s.getOrNull(i + 1)?.isUpperCase() == true)
+                if (lang == "kk" && r.startsWith('I') && lower != 'і') r = "İ" + r.drop(1) // и й: İ, і: I
+            }
+            out.append(r)
         }
         return out.toString()
     }
@@ -349,6 +404,38 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
         fun hasNonLatin(s: String) = s.codePoints().anyMatch {
             val sc = Character.UnicodeScript.of(it)
             sc != Character.UnicodeScript.LATIN && sc != Character.UnicodeScript.COMMON && sc != Character.UnicodeScript.INHERITED
+        }
+
+        /**
+         * The language of a Cyrillic string, from its distinctive letters: "kk", "uk", "be", "sr", "mk", "bg", "mn" or "ru".
+         * Bulgarian has no letter of its own, only ъ before a consonant (път, България), which Russian never writes
+         * now, and no ы э ё. Anything else is Russian, the safe default.
+         */
+        fun cyrillicLanguage(s: String): String {
+            val t = s.lowercase()
+            fun has(letters: String) = t.any { it in letters }
+            return when {
+                has("әғқңұһ") -> "kk"
+                has("өү") -> if (has("і")) "kk" else "mn"
+                has("ў") || has("і") && has("ыэё") && !has("иєїґ") -> "be"
+                has("єїґі") -> "uk"
+                has("ѓќѕ") -> "mk"
+                has("ђјљњћџ") -> "sr"
+                Regex("ъ[бвгджзйклмнпрстфхцчшщ]").containsMatchIn(t) && !has("ыэё") -> "bg"
+                else -> "ru"
+            }
+        }
+
+        private fun hasCyrillic(s: String) = s.codePoints().anyMatch { Character.UnicodeScript.of(it) == Character.UnicodeScript.CYRILLIC }
+
+        private val CYRILLIC_NAMES by lazy { (0x400..0x45F).associateBy { Character.getName(it) } }
+
+        /** "CYRILLIC SMALL LETTER ZHE WITH DESCENDER" → ж; "… BASHKIR KA" → к. Null if no basic letter fits. */
+        private fun baseLetter(c: Char): Char? {
+            val name = Character.getName(c.code) ?: return null
+            val case = if (c.isUpperCase()) "CAPITAL" else "SMALL"
+            val letter = name.substringAfter("LETTER ").substringBefore(" WITH ")
+            return (CYRILLIC_NAMES["CYRILLIC $case LETTER $letter"] ?: CYRILLIC_NAMES["CYRILLIC $case LETTER ${letter.substringAfterLast(' ')}"])?.toChar()
         }
 
         fun stripMarks(s: String) = Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "")
@@ -454,10 +541,21 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
         )
 
         private const val VOWELS_CYR = "аеёиоуыэюяіїєaeiou"
+        private const val APOSTROPHES = "'’ʼ"
         private fun cyr(letters: String, vararg latin: String) = letters.withIndex().associate { (i, c) -> c to latin[i] }
         private const val CYR = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяіїєґў"
         private val ENGLISH = cyr(CYR, "a", "b", "v", "g", "d", "e", "yo", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "kh", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya", "i", "yi", "ye", "g", "w")
         private val ISO9 = cyr(CYR, "a", "b", "v", "g", "d", "e", "ë", "ž", "z", "i", "j", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "h", "c", "č", "š", "ŝ", "ʺ", "y", "ʹ", "è", "û", "â", "ì", "ï", "ê", "g̀", "ŭ")
+        private val NATIONAL = mapOf(
+            "kk" to cyr("абвгдеёжзийклмнопрстуфхцчшщъыьэюяәғқңөұүһі", "a", "b", "v", "g", "d", "e", "io", "j", "z", "i", "i", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "h", "ts", "tş", "ş", "ştş", "", "y", "", "e", "iu", "ia", "ä", "ğ", "q", "ñ", "ö", "ū", "ü", "h", "ı"),
+            "uk" to cyr("абвгґдеєжзиіїйклмнопрстуфхцчшщьюя", "a", "b", "v", "h", "g", "d", "e", "ie", "zh", "z", "y", "i", "i", "i", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "kh", "ts", "ch", "sh", "shch", "", "iu", "ia"),
+            // е ё ю я are j or i plus this vowel.
+            "be" to cyr("абвгґдеёжзійклмнопрстуўфхцчшыэюя", "a", "b", "v", "h", "g", "d", "e", "o", "ž", "z", "i", "j", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "ŭ", "f", "ch", "c", "č", "š", "y", "e", "u", "a"),
+            "sr" to cyr("абвгдђежзијклљмнњопрстћуфхцчџш", "a", "b", "v", "g", "d", "đ", "e", "ž", "z", "i", "j", "k", "l", "lj", "m", "n", "nj", "o", "p", "r", "s", "t", "ć", "u", "f", "h", "c", "č", "dž", "š"),
+            "mk" to cyr("абвгдѓежзѕијклљмнњопрстќуфхцчџш", "a", "b", "v", "g", "d", "gj", "e", "ž", "z", "dz", "i", "j", "k", "l", "lj", "m", "n", "nj", "o", "p", "r", "s", "t", "kj", "u", "f", "h", "c", "č", "dž", "š"),
+            "bg" to cyr("абвгдежзийклмнопрстуфхцчшщъьюя", "a", "b", "v", "g", "d", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "h", "ts", "ch", "sh", "sht", "a", "y", "yu", "ya"),
+        )
+        private val UK_INITIAL = mapOf('є' to "ye", 'ї' to "yi", 'й' to "y", 'ю' to "yu", 'я' to "ya")
         private val POLISH = cyr(CYR, "a", "b", "w", "g", "d", "e", "io", "ż", "z", "i", "j", "k", "ł", "m", "n", "o", "p", "r", "s", "t", "u", "f", "ch", "c", "cz", "sz", "szcz", "", "y", "", "e", "iu", "ia", "i", "ji", "je", "g", "u")
     }
 }

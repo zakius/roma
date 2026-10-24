@@ -142,6 +142,31 @@ class RomanizeTest {
         assertEquals("Žanna", Romanizer(jvmIcu, RomanizeSettings(cyrillic = "iso9")).machine("Жанна"))
     }
 
+    @Test fun otherCyrillicLanguages() {
+        assertEquals("kk", Romanizer.cyrillicLanguage("Ерлерін елін сүйген"))
+        assertEquals("Izı qalğan babalardyñ qasterlı jerım!", r.machine("Ізі қалған бабалардың қастерлі жерім!", sentence = true))
+        assertEquals("Erlerın elın süigen", r.machine("Ерлерін елін сүйген", sentence = true))
+        assertEquals("İt pen mysyq", r.machine("Ит пен мысық", sentence = true))
+        assertEquals("Dobryi vechir, my z Ukrainy", r.machine("Добрий вечір, ми з України", sentence = true))
+        assertEquals("Yizhak i zghoda, miaso", r.machine("Їжак і згода, м'ясо", sentence = true))
+        assertEquals("Dobraj ranicy, siabry z Bielarusi", r.machine("Добрай раніцы, сябры з Беларусі", sentence = true))
+        assertEquals("Jon liubić svaju siamju ŭ Homieli", r.machine("Ён любіць сваю сям'ю ў Гомелі", sentence = true))
+        assertEquals("Ljubav i život u Beogradu", r.machine("Љубав и живот у Београду", sentence = true))
+        assertEquals("Đorđe, ćerka, džem, njega, LJUBAV", r.machine("Ђорђе, ћерка, џем, њега, ЉУБАВ", sentence = true))
+        assertEquals("Gjorgji, kje dojdam", r.machine("Ѓорѓи, ќе дојдам", sentence = true))
+        assertEquals("Savsem sam v Balgaria", r.machine("Съвсем сам в България", sentence = true))
+        assertEquals("Öglöönii mend", r.machine("Өглөөний мэнд", sentence = true))
+        // Russian keeps its schemes; ISO 9 applies to every language.
+        assertEquals("ru", Romanizer.cyrillicLanguage("Объявление в подъезде"))
+        val iso = Romanizer(jvmIcu, RomanizeSettings(cyrillic = "iso9"))
+        assertEquals("Dobrij večìr", iso.machine("Добрий вечір", sentence = true))
+        // Lyrics decide once per song: a line without Kazakh letters in a Kazakh song is still Kazakh.
+        assertEquals(listOf("Ūly dala", "Erlerın"), r.parts(listOf("Ұлы дала"), cyrLang = "kk") + r.parts(listOf("Ерлерін"), cyrLang = "kk"))
+        // Whatever no table covers goes through ICU, so no Cyrillic letter is left (Tatar җ).
+        val out = r.machine("Җир, Ӂ, Ԥ, ҷ") + r.machine("Ізі җир")
+        assertFalse(out.any { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.CYRILLIC }, out)
+    }
+
     @Test fun latinUntouched() {
         assertEquals("Daft Punk", r.machine("Daft Punk"))
         assertEquals("Beyoncé", r.machine("Beyoncé"))

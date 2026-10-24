@@ -33,7 +33,7 @@ Step 0, before writing code: check that both libraries are maintained, that they
   - Japanese: Modified Hepburn by default; option for no macrons.
   - Korean: Revised Romanization.
   - Chinese: pinyin with tone marks by default; option for no tones.
-  - Cyrillic: English-style by default; options for Polish-style and ISO 9.
+  - Cyrillic: the language is read from its distinctive letters (below). Russian: English-style by default; options for Polish-style and ISO 9. Other languages use their national Latin form; the ISO 9 option applies to every language.
   - Greek: a classical scheme without accent marks by default (β = b, βίος → "Bios"): ICU's `Greek-Latin` with its marks removed. Option for modern Greek, ELOT 743 (β = v): ICU's `Greek-Latin/UNGEGN` without its macron below (η = i̱), which only serves reversibility. ICU was checked first; it gives the right letters, so no table of our own.
   - Other scripts: ICU defaults.
 - Han text, Japanese or Chinese? Decide in this order:
@@ -134,6 +134,24 @@ Decisions taken while building v1, where the spec left room or turned out differ
 - Playing from a list starts a new queue: the rest of the list goes into "You queued" and radio from the tapped song follows. Queueing a song that is already in the radio moves it out of the radio.
 - The ⋯ menu, in this order everywhere: Play next, Add to queue, Start radio, Like, Go to artist, Go to album, Correct romanization…, Don't romanize title, Don't romanize artist, Remove from queue, Ban song, Ban artist. "Don't romanize title" stores a song-scoped correction with latin = original, "Don't romanize artist" an artist-scoped one; both are dimmed when the text is already Latin, and once set they read "Romanize title" / "Romanize artist" and undo it. The correction dialog has "Keep original", which does the same for the chosen field and scope. Settings lists every correction; tapping one removes it. Unavailable items are dimmed, not hidden.
 - Library tabs: Playlists, Albums, Artists. Search's Playlists filter is community playlists.
+- Cyrillic languages (2026-10-24). Decided once per string, or once per song for lyrics (from all lines), by the first rule that matches (`Romanizer.cyrillicLanguage`):
+  1. Kazakh: any of ә ғ қ ң ұ һ, or ө ү together with і.
+  2. Mongolian: ө ү without і.
+  3. Belarusian: ў, or і with ы, э or ё and none of и є ї ґ.
+  4. Ukrainian: є ї ґ or і.
+  5. Macedonian: ѓ ќ ѕ. Serbian: ђ ј љ њ ћ џ.
+  6. Bulgarian: ъ before a consonant (път, България) and none of ы э ё. Russian writes ъ only before е ё ю я.
+  7. Otherwise Russian, the safe default.
+- Their Latin forms:
+  - Kazakh: the 2021 Latin alphabet (ä ğ q ñ ö ū ü h ı ş j; и й → i, capital İ; і → ı, capital I). Letters it has no own letter for: ё io, ц ts, ч tş, щ ştş, ю iu, я ia, э e, ъ ь dropped. Russian's "ye" for е is not used.
+  - Ukrainian: the 2010 national transliteration. є ї й ю я are ye yi y yu ya at the start of a word, ie i i iu ia elsewhere; зг is zgh; the apostrophe is dropped.
+  - Belarusian: the 2007 national system (г h, х ch, ц c, ў ŭ). е ё ю я are je jo ju ja at the start of a word and after a vowel, apostrophe, ь or ў; ie io iu ia after a consonant. зь ль нь сь ць дзь give ź ĺ ń ś ć dź.
+  - Serbian: Gaj's Latin alphabet. Macedonian: the same, with ѓ gj, ќ kj, ѕ dz.
+  - Bulgarian: the 2009 Streamlined System (ъ a, щ sht, ь y; a final ия is ia).
+  - Mongolian: MNS 5217:2012 through ICU's `mn-mn_Latn/MNS`.
+  - An apostrophe between Cyrillic letters belongs to the word, so м'ясо is one word.
+  - ISO 9 uses our table for Russian, Ukrainian and Belarusian letters; other letters go through the safety net.
+  - Safety net: whatever is left goes through ICU's `Cyrillic-Latin`. Letters ICU doesn't know (Tatar җ, Tajik ҷ) become the letter they are built on, by Unicode name (җ → ж), and go through ICU again; if none fits, the letter is dropped. Only stylized words (ЯOCK) and kaomoji letters keep their Cyrillic, by the rules above.
 - Known romanization limit: IPADIC reads some compounds by their parts (二人 → "ninin", not "futari"). Overrides fix it per song.
 
 ## Home and personal mixes (2026-10-24)
