@@ -19,4 +19,11 @@ fun main() = runBlocking {
     val n = c.inputStream.use { it.readAllBytes().size }
     println("stream: HTTP ${c.responseCode}, read $n bytes")
     check(n > 1000)
+
+    // Lyrics providers, each on its own, with the song's original metadata.
+    val q = LyricsQuery(song.id, song.title, song.artists.joinToString { it.name }, song.album?.name, song.duration ?: 0)
+    for (p in LyricsProviders.all) {
+        val l = runCatching { p.fetch(q) }.onFailure { println("lyrics ${p.name}: ${it.message}") }.getOrNull()
+        println("lyrics ${p.name}: " + if (l == null) "none" else "${l.lines.size} lines, synced=${l.synced}, word=${l.wordLevel}, first=${l.lines.firstOrNull { it.text.isNotBlank() }?.text}")
+    }
 }
