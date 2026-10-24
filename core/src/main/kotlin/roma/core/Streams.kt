@@ -32,12 +32,12 @@ object Streams {
     /**
      * Blocking: call off the main thread. The fast path asks NewPipe's stream extractor for the audio streams only,
      * and the downloader answers the requests whose results roma doesn't use itself (see [stub]): 5 of 7 requests,
-     * about 1.2 s. If that fails, the full StreamInfo lookup runs.
+     * about 1.2 s. If that fails, or [full] is set (the fast URL was refused), the full StreamInfo lookup runs.
      */
-    fun audio(videoId: String): AudioSource {
+    fun audio(videoId: String, full: Boolean = false): AudioSource {
         start()
         val url = "https://music.youtube.com/watch?v=$videoId"
-        val streams = try {
+        val streams = (if (full) null else try {
             lean.set(true)
             val e = ServiceList.YouTube.getStreamExtractor(url)
             e.fetchPage()
@@ -46,7 +46,7 @@ object Streams {
             null
         } finally {
             lean.set(false)
-        } ?: StreamInfo.getInfo(ServiceList.YouTube, url).audioStreams.filter { it.content.isNotEmpty() }
+        }) ?: StreamInfo.getInfo(ServiceList.YouTube, url).audioStreams.filter { it.content.isNotEmpty() }
         // Prefer the original track over dubbed ones, then the highest bitrate.
         val best = streams
             .sortedWith(compareBy<AudioStream>({ it.audioTrackType != null && it.audioTrackType?.name != "ORIGINAL" }, { -it.averageBitrate }))

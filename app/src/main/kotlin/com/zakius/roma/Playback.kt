@@ -91,6 +91,8 @@ object Playback {
         private set
 
     private val urls = HashMap<String, Pair<String, Long>>() // videoId to (url, resolved at)
+    private var lastRetry: Pair<String, Long>? = null
+    private val fullLookup: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private val loudness = java.util.concurrent.ConcurrentHashMap<String, Float>()
 
     fun init(c: Context) {
@@ -135,8 +137,22 @@ object Playback {
             }
 
             override fun onPlayerError(e: PlaybackException) {
+                val id = current()?.song?.id
+                urls.remove(id) // the URL may have expired; a retry resolves it again
+                // A refused stream URL (403, seen once after a seek) gets one silent retry through the full lookup,
+                // from the same position. A second failure within a minute shows the error.
+                val refused = (e.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode in setOf(403, 410)
+                val now = System.currentTimeMillis()
+                if (refused && id != null && (lastRetry?.first != id || now - lastRetry!!.second > 60_000)) {
+                    lastRetry = id to now
+                    fullLookup.add(id)
+                    val at = player.currentPosition
+                    player.prepare()
+                    player.seekTo(at)
+                    player.play()
+                    return
+                }
                 error = e.cause?.message ?: e.errorCodeName
-                urls.remove(current()?.song?.id) // the URL may have expired; a retry resolves it again
             }
         })
         scope.launch {
@@ -163,7 +179,7 @@ object Playback {
         synchronized(urls) {
             urls[id]?.let { (url, at) -> if (System.currentTimeMillis() - at < 5 * 3600_000) return url }
         }
-        val a = Streams.audio(id)
+        val a = Streams.audio(id, full = fullLookup.remove(id))
         synchronized(urls) { urls[id] = a.url to System.currentTimeMillis() }
         if (!loudness.containsKey(id)) scope.launch(Dispatchers.IO) {
             Streams.loudness(id)?.let { db -> loudness[id] = db; withContext(Dispatchers.Main) { applyLoudness(id) } }
