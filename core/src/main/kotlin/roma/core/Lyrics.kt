@@ -119,8 +119,8 @@ fun similarity(a: String, b: String, icu: Icu? = null): Double {
 
 /**
  * Above this the lyrics count as the same text as YouTube Music's. Measured: the same lyrics from two providers score
- * 0.8–1.0 (small spelling differences, a missing repeat); a translated or other-language version scores under 0.1;
- * a different song in the same language around 0.2–0.35.
+ * 0.77–1.0 (credit lines, a missing repeat, Traditional vs Simplified once folded); an other-language version under
+ * 0.1; a different song in the same language around 0.3.
  */
 const val SAME_LYRICS = 0.6
 
