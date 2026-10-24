@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.List
@@ -259,7 +259,10 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     // states change only when the line or word does, so a frame without a change costs a position read and two
     // searches, not a redraw. While paused, the position moves only by a seek (a tapped line), and every seek or
     // start is a player change (Playback.tick): the loop sleeps until one comes.
-    var current by remember(lines) { mutableIntStateOf(-1) }
+    // The view opens (or the lyrics arrive) already at the current line: it is read from the player here, before the
+    // first frame, and the list starts there. Only later line changes scroll smoothly.
+    val startLine = remember(lines) { if (synced && Playback.pending == null) lines.indexOfLast { it.startMs <= Playback.player.currentPosition } else -1 }
+    var current by remember(lines) { mutableIntStateOf(startLine) }
     var currentWord by remember(lines) { mutableIntStateOf(-1) }
     LaunchedEffect(lines, synced) {
         if (!synced) return@LaunchedEffect
@@ -274,10 +277,11 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
             currentWord = lines.getOrNull(line)?.words?.indexOfLast { it.startMs <= pos } ?: -1
         }
     }
-    val state = rememberLazyListState()
+    val state = remember(lines) { LazyListState(firstVisibleItemIndex = if (startLine > 2) startLine - 2 else 0) }
     val showOriginal = Store.bool("lyrics.layer.original", true)
     val showLatin = Store.bool("lyrics.layer.latin", true)
     var fixWord by remember { mutableStateOf<String?>(null) }
+    // At the start line the list is already in place, so this first run doesn't move it.
     LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = state) {
         itemsIndexed(lines) { i, line ->
