@@ -104,6 +104,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import roma.core.Item
 import roma.core.LastFm
 import roma.core.Override
+import roma.core.Romanizer
 import roma.core.Song
 import roma.core.isPersonalMix
 import roma.core.item
@@ -120,7 +121,7 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val mod = if (center) Modifier.fillMaxWidth() else Modifier
     when {
-        t.isLatin -> Text(t.original, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        t.isLatin || Store.reads(t.original) -> Text(t.original, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "romanized" -> Text(t.latin, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "original" -> Text(t.original, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "ruby" -> Column(mod) {
@@ -265,19 +266,34 @@ private fun MenuItem(label: String, enabled: Boolean, onClick: () -> Unit) {
     )
 }
 
-/** Correct the Latin form of the song's title, an artist or the album, for this string, this song or this artist. */
+/**
+ * Correct the Latin form of the song's title, an artist or the album, for this string, this song or this artist; or,
+ * through the field's words underneath, one word's reading.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun CorrectDialog(s: Song, onDone: () -> Unit) {
+fun CorrectDialog(s: Song, onDone: () -> Unit) {
     val fields = listOf(s.title) + s.artists.map { it.name } + listOfNotNull(s.album?.name)
     var field by remember { mutableIntStateOf(0) }
     var scope by remember { mutableStateOf("song") }
     var latin by remember(field) { mutableStateOf(fields[field].latin) }
+    var word by remember { mutableStateOf<String?>(null) }
+    word?.let { w -> return WordDialog(w, null, s.id, onDone) }
+    // The field's words, each a button that opens its reading: only when there is more than one to choose from.
+    val words = remember(field) {
+        val f = fields[field]
+        if (f.isLatin) emptyList() else Store.romanizer.pieces(f.original, fields.map { it.original }).map { it.trim() }.filter { Romanizer.hasNonLatin(it) }
+    }
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text("Correct romanization") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 fields.forEachIndexed { i, t -> Choice(t.original, field == i) { field = i } }
+                if (words.size > 1) {
+                    Text("Or one word's reading:", style = MaterialTheme.typography.bodySmall)
+                    androidx.compose.foundation.layout.FlowRow { words.forEach { w -> TextButton(onClick = { word = w }) { Text(w) } } }
+                }
                 HorizontalDivider()
                 Choice("Only this song", scope == "song") { scope = "song" }
                 Choice("This artist's songs", scope == "artist") { scope = "artist" }
@@ -299,6 +315,48 @@ private fun CorrectDialog(s: Song, onDone: () -> Unit) {
                     Store.saveOverride(Override(scope, id, fields[field].original, fields[field].original))
                     onDone()
                 }) { Text("Keep original") }
+                TextButton(onClick = onDone) { Text("Cancel") }
+            }
+        },
+    )
+}
+
+/**
+ * A word's reading: what the dictionary says (kana, romaji, dictionary form, part of speech), and the user's own
+ * reading for this song or everywhere. [inContext] is the romaji the word has where it was picked; it fills the field.
+ * The scope last used is offered first, so a run of fixes during a song needs no extra tap.
+ */
+@Composable
+fun WordDialog(word: String, inContext: String?, songId: String, onDone: () -> Unit) {
+    val existing = Store.wordOverride(word, songId)
+    val info = remember(word) { runCatching { Store.romanizer.lookUp(word) }.getOrDefault(emptyList()) }
+    var everywhere by remember { mutableStateOf(existing?.let { it.id == "" } ?: Store.bool("fix.everywhere", false)) }
+    // In context the word may carry the line's capital ("Kimi" first in a line); the reading itself doesn't.
+    var latin by remember { mutableStateOf(existing?.latin ?: (inContext ?: Store.romanizer.machine(word, sentence = true, songId = songId)).let { if (it.getOrNull(1)?.isUpperCase() == true) it else it.replaceFirstChar(Char::lowercase) }) }
+    fun save(value: String) {
+        Store.set("fix.everywhere", everywhere)
+        Store.saveWord(word, songId, everywhere, value)
+        onDone()
+    }
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text(word) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                val dim = MaterialTheme.colorScheme.onSurfaceVariant
+                info.forEach { t ->
+                    val base = if (t.dictionaryForm != t.surface) " · from ${t.dictionaryForm} (${t.dictionaryRomaji})" else ""
+                    Text("${t.surface}  ${t.kana} · ${t.romaji} · ${t.partOfSpeech}$base", style = MaterialTheme.typography.bodySmall, color = dim)
+                }
+                OutlinedTextField(latin, { latin = it }, Modifier.padding(top = 8.dp), singleLine = true, label = { Text("Reading (empty: automatic)") })
+                Choice("In this song", !everywhere) { everywhere = false }
+                Choice("Everywhere: every song, title and line", everywhere) { everywhere = true }
+            }
+        },
+        confirmButton = { TextButton(onClick = { save(latin) }) { Text("Save") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { save(word) }) { Text("Keep original") }
                 TextButton(onClick = onDone) { Text("Cancel") }
             }
         },
@@ -862,10 +920,23 @@ fun SettingsScreen() {
         Options("Cyrillic (other languages use their national Latin form)", "rom.cyrillic", "english", listOf("english" to "Russian: English-style", "polish" to "Russian: Polish-style", "iso9" to "ISO 9, every language"))
         Options("Greek", "rom.greek", "classical", listOf("classical" to "Classical, no accents (β = b)", "elot" to "Modern, ELOT 743 (β = v)"))
         Options("Han text without kana is", "rom.han", "ja", listOf("ja" to "Japanese", "zh" to "Chinese"))
+        // Text only in scripts the user reads shows as written, in lists, the player, the notification and lyrics.
+        Text("Scripts you read (shown as written, not romanized)", Modifier.padding(start = 16.dp, top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+        val read = Store.readScripts
+        SCRIPTS.forEach { (k, label) ->
+            Row(Modifier.fillMaxWidth().clickable { Store.set(Store.READ_KEY, (if (k in read) read - k else read + k).joinToString(",")) }.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Checkbox(k in read, null, Modifier.padding(end = 8.dp))
+                Text(label)
+            }
+        }
         Row1("Corrections: ${Store.romanizer.overrides.size}", "Export them to one file") { export.launch("roma-corrections.json") }
         Row1("Import corrections", "Replaces the current ones") { import.launch(arrayOf("application/json", "*/*")) }
         Store.romanizer.overrides.forEach { o ->
-            val scope = when (o.scope) { "song" -> "This song"; "artist" -> "This artist"; else -> "Everywhere" }
+            val scope = when (o.scope) {
+                "song" -> "This song"; "artist" -> "This artist"
+                "word" -> if (o.id == "") "Word, everywhere" else "Word, in one song"
+                else -> "Everywhere"
+            }
             Row1(if (o.latin == o.original) "${o.original}: not romanized" else "${o.original} → ${o.latin}", "$scope · Tap to remove") {
                 Store.saveOverride(Override(o.scope, o.id, o.original, ""))
             }
@@ -885,6 +956,8 @@ fun SettingsScreen() {
         Row1("Search lyrics again for this song", "After changing the providers") { Playback.refetchLyrics() }
         Switch1("Show original", "lyrics.layer.original", true)
         Switch1("Show romanization", "lyrics.layer.latin", true)
+        Options("Romanization layout", "lyrics.layout", "lines", listOf("lines" to "A line under the original", "ruby" to "Above each word, like furigana"))
+        Text("Long-press a word in the lyrics to see its reading and correct it, for that song or everywhere.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
         // A global setting: never dimmed by the current song. A song whose translation isn't in the chosen language
         // just shows none.
         Switch1("Show translation", "lyrics.layer.translation", true)
@@ -920,6 +993,8 @@ fun SettingsScreen() {
     }
     editing?.let { (key, title) -> TextInputDialog(title, Store.str(key, ""), { editing = null }) { Store.set(key, it.trim()) } }
 }
+
+private val SCRIPTS = listOf("ja" to "Japanese", "zh" to "Chinese", "ko" to "Korean", "cyrillic" to "Cyrillic", "greek" to "Greek", "other" to "Other scripts")
 
 private val MODES = listOf("both" to "Latin, original underneath", "ruby" to "Original, reading above", "romanized" to "Latin only", "original" to "Original only")
 

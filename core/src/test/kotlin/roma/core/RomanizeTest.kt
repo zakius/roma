@@ -279,6 +279,7 @@ class RomanizeTest {
         // A word reading applies to the token inside longer strings: titles, lyric lines, karaoke parts.
         assertEquals("Watashi no uta", o.machine("私の歌", sentence = true))
         assertEquals("Watashi no Uta", o.text("私の歌").latin)
+        assertEquals("Uta to Watashi", o.text("歌と私").latin)
         assertEquals(listOf("Kimi to", " watashi"), o.parts(listOf("君と", "私")))
         assertEquals("Kimi to watashi", o.parts(listOf("君と私")).single())
         // Only whole tokens: 私立 (shiritsu) is another word.

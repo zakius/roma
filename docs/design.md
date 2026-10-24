@@ -62,6 +62,8 @@ Step 0, before writing code: check that both libraries are maintained, that they
   - Known limit: inside Japanese text, Sudachi splits "ΛRCTIC" into Λ and RCTIC, so the rule doesn't hold there.
 - A title's own Latin form: when a song or album title carries one after " - ", " / " or in parentheses, and that part is fully Latin, the Latin form is just that part ("スピカ - Spica" → "Spica"). A part that looks like a version tag (ver, live, remix, feat., TV size, …) doesn't count, so "(Ballade Ver.)" is kept. Artist names don't get this rule ("… - Topic").
 - Overrides: the user can correct any string. Scope is this string, this song or this artist. Stored locally and exportable as one file.
+- Word readings (scope "word"): the reading of one word, in one song or everywhere (私 → watashi where the dictionary says watakushi). It applies inside any string, titles and lyric lines alike, wherever the word is a whole dictionary token or a run of whole tokens; never inside a longer token (私立 stays shiritsu). Japanese matches Sudachi tokens; other scripts match a word between spaces or a run of one script. A song's own reading wins over the everywhere one. Title and sentence case apply to it like any word. Set from a long-press on a lyric word or from the correction dialog's word buttons; listed in Settings and part of the export.
+- Scripts you read (setting, none by default): text only in those scripts shows as written, in lists, the player, the notification and the lyrics (no romanization line).
 - Display modes: Romanized, Both (Latin with the original small underneath), Ruby (reading above the original), Original. Defaults: lists show Both; the player shows the Latin title with the original underneath.
 - Search: the local index includes the romanized forms, so "kimi no" finds 君の声. Remote search sends the query as typed; YouTube's own spelling correction applies (see Search).
 
@@ -81,7 +83,9 @@ Step 0, before writing code: check that both libraries are maintained, that they
 - The end of the lyrics shows "Lyrics: <source>" and "Translation: <source>" in small text. YTM's source keeps its own source message ("YouTube Music · Source: LyricFind").
 - Display per line: original, romanization, translation (if available). Each layer can be turned on or off. In karaoke mode, highlight the current word in **both** the original and the romanization: romanize per token so the timings map 1:1.
 - Translations show only when their language matches the "Translation language" setting: by default the device language, then English. KuGou and NetEase send Chinese translations, which are no use here. No provider tags the language, so it is read from the script: Han is Chinese, kana Japanese, Hangul Korean, Cyrillic Russian, Latin English. A song whose translation doesn't match shows no translation layer. The "Show translation" switch is a global setting and is never dimmed by the current song.
-- Tapping a line seeks to it. Long-pressing a word lets the user correct its reading (an override scoped to the song).
+- Tapping a line seeks to it. Long-pressing a word (in either layer) opens its card: the dictionary's kana, romaji, dictionary form and part of speech, and the user's reading for this song or everywhere (the scope last used is offered first), or Keep original. The word is the dictionary word under the finger, not the karaoke syllable: し in 忙|し|い opens 忙しい.
+- Each line is also split into words as its romanization spaces them (`Romanizer.pieces`: a word with its glued endings, particles apart). The "Above each word" layout sets each word's romaji right above it (ruby); in karaoke the word holding the current syllable is lit.
+- Long-pressing the player's title or artist opens the correction dialog.
 
 ## Controls: fixed positions
 

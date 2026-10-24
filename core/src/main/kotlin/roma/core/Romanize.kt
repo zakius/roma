@@ -220,7 +220,7 @@ class Romanizer(
         var prev: Token? = null
         var sokuon = false // the previous token ended in ッ, so this one's first consonant doubles: dat|ta
         var stray = false
-        // A user's word reading replaces the longest run of whole tokens that spells the word, as typed.
+        // A user's word reading replaces the longest run of whole tokens that spells the word.
         val wanted = words.filterKeys { it.isNotEmpty() && it in s }
         val ends = tokens.map { it.end }
         var skip = 0
@@ -231,7 +231,8 @@ class Romanizer(
                 val last = ends.indexOf(t.begin + word.length)
                 val latin = wanted.getValue(word)
                 val isWord = latin.firstOrNull()?.isLetterOrDigit() == true
-                result.add(Triple(word, (if (prevWord && isWord) " " else "") + latin, null))
+                // A reading is a word like any other: title case applies to it, as the line's first letter does.
+                result.add(Triple(word, (if (prevWord && isWord) " " else "") + (if (title && isWord) capitalize(latin, false) else latin), null))
                 prevWord = latin.lastOrNull()?.isLetterOrDigit() == true
                 prev = tokens[last]
                 sokuon = false

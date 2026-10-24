@@ -113,6 +113,7 @@ object Store {
             romanizer.settings = romanizeSettings()
             Playback.romanizationChanged()
         }
+        if (key == READ_KEY) Playback.romanizationChanged() // the notification's title follows
         if (key.startsWith("rom.") || key == "cookie") dataChanged()
         version++
     }
@@ -181,6 +182,20 @@ object Store {
         setOverrides(if (o.latin.isBlank()) list else list + o)
     }
 
+    /** The reading the user gave this word: this song's own first, then the everywhere one. Null if none. */
+    fun wordOverride(word: String, songId: String?): Override? =
+        romanizer.overrides.firstOrNull { it.scope == "word" && it.id == songId && it.original == word }
+            ?: romanizer.overrides.firstOrNull { it.scope == "word" && it.id == "" && it.original == word }
+
+    /**
+     * A word's reading, in one song or everywhere; a blank latin removes it. Saving it everywhere also
+     * drops this song's own reading of the word, which would otherwise still win here.
+     */
+    fun saveWord(word: String, songId: String, everywhere: Boolean, latin: String) {
+        val list = romanizer.overrides.filterNot { it.scope == "word" && it.original == word && (it.id == songId || everywhere && it.id == "") }
+        setOverrides(if (latin.isBlank()) list else list + Override("word", if (everywhere) "" else songId, word, latin.trim()))
+    }
+
     fun setOverrides(list: List<Override>) {
         romanizer.overrides = list
         overridesFile.writeText(json.encodeToString(list))
@@ -192,6 +207,19 @@ object Store {
     fun exportOverrides(): String = overridesFile.takeIf { it.exists() }?.readText() ?: "[]"
 
     // ---- Display ----
+
+    /** Scripts the user reads ("ja", "zh", "ko", "cyrillic", "greek", "other"): text only in those shows as written. */
+    val readScripts: Set<String> get() = str(READ_KEY, "").split(',').filter { it.isNotEmpty() }.toSet()
+
+    fun reads(original: String, siblings: List<String> = emptyList()): Boolean {
+        val read = readScripts
+        return read.isNotEmpty() && romanizer.scripts(original, siblings).let { it.isNotEmpty() && read.containsAll(it) }
+    }
+
+    /** The form a single-line surface (notification, menu) shows: the original in a script the user reads, else Latin. */
+    fun shown(t: roma.core.Text) = if (reads(t.original)) t.original else t.latin
+
+    const val READ_KEY = "display.read"
 
     /** "romanized", "both", "ruby" or "original". */
     val listMode get() = str("display.list", "both")
