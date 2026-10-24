@@ -35,6 +35,8 @@ import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.ArtistItem
 import com.metrolist.innertube.models.WatchEndpoint
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -97,7 +99,6 @@ object Playback {
     private val urls = HashMap<String, Pair<String, Long>>() // videoId to (url, resolved at)
     private var lastRetry: Pair<String, Long>? = null
     private val fullLookup: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
-    private val loudness = java.util.concurrent.ConcurrentHashMap<String, Float>()
 
     fun init(c: Context) {
         appContext = c.applicationContext
@@ -191,9 +192,9 @@ object Playback {
         if (next.id == prefetched) return
         prefetched = next.id
         next.thumb?.let { coil3.SingletonImageLoader.get(appContext).enqueue(coil3.request.ImageRequest.Builder(appContext).data(bigThumb(it)).build()) }
-        scope.launch(Dispatchers.IO) {
-            runCatching { precache(next.id) }
-            runCatching { lyricsResult(next) }
+        scope.launch {
+            precacheAsync(next.id).await()
+            withContext(Dispatchers.IO) { runCatching { lyricsResult(next) } }
         }
     }
 
@@ -206,16 +207,14 @@ object Playback {
         }
         val a = Streams.audio(id, full = fullLookup.remove(id))
         synchronized(urls) { urls[id] = a.url to System.currentTimeMillis() }
-        if (!loudness.containsKey(id)) scope.launch(Dispatchers.IO) {
-            Streams.loudness(id)?.let { db -> loudness[id] = db; withContext(Dispatchers.Main) { applyLoudness(id) } }
-        }
+        main.post { applyLoudness(id) }
         return a.url
     }
 
     // YouTube's loudness is relative to its reference level. Only turn loud tracks down: volume can't go above 1.
     private fun applyLoudness(id: String) {
         if (current()?.song?.id != id) return
-        val db = loudness[id]
+        val db = Streams.loudness(id)
         player.volume = if (db == null || db <= 0f || !Store.bool("play.normalize", true)) 1f else 10f.pow(-db / 20f)
     }
 
@@ -266,9 +265,7 @@ object Playback {
         pendingJob?.cancel()
         pending = song
         pendingJob = scope.launch {
-            withContext(Dispatchers.IO) {
-                withTimeoutOrNull(8_000) { runCatching { precache(song.id) } } // on failure the player's own error handling takes over
-            }
+            withTimeoutOrNull(8_000) { precacheAsync(song.id).await() } // on failure the player's own error handling takes over
             pending = null
             switchTo(songs, start, mix, mixNext)
         }
@@ -280,7 +277,7 @@ object Playback {
         pendingJob?.cancel()
         pending = song
         pendingJob = scope.launch {
-            withContext(Dispatchers.IO) { withTimeoutOrNull(8_000) { runCatching { precache(song.id) } } }
+            withTimeoutOrNull(8_000) { precacheAsync(song.id).await() }
             pending = null
             if (index < player.mediaItemCount) player.seekTo(index, 0)
         }
@@ -314,6 +311,24 @@ object Playback {
     private fun precache(id: String) {
         val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setKey(id).setPosition(0).setLength(32 * 1024L).build()
         androidx.media3.datasource.cache.CacheWriter(cached.createDataSource(), spec, null, null).cache()
+    }
+
+    // Precaches running, by video ID (main thread only). A tap joins the lookup its touch-down started, and Next
+    // joins the next-song prefetch, instead of resolving and downloading the same song twice at once.
+    private val precaching = HashMap<String, Deferred<Unit>>()
+    private var speculative: Deferred<Unit>? = null
+
+    private fun precacheAsync(id: String): Deferred<Unit> {
+        precaching.values.removeAll { !it.isActive }
+        return precaching.getOrPut(id) { scope.async(Dispatchers.IO) { runCatching { precache(id) }; Unit } }
+    }
+
+    /**
+     * A finger landed on a song in a list: start its lookup now, before the tap is recognized; the tap joins it.
+     * One at a time, so a scroll that starts on a song row costs one lookup (about 12 KB) and a fling costs no more.
+     */
+    fun touched(s: Song) {
+        if (speculative?.isActive != true) speculative = precacheAsync(s.id)
     }
 
     private fun switchTo(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
