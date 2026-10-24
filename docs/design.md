@@ -12,7 +12,7 @@ Working name; rename freely.
 - Android first. Test devices: Zenfone 10 and a Huawei MatePad on EMUI, which has **no Google Play Services**. Never depend on GMS.
 - Desktop (Linux, then Windows) is a maybe, decided later by cost. The only concession now: modules `core` (data, romanization, lyrics) must not import Android APIs, so a desktop app can reuse them later.
 - Language: Kotlin, because Media3 fits best. The user isn't keen on Kotlin, so keep the code plain. No Flutter, no KMP setup now.
-- Not in v1: offline downloads (the stream cache is enough), a separate tablet layout (the MatePad uses the phone layout), comments, video playback, the mini player.
+- Not in v1: offline downloads (the stream cache is enough), a separate tablet layout (the MatePad uses the phone layout; only landscape puts the controls beside the upper area), comments, video playback, the mini player.
 
 ## Stack
 
@@ -87,24 +87,30 @@ Step 0, before writing code: check that both libraries are maintained, that they
 
 The core rule: **a control never moves.** If a feature is unavailable, its button stays in the same place, dimmed. No action bar scrolls sideways. The playback source (playlist, album, radio, search) never changes the layout.
 
-Bottom block of the player, the same on the song, lyrics and queue views (only the area above it changes):
+Bottom block of the player, the same on the song, lyrics and queue views (only the area above it changes). Changed by the user on 2026-10-24 to a shorter block with play nearest the thumb; positions are fixed again from there:
 
 ```
-[ seek bar ]
-[ shuffle ] [ prev ] [ PLAY/PAUSE ] [ next ] [ repeat ]
-[ More ] [ (empty) ] [ (empty) ] [ Lyrics ] [ Queue ] [ Like ]
+[ 0:42 ][ seek bar ][ 3:16 ]                                   about 28 dp
+[ More ] [ (empty) ] [ (empty) ] [ Lyrics ] [ Queue ] [ Like ]  about 44 dp, small icon, 10 sp label
+[ shuffle ] [ prev ] [ PLAY/PAUSE ] [ next ] [ repeat ]        about 52 dp, play icon 44 dp
+[ Home ] [ Search ] [ Player ] [ Library ] [ Settings ]        bottom navigation, about 48 dp
 ```
 
-- The action row has 6 equal slots, each at least 48 dp. Slots 2 and 3 are deliberately empty: no icon, no label, not tappable. They keep More (which holds Ban) away from the other buttons.
+- The elapsed and total time sit on the seek bar's line. Every slot is at least 48 dp wide. No extra gap between the rows.
+- The action row has 6 equal slots. Slots 2 and 3 are deliberately empty: no icon, no label, not tappable. They keep More (which holds Ban) away from the other buttons.
 - Left-handed mode (setting) mirrors the action row: Like on the left, More on the right. Nothing else moves.
-- Leave extra vertical space between the playback row and the action row.
+- On a landscape screen (a phone on its side, the MatePad) the upper area is on the left and the same block, in the same order, on the right. On a wide portrait screen the block keeps at most 560 dp of width, centred.
 - The Never button was removed (user, 2026-10-24). Ban song / Ban artist live in More; banning the playing song skips it and shows a "Banned · Undo" bar for about 5 s.
 - Lyrics and Queue are toggles that swap the upper area. The selected one is highlighted. Lyrics is dimmed when no provider has lyrics.
 - Like is always the rightmost slot.
 - No mini player. The bottom nav has a Player tab to get back to the player.
 - Notification / lock screen (MediaSession): prev, play/pause, next, Like as a custom action. No ban button there. Title = Latin form; artist line = artist + original title.
 - The ⋯ menu on a song has the same items in the same order everywhere.
-- Bottom nav: Home, Search, Library, Player, Settings, in a fixed order. Player is dimmed when nothing is loaded.
+- Bottom nav: Home, Search, Player, Library, Settings, in a fixed order, Player in the middle. Player is dimmed when nothing is loaded. Back (or a swipe down on the song view) leaves the player for the tab it was opened from.
+- Gestures add shortcuts and never move a control (2026-10-24): on the song view, swipe sideways for the next or previous song (the target peeks in during the drag; it goes to the song before even past 3 s, as the peek shows), double-tap to like (only likes, never unlikes), swipe down to leave the player. Long-press play/pause for the sleep timer (15 min to 1.5 h, or when this song ends; the last 10 s fade out); while it runs a chip at the top of the upper area shows the time left.
+- Seek bar: while dragging, the lyric line at the drag position shows over the bottom of the upper area; near a timed line's start (12 dp of travel) the drag snaps to it with a haptic tick.
+- Haptics: like (button and double-tap), ban, a swipe passing the skip point, a seek snap.
+- Lyrics view background: the song's art, blurred (Android 12+; a 16 px copy stretched on older versions) at 20 % opacity, fading into the theme's background at the top and bottom.
 
 ## Queue and radio
 

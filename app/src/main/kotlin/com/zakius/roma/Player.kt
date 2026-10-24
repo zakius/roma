@@ -1,5 +1,30 @@
 package com.zakius.roma
 
+import android.os.SystemClock
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -86,6 +111,10 @@ fun PlayerScreen() {
     // Back closes the lyrics or queue view first, then leaves the player as usual.
     androidx.activity.compose.BackHandler(enabled = view != "song") { view = "song" }
     var menuOpen by remember { mutableStateOf(false) }
+    var sleepOpen by remember { mutableStateOf(false) }
+    // Where a seek-bar drag would land, -1 when there's no drag: the upper area shows the lyric line there.
+    var seekPreview by remember { mutableLongStateOf(-1L) }
+    val haptic = LocalHapticFeedback.current
     val entry = Playback.current()
     val p = Playback.player
     val lyricsState = Playback.lyrics?.takeIf { it.songId == Playback.shown()?.id }
@@ -93,10 +122,13 @@ fun PlayerScreen() {
     val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty()
     if (view == "lyrics" && !hasLyrics && lyrics != null) view = "song"
 
-    Column(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+    val upper: @Composable (Modifier) -> Unit = { modifier ->
+        Box(modifier) {
             when (view) {
-                "lyrics" -> if (lyricsState != null && lyrics != null) LyricsView(lyricsState, lyrics, Playback.shown()?.id) else Centered("Looking for lyrics…")
+                "lyrics" -> {
+                    LyricsBackdrop(Playback.shown()?.thumb)
+                    if (lyricsState != null && lyrics != null) LyricsView(lyricsState, lyrics, Playback.shown()?.id) else Centered("Looking for lyrics…")
+                }
                 "queue" -> QueueView()
                 else -> SongView()
             }
@@ -112,86 +144,201 @@ fun PlayerScreen() {
                     }
                 }
             }
+            SleepChip(Modifier.align(Alignment.TopCenter)) { sleepOpen = true }
+            val line = if (seekPreview >= 0 && lyrics != null && lyrics.synced) lyrics.lines.lastOrNull { it.startMs <= seekPreview } else null
+            if (line != null && line.text.isNotBlank()) SeekPreview(line, Modifier.align(Alignment.BottomCenter))
         }
-
-        // ---- Bottom block ----
-        SeekBar()
-        Row(Modifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically) {
-            Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_shuffle_on), "Shuffle", entry != null, Playback.shuffled) { Playback.toggleShuffle() }
-            Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_previous), "Previous", entry != null) { Playback.previous() }
-            Slot(painterResource(if (p.isPlaying) androidx.media3.ui.R.drawable.exo_icon_pause else androidx.media3.ui.R.drawable.exo_icon_play), if (p.isPlaying) "Pause" else "Play", entry != null, iconSize = 48) { Playback.togglePlay() }
-            Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_next), "Next", p.hasNextMediaItem()) { Playback.next() }
-            val repeatIcon = when (p.repeatMode) {
-                Player.REPEAT_MODE_ONE -> androidx.media3.ui.R.drawable.exo_icon_repeat_one
-                Player.REPEAT_MODE_ALL -> androidx.media3.ui.R.drawable.exo_icon_repeat_all
-                else -> androidx.media3.ui.R.drawable.exo_icon_repeat_all // off is shown by colour: dimming means unavailable
+    }
+    // The bottom block, top to bottom: seek bar, action row, playback row (nearest the thumb; the nav bar is under it).
+    // Fixed heights and slots; a wide screen only puts it beside the upper area.
+    val controls: @Composable (Modifier) -> Unit = { modifier ->
+        Column(modifier) {
+            SeekBar { seekPreview = it }
+            // More (song menu, where Ban lives) sits at the outer edge with two empty slots after it; Like at the other
+            // edge, under the thumb. Left-handed mode mirrors the row. Slots never move otherwise.
+            Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+                val liked = entry?.song?.id in Playback.liked
+                val slots: List<@Composable RowScope.() -> Unit> = listOf(
+                    { Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true } },
+                    { Spacer(Modifier.weight(1f)) }, // deliberately empty: no icon, no label, not tappable
+                    { Spacer(Modifier.weight(1f)) },
+                    { Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics", state = if (view == "lyrics") "shown" else null) { view = if (view == "lyrics") "song" else "lyrics" } },
+                    { Slot(rememberVectorPainter(Icons.Default.List), "Queue", entry != null, view == "queue", label = "Queue", state = if (view == "queue") "shown" else null) { view = if (view == "queue") "song" else "queue" } },
+                    {
+                        Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), "Like", entry != null && Store.signedIn, liked, label = "Like", state = if (liked) "liked" else "not liked") {
+                            haptic.performHapticFeedback(if (liked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
+                            Playback.toggleLike()
+                        }
+                    },
+                )
+                (if (Store.bool("ui.leftHanded", false)) slots.reversed() else slots).forEach { it() }
             }
-            Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != Player.REPEAT_MODE_OFF) { Playback.cycleRepeat() }
+            Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_shuffle_on), "Shuffle", entry != null, Playback.shuffled, iconSize = 26, state = if (Playback.shuffled) "on" else "off") { Playback.toggleShuffle() }
+                Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_previous), "Previous", entry != null, iconSize = 30) { Playback.previous() }
+                // Long press: the sleep timer. A hidden extra on a button that's there anyway, so the row stays as it is.
+                Slot(
+                    painterResource(if (p.isPlaying) androidx.media3.ui.R.drawable.exo_icon_pause else androidx.media3.ui.R.drawable.exo_icon_play), if (p.isPlaying) "Pause" else "Play", entry != null, iconSize = 44,
+                    onLongClick = { sleepOpen = true }, longClickLabel = "Sleep timer",
+                ) { Playback.togglePlay() }
+                Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_next), "Next", p.hasNextMediaItem(), iconSize = 30) { Playback.next() }
+                val repeatIcon = when (p.repeatMode) {
+                    Player.REPEAT_MODE_ONE -> androidx.media3.ui.R.drawable.exo_icon_repeat_one
+                    Player.REPEAT_MODE_ALL -> androidx.media3.ui.R.drawable.exo_icon_repeat_all
+                    else -> androidx.media3.ui.R.drawable.exo_icon_repeat_all // off is shown by colour: dimming means unavailable
+                }
+                val repeatState = when (p.repeatMode) { Player.REPEAT_MODE_ONE -> "this song"; Player.REPEAT_MODE_ALL -> "all"; else -> "off" }
+                Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != Player.REPEAT_MODE_OFF, iconSize = 26, state = repeatState) { Playback.cycleRepeat() }
+            }
         }
-        Spacer(Modifier.height(28.dp))
-        // More (song menu, where Ban lives) sits at the outer edge with two empty slots after it; Like at the other
-        // edge, under the thumb. Left-handed mode mirrors the row. Slots never move otherwise.
-        Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
-            val liked = entry?.song?.id in Playback.liked
-            val slots: List<@Composable RowScope.() -> Unit> = listOf(
-                { Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true } },
-                { Spacer(Modifier.weight(1f)) }, // deliberately empty: no icon, no label, not tappable
-                { Spacer(Modifier.weight(1f)) },
-                { Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics") { view = if (view == "lyrics") "song" else "lyrics" } },
-                { Slot(rememberVectorPainter(Icons.Default.List), "Queue", entry != null, view == "queue", label = "Queue") { view = if (view == "queue") "song" else "queue" } },
-                { Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), if (liked) "Unlike" else "Like", entry != null && Store.signedIn, liked, label = "Like") { Playback.toggleLike() } },
-            )
-            (if (Store.bool("ui.leftHanded", false)) slots.reversed() else slots).forEach { it() }
+    }
+
+    // Landscape (a phone on its side, the MatePad): the song, lyrics or queue on the left, the same bottom block on the
+    // right. Otherwise one column; on a wide portrait screen the block keeps a phone's width, so the thumb reaches it.
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    if (config.screenWidthDp > config.screenHeightDp) {
+        Row(Modifier.fillMaxSize()) {
+            upper(Modifier.weight(1f).fillMaxHeight())
+            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) { controls(Modifier.widthIn(max = 560.dp).fillMaxWidth()) }
+        }
+    } else {
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            upper(Modifier.weight(1f).fillMaxWidth())
+            controls(Modifier.widthIn(max = 560.dp).fillMaxWidth())
         }
     }
     if (menuOpen && entry != null) SongMenu(entry.song, queueIndex = null) { menuOpen = false }
+    if (sleepOpen) SleepDialog { sleepOpen = false }
+}
+
+/**
+ * Behind the lyrics: the song's art, blurred and faint, fading into the background at the top and bottom edges so the
+ * first and last lines read as well as the rest. Android 12+ blurs the big art already in memory; older versions
+ * have no blur, so a 16 px copy stretched to the full size stands in for it.
+ */
+@Composable
+private fun LyricsBackdrop(thumb: String?) {
+    if (thumb == null) return
+    val context = LocalContext.current
+    val blur = android.os.Build.VERSION.SDK_INT >= 31
+    val request = coil3.request.ImageRequest.Builder(context).data(bigThumb(thumb)).apply { if (!blur) size(16) }.build()
+    AsyncImage(
+        request, null,
+        Modifier.fillMaxSize().then(if (blur) Modifier.blur(32.dp) else Modifier).alpha(0.2f),
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+    )
+    val bg = MaterialTheme.colorScheme.surface
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to bg, 0.15f to Color.Transparent, 0.85f to Color.Transparent, 1f to bg)))
+}
+
+/** While the sleep timer runs: how long is left, over the top of the upper area. Tap: change or turn it off. */
+@Composable
+private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
+    Playback.clock // counts down on the half-second clock, also while paused
+    val text = when {
+        Playback.sleepAfterSong -> "Sleep when this song ends"
+        Playback.sleepAt != 0L -> "Sleep in ${((Playback.sleepAt - SystemClock.elapsedRealtime()) / 60_000 + 1).coerceAtLeast(1)} min"
+        else -> return
+    }
+    Surface(modifier.padding(4.dp), shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer) {
+        Text(text, Modifier.clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/** The lyric line at the seek bar's drag position, over the bottom of the upper area: where the drag would land. */
+@Composable
+private fun SeekPreview(line: Line, modifier: Modifier) {
+    Surface(modifier.padding(8.dp).fillMaxWidth(), shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.secondaryContainer, tonalElevation = 2.dp) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Text(line.text, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (line.latin.isNotBlank() && line.latin != line.text && Romanizer.hasNonLatin(line.text)) {
+                Text(line.latin, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SleepDialog(onDone: () -> Unit) {
+    val active = Playback.sleepAt != 0L || Playback.sleepAfterSong
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Sleep timer") },
+        text = {
+            Column {
+                listOf(15, 30, 45, 60, 90).forEach { m ->
+                    Text(if (m < 60) "$m minutes" else if (m == 60) "1 hour" else "1.5 hours", Modifier.fillMaxWidth().clickable { Playback.sleepIn(m); onDone() }.padding(vertical = 12.dp))
+                }
+                Text("When this song ends", Modifier.fillMaxWidth().clickable { Playback.sleepAtSongEnd(); onDone() }.padding(vertical = 12.dp))
+            }
+        },
+        confirmButton = { if (active) TextButton(onClick = { Playback.sleepOff(); onDone() }) { Text("Turn off") } },
+        dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
+    )
 }
 
 /** One equal-width control slot. Disabled slots keep their place and are dimmed. */
 @Composable
-private fun RowScope.Slot(icon: Painter, description: String, enabled: Boolean, selected: Boolean = false, label: String? = null, iconSize: Int = 28, onClick: () -> Unit) {
+private fun RowScope.Slot(
+    icon: Painter, description: String, enabled: Boolean, selected: Boolean = false, label: String? = null, iconSize: Int = 22,
+    state: String? = null, onLongClick: (() -> Unit)? = null, longClickLabel: String? = null, onClick: () -> Unit,
+) {
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
     Box(
-        Modifier.weight(1f).heightIn(min = 48.dp).fillMaxSize()
+        Modifier.weight(1f).widthIn(min = 48.dp).fillMaxHeight()
             .padding(horizontal = 2.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(if (selected && label != null) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent)
-            .clickable(enabled = enabled, onClickLabel = description, onClick = onClick)
+            .combinedClickable(enabled = enabled, onClickLabel = description, role = Role.Button, onLongClick = onLongClick, onLongClickLabel = longClickLabel, onClick = onClick)
+            .semantics { if (state != null) stateDescription = state }
             .alpha(if (enabled) 1f else 0.3f),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, description, Modifier.size(iconSize.dp), tint = color)
-            if (label != null) Text(label, fontSize = 11.sp, color = color, maxLines = 1)
+            Icon(icon, if (label != null) null else description, Modifier.size(iconSize.dp), tint = color) // a label is read instead
+            if (label != null) Text(label, fontSize = 10.sp, lineHeight = 12.sp, color = color, maxLines = 1)
         }
     }
 }
 
 @Composable
-private fun SeekBar() {
+private fun SeekBar(onPreview: (Long) -> Unit) {
     Playback.tick
     Playback.clock
     val p = Playback.player
+    val haptic = LocalHapticFeedback.current
     val duration = Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: 0L
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
+    var snappedTo by remember { mutableLongStateOf(-1L) }
+    var width by remember { mutableIntStateOf(1) }
+    // Near a timed lyric line's start (12 dp of travel), a drag snaps to it with a tick, so a seek starts on a line
+    // instead of a word into it.
+    val lyrics = Playback.lyrics?.takeIf { it.songId == Playback.shown()?.id }?.lyrics?.takeIf { it.synced }
+    val snapMs = with(LocalDensity.current) { 12.dp.toPx() } / width * duration
     // While a picked song is being prepared, the old one's progress would belong to another title: show the new start.
     val preparing = Playback.pending != null
     val pos = if (preparing) 0f else if (dragging) dragValue else p.currentPosition.toFloat()
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    // One line, about 28 dp: elapsed time, the bar, total time.
+    Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(time(pos.toLong()), Modifier.widthIn(min = 36.dp), fontSize = 12.sp, textAlign = TextAlign.Start, maxLines = 1)
         Slider(
             value = pos.coerceIn(0f, duration.toFloat().coerceAtLeast(1f)),
-            onValueChange = { dragging = true; dragValue = it },
-            onValueChangeFinished = { p.seekTo(dragValue.toLong()); dragging = false },
+            onValueChange = { v ->
+                val near = lyrics?.lines?.minByOrNull { abs(it.startMs - v) }?.startMs?.takeIf { abs(it - v) < snapMs }
+                if (near != null && near != snappedTo) haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                snappedTo = near ?: -1L
+                dragging = true
+                dragValue = near?.toFloat() ?: v
+                onPreview(dragValue.toLong())
+            },
+            onValueChangeFinished = { p.seekTo(dragValue.toLong()); dragging = false; snappedTo = -1L; onPreview(-1L) },
             valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
             enabled = duration > 0 && Playback.pending == null,
-            modifier = Modifier.height(32.dp),
+            modifier = Modifier.weight(1f).height(28.dp).padding(horizontal = 8.dp).onSizeChanged { width = it.width.coerceAtLeast(1) }
+                .semantics { stateDescription = "${time(pos.toLong())} of ${time(duration)}" },
         )
-        Row(Modifier.fillMaxWidth().height(18.dp)) {
-            Text(time(pos.toLong()), fontSize = 12.sp)
-            Spacer(Modifier.weight(1f))
-            Text(if (duration > 0) time(duration) else "", fontSize = 12.sp)
-        }
+        Text(if (duration > 0) time(duration) else "", Modifier.widthIn(min = 36.dp), fontSize = 12.sp, textAlign = TextAlign.End, maxLines = 1)
     }
 }
 
@@ -200,11 +347,110 @@ private fun time(ms: Long): String {
     return "%d:%02d".format(s / 60, s % 60)
 }
 
+/**
+ * The song: art and names. Gestures on it, none of which moves a control: swipe sideways for the next or previous song
+ * (it peeks in as you drag), double-tap to like, swipe down to leave the player.
+ */
 @Composable
 private fun SongView() {
     Playback.tick
-    val s = Playback.shown() ?: return Centered("Nothing playing")
-    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    val s = Playback.shown() ?: return Centered("Nothing playing. Pick a song in Home, Search or Library.")
+    val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    var dx by remember { mutableFloatStateOf(0f) }
+    var dy by remember { mutableFloatStateOf(0f) }
+    var width by remember { mutableIntStateOf(1) }
+    val at = Playback.shownIndex()
+    val targets by rememberUpdatedState(neighbour(at, 1) to neighbour(at, -1))
+    val side by remember { derivedStateOf { kotlin.math.sign(dx) } }
+    val leave = with(LocalDensity.current) { 96.dp.toPx() }
+    val pop = remember { Animatable(0f) }
+    Box(
+        Modifier.fillMaxSize().onSizeChanged { width = it.width.coerceAtLeast(1) }
+            .pointerInput(Unit) {
+                detectTapGestures(onDoubleTap = {
+                    // Only likes, never unlikes: a double tap by accident shouldn't undo one.
+                    val song = Playback.shown() ?: return@detectTapGestures
+                    if (!Store.signedIn) return@detectTapGestures haptic.performHapticFeedback(HapticFeedbackType.Reject)
+                    if (song.id !in Playback.liked) Playback.toggleLike(song)
+                    haptic.performHapticFeedback(HapticFeedbackType.ToggleOn)
+                    scope.launch { pop.snapTo(1f); pop.animateTo(0f, tween(700)) }
+                })
+            }
+            .pointerInput(Unit) {
+                val tracker = VelocityTracker()
+                var axis = 0 // 0: not decided yet, 1: sideways, 2: down
+                var armed = false
+                fun settle() = scope.launch {
+                    launch { animate(dx, 0f) { v, _ -> dx = v } }
+                    animate(dy, 0f) { v, _ -> dy = v }
+                }
+                detectDragGestures(
+                    onDragStart = { tracker.resetTracking(); axis = 0; armed = false },
+                    onDragCancel = { settle() },
+                    onDrag = { change, d ->
+                        tracker.addPointerInputChange(change)
+                        if (axis == 0) axis = if (abs(d.x) >= abs(d.y)) 1 else 2
+                        if (axis == 1) {
+                            val target = if (dx + d.x < 0) targets.first else targets.second
+                            dx += if (target < 0) d.x * 0.3f else d.x // nothing there: it resists
+                            val past = target >= 0 && abs(dx) > width * 0.25f
+                            if (past && !armed) haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                            armed = past
+                        } else {
+                            dy = (dy + d.y).coerceAtLeast(0f)
+                        }
+                    },
+                    onDragEnd = {
+                        val v = tracker.calculateVelocity()
+                        if (axis == 2) {
+                            if (dy > leave || v.y > 2000f) { Nav.leavePlayer(); dy = 0f } else settle()
+                            return@detectDragGestures
+                        }
+                        val toNext = dx < 0
+                        val target = if (toNext) targets.first else targets.second
+                        val flung = abs(v.x) > 1000f && (v.x < 0) == toNext
+                        if (target < 0 || !(armed || flung)) return@detectDragGestures run { settle(); Unit }
+                        scope.launch {
+                            animate(dx, if (toNext) -width.toFloat() else width.toFloat()) { x, _ -> dx = x }
+                            Playback.skipTo(target) // the target is shown at once (pending), so the page snaps back under it
+                            dx = 0f
+                        }
+                    },
+                )
+            },
+    ) {
+        // The neighbour is composed only while a drag shows it.
+        val peek = if (side < 0) targets.first else if (side > 0) targets.second else -1
+        Playback.songAt(peek)?.let { n ->
+            SongPage(n, current = false, Modifier.graphicsLayer { translationX = dx + if (dx < 0) width else -width })
+        }
+        SongPage(s, current = true, Modifier.graphicsLayer {
+            translationX = dx
+            translationY = dy
+            alpha = 1f - (dy / (leave * 3)).coerceIn(0f, 0.5f)
+        })
+        if (pop.value > 0f) Icon(
+            Icons.Filled.ThumbUp, null,
+            Modifier.align(Alignment.Center).size(96.dp).graphicsLayer { alpha = pop.value; scaleX = 1.4f - 0.4f * pop.value; scaleY = scaleX },
+            tint = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+/** The queue position [dir] steps from [i], wrapping only with Repeat all; -1 when there is none. */
+private fun neighbour(i: Int, dir: Int): Int {
+    val p = Playback.player
+    if (i < 0 || i >= p.mediaItemCount) return -1
+    val t = p.currentTimeline
+    val repeat = if (p.repeatMode == Player.REPEAT_MODE_ALL) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+    val j = if (dir > 0) t.getNextWindowIndex(i, repeat, false) else t.getPreviousWindowIndex(i, repeat, false)
+    return if (j == androidx.media3.common.C.INDEX_UNSET) -1 else j
+}
+
+@Composable
+private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
+    Column(modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         // Until the large art arrives, the list's thumbnail of this song (row or card size) stands in, if it's in memory.
         val context = LocalContext.current
         val small = listOf(shownThumb(s.thumb, 48.dp), shownThumb(s.thumb, 56.dp), shownThumb(s.thumb, 128.dp))
@@ -216,10 +462,13 @@ private fun SongView() {
         Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true)
         Spacer(Modifier.height(4.dp))
         Name(roma.core.Text(s.artistOriginal, s.artistLatin), Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true)
-        Playback.error?.let {
+        if (current) Playback.error?.let {
             Spacer(Modifier.height(8.dp))
             Text("Can't play this song: $it", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
-            TextButton(onClick = { Playback.player.prepare(); Playback.player.play() }) { Text("Retry") }
+            Row {
+                TextButton(onClick = { Playback.player.prepare(); Playback.player.play() }) { Text("Retry") }
+                if (Playback.player.hasNextMediaItem()) TextButton(onClick = { Playback.next() }) { Text("Play the next song") }
+            }
         }
     }
 }

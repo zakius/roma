@@ -37,6 +37,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
@@ -57,12 +66,22 @@ const val TAB_SETTINGS = 4
 
 /** Navigation state, shared so any screen can open a page or switch tabs. */
 object Nav {
-    var tab by mutableStateOf(TAB_HOME)
+    private var shownTab by mutableStateOf(TAB_HOME)
+    var tab: Int
+        get() = shownTab
+        set(v) { if (v != shownTab) { before = shownTab; shownTab = v } }
+    /** The tab shown before this one: Back and a swipe down on the player return there. */
+    var before = TAB_HOME
+        private set
     val stacks = List(5) { mutableStateListOf<Page>() }
 
     fun open(p: Page) {
         if (tab == TAB_PLAYER) tab = TAB_HOME
         stacks[tab].add(p)
+    }
+
+    fun leavePlayer() {
+        tab = if (before != TAB_PLAYER) before else TAB_HOME
     }
 }
 
@@ -131,7 +150,8 @@ fun Root() {
     val tab = Nav.tab
     val stack = Nav.stacks[tab]
     BackHandler(enabled = stack.isNotEmpty() || tab != TAB_HOME) {
-        if (stack.isNotEmpty()) stack.removeAt(stack.size - 1) else Nav.tab = TAB_HOME
+        // Picking a song jumps to the player, so leaving it returns to the list it was picked from.
+        if (stack.isNotEmpty()) stack.removeAt(stack.size - 1) else if (tab == TAB_PLAYER) Nav.leavePlayer() else Nav.tab = TAB_HOME
     }
     Playback.tick // redraw when the player changes, for the Player tab's dimming
     val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null
@@ -152,12 +172,13 @@ fun Root() {
                 }
             }
         }
-        // Fixed order; Player is dimmed until something is loaded.
-        NavigationBar {
+        // Fixed order, Player in the middle; Player is dimmed until something is loaded. Compact (48 dp): icon and a small
+        // label, no pill, so the player's controls get the height.
+        androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainer)) {
             NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true) { Nav.tab = TAB_HOME; Nav.stacks[TAB_HOME].clear() }
             NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true) { Nav.tab = TAB_SEARCH; Nav.stacks[TAB_SEARCH].clear() }
-            NavItem("Library", Icons.Default.List, tab == TAB_LIBRARY, true) { Nav.tab = TAB_LIBRARY; Nav.stacks[TAB_LIBRARY].clear() }
             NavItem("Player", Icons.Default.PlayArrow, tab == TAB_PLAYER, loaded) { Nav.tab = TAB_PLAYER }
+            NavItem("Library", Icons.Default.List, tab == TAB_LIBRARY, true) { Nav.tab = TAB_LIBRARY; Nav.stacks[TAB_LIBRARY].clear() }
             NavItem("Settings", Icons.Default.Settings, tab == TAB_SETTINGS, true) { Nav.tab = TAB_SETTINGS; Nav.stacks[TAB_SETTINGS].clear() }
         }
     }
@@ -165,5 +186,15 @@ fun Root() {
 
 @Composable
 private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    NavigationBarItem(selected = selected, onClick = onClick, enabled = enabled, icon = { Icon(icon, null) }, label = { Text(label) })
+    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    androidx.compose.foundation.layout.Column(
+        Modifier.weight(1f).fillMaxHeight()
+            .selectable(selected = selected, enabled = enabled, role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.35f),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+    ) {
+        Icon(icon, null, Modifier.size(22.dp), tint = color)
+        Text(label, fontSize = 10.sp, lineHeight = 12.sp, color = color, maxLines = 1)
+    }
 }

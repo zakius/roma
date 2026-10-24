@@ -214,6 +214,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     val inQueue = queueIndex != null && queueIndex != Playback.player.currentMediaItemIndex
     val liked = s.id in Playback.liked
     val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Fully open at once: half open, the bans at the bottom would need a drag first.
     ModalBottomSheet(onDismissRequest = onClose, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(bottom = 24.dp)) {
@@ -241,11 +242,13 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             }
             MenuItem("Remove from queue", inQueue) { Playback.remove(queueIndex!!); onClose() }
             MenuItem("Ban song", true) {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
                 if (Playback.current()?.song?.id == s.id) Playback.never() // bans it, skips it and offers Undo
                 else { Store.ban("song", s.id, s.title.latin); Toast.makeText(context, "Banned ${s.title.latin}", Toast.LENGTH_SHORT).show() }
                 onClose()
             }
             MenuItem("Ban artist", s.firstArtistId != null) {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
                 val a = s.artists.first { it.id != null }
                 Store.ban("artist", a.id!!, a.name.latin)
                 Toast.makeText(context, "Banned ${a.name.latin}", Toast.LENGTH_SHORT).show()

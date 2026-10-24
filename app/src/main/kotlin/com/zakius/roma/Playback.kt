@@ -5,8 +5,10 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.AudioAttributes
@@ -154,6 +156,10 @@ object Playback {
                 main.postDelayed({ if (sideWorkFor == id) startSideWork() }, 4_000)
             }
 
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) sleepOff()
+            }
+
             override fun onPlayerError(e: PlaybackException) {
                 val id = current()?.song?.id
                 urls.remove(id) // the URL may have expired; a retry resolves it again
@@ -181,7 +187,8 @@ object Playback {
                 if (player.isPlaying) {
                     clock++
                     countPlayed()
-                }
+                } else if (sleepAt != 0L) clock++ // the seek bar's "Sleep in" count keeps going while paused
+                checkSleep()
             }
         }
     }
@@ -221,12 +228,17 @@ object Playback {
     private fun applyLoudness(id: String) {
         if (current()?.song?.id != id) return
         val db = Streams.loudness(id)
-        player.volume = if (db == null || db <= 0f || !Store.bool("play.normalize", true)) 1f else 10f.pow(-db / 20f)
+        baseVolume = if (db == null || db <= 0f || !Store.bool("play.normalize", true)) 1f else 10f.pow(-db / 20f)
+        player.volume = baseVolume
     }
+
+    private var baseVolume = 1f
 
     // ---- Queue ----
 
     fun current(): Entry? = player.currentMediaItem?.localConfiguration?.tag as? Entry
+
+    fun songAt(i: Int): Song? = if (i in 0 until player.mediaItemCount) (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song else null
 
     fun entries(): List<Entry> = (0 until player.mediaItemCount).mapNotNull { player.getMediaItemAt(it).localConfiguration?.tag as? Entry }
 
@@ -259,10 +271,14 @@ object Playback {
     var pending by mutableStateOf<Song?>(null)
         private set
     private var pendingJob: Job? = null
+    private var pendingIndex = -1
     private lateinit var cached: CacheDataSource.Factory
 
     /** What the player shows: the song being prepared, else the one playing. */
     fun shown(): Song? = pending ?: current()?.song
+
+    /** The queue position of [shown]: a skip's target while it is prepared, -1 while a new list is. */
+    fun shownIndex(): Int = if (pending == null) player.currentMediaItemIndex else pendingIndex
 
     private fun play(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
         if (songs.isEmpty()) return
@@ -270,6 +286,7 @@ object Playback {
         val song = songs[start]
         pendingJob?.cancel()
         pending = song
+        pendingIndex = -1
         pendingJob = scope.launch {
             withTimeoutOrNull(8_000) { precacheAsync(song.id).await() } // on failure the player's own error handling takes over
             pending = null
@@ -282,6 +299,7 @@ object Playback {
         val song = (player.getMediaItemAt(index).localConfiguration?.tag as? Entry)?.song ?: return
         pendingJob?.cancel()
         pending = song
+        pendingIndex = index
         pendingJob = scope.launch {
             withTimeoutOrNull(8_000) { precacheAsync(song.id).await() }
             pending = null
@@ -476,6 +494,45 @@ object Playback {
         val id = seed.firstArtistId ?: return emptySet()
         val page = YouTube.artist(id).getOrNull() ?: return emptySet()
         return page.sections.flatMap { it.items }.filterIsInstance<ArtistItem>().map { it.id }.toSet()
+    }
+
+    // ---- Sleep timer ----
+
+    /** When the sleep timer pauses playback, in [SystemClock.elapsedRealtime] time; 0 when it's off. */
+    var sleepAt by mutableLongStateOf(0L)
+        private set
+    /** The sleep timer pauses when the playing song ends. */
+    var sleepAfterSong by mutableStateOf(false)
+        private set
+
+    fun sleepIn(minutes: Int) {
+        sleepOff()
+        sleepAt = SystemClock.elapsedRealtime() + minutes * 60_000L
+    }
+
+    fun sleepAtSongEnd() {
+        sleepOff()
+        sleepAfterSong = true
+        player.pauseAtEndOfMediaItems = true
+    }
+
+    fun sleepOff() {
+        if (sleepAt != 0L) player.volume = baseVolume // it may have been fading
+        sleepAt = 0L
+        sleepAfterSong = false
+        player.pauseAtEndOfMediaItems = false
+    }
+
+    // Runs on the half-second clock, so the timer costs no wakeups of its own. The last 10 s fade out instead of
+    // cutting a phrase off. A timer that runs out while paused just turns off.
+    private fun checkSleep() {
+        if (sleepAt == 0L) return
+        val left = sleepAt - SystemClock.elapsedRealtime()
+        if (left > 10_000) return
+        if (left > 0 && player.isPlaying) { player.volume = baseVolume * left / 10_000f; return }
+        if (left > 0) return
+        player.pause()
+        sleepOff()
     }
 
     // ---- Controls ----
