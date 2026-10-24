@@ -68,7 +68,7 @@ Step 0, before writing code: check that both libraries are maintained, that they
   3. YouTube Music's own lyrics (unsynced).
 - Providers sit behind one small interface, so you can add or reorder them. Settings list the providers in order, each with an on/off switch.
 - Display per line: original, romanization, translation (if available). Each layer can be turned on or off. In karaoke mode, highlight the current word in **both** the original and the romanization: romanize per token so the timings map 1:1.
-- Translations show only when their language matches the "Translation language" setting: by default the device language, then English. KuGou and NetEase send Chinese translations, which are no use here. No provider tags the language, so it is read from the script: Han is Chinese, kana Japanese, Hangul Korean, Cyrillic Russian, Latin English. A song whose translation doesn't match shows no translation layer; the "Show translation" switch stays in place, dimmed.
+- Translations show only when their language matches the "Translation language" setting: by default the device language, then English. KuGou and NetEase send Chinese translations, which are no use here. No provider tags the language, so it is read from the script: Han is Chinese, kana Japanese, Hangul Korean, Cyrillic Russian, Latin English. A song whose translation doesn't match shows no translation layer. The "Show translation" switch is a global setting and is never dimmed by the current song.
 - Tapping a line seeks to it. Long-pressing a word lets the user correct its reading (an override scoped to the song).
 
 ## Controls: fixed positions

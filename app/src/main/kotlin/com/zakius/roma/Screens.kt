@@ -680,9 +680,9 @@ fun SettingsScreen() {
         Row1("Search lyrics again for this song", "After changing the providers") { Playback.refetchLyrics() }
         Switch1("Show original", "lyrics.layer.original", true)
         Switch1("Show romanization", "lyrics.layer.latin", true)
-        // Dimmed when the current song's translation isn't in the chosen language: there is nothing to show.
-        val lyrics = Playback.lyrics?.lyrics
-        Switch1("Show translation", "lyrics.layer.translation", true, lyrics == null || Store.translationWanted(roma.core.translationLanguage(lyrics)))
+        // A global setting: never dimmed by the current song. A song whose translation isn't in the chosen language
+        // just shows none.
+        Switch1("Show translation", "lyrics.layer.translation", true)
         val device = java.util.Locale.getDefault().let { it.getDisplayLanguage(it) }
         Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device), then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
 
