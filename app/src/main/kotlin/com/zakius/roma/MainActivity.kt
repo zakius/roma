@@ -55,9 +55,11 @@ const val TAB_LIBRARY = 2
 const val TAB_PLAYER = 3
 const val TAB_SETTINGS = 4
 
-/** Navigation state, shared so any screen can open a page or switch tabs. */
+/** Navigation state, shared so any screen can open a page or switch tabs. The tab and the player's view (song,
+ *  lyrics, queue) survive a restart; Root saves them. */
 object Nav {
-    var tab by mutableStateOf(TAB_HOME)
+    var tab by mutableStateOf(Store.prefs.getInt("ui.tab", TAB_HOME))
+    var playerView by mutableStateOf(Store.prefs.getString("ui.playerView", null) ?: "song")
     val stacks = List(5) { mutableStateListOf<Page>() }
 
     fun open(p: Page) {
@@ -134,7 +136,10 @@ fun Root() {
         if (stack.isNotEmpty()) stack.removeAt(stack.size - 1) else Nav.tab = TAB_HOME
     }
     Playback.tick // redraw when the player changes, for the Player tab's dimming
-    val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null
+    val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null || Playback.restoring
+    androidx.compose.runtime.LaunchedEffect(tab, Nav.playerView) {
+        Store.prefs.edit().putInt("ui.tab", tab).putString("ui.playerView", Nav.playerView).apply()
+    }
     val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Box(Modifier.weight(1f)) {

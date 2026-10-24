@@ -82,7 +82,7 @@ import roma.core.Override
 @Composable
 fun PlayerScreen() {
     Playback.tick
-    var view by rememberSaveable { mutableStateOf("song") }
+    var view by Nav::playerView
     // Back closes the lyrics or queue view first, then leaves the player as usual.
     androidx.activity.compose.BackHandler(enabled = view != "song") { view = "song" }
     var menuOpen by remember { mutableStateOf(false) }
@@ -172,7 +172,8 @@ private fun SeekBar() {
     Playback.tick
     Playback.clock
     val p = Playback.player
-    val duration = Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: 0L
+    // A song restored after a restart isn't prepared until Play: its known length stands in.
+    val duration = Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: Playback.current()?.song?.durationSec?.let { it * 1000L } ?: 0L
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
     // While a picked song is being prepared, the old one's progress would belong to another title: show the new start.
@@ -203,7 +204,7 @@ private fun time(ms: Long): String {
 @Composable
 private fun SongView() {
     Playback.tick
-    val s = Playback.shown() ?: return Centered("Nothing playing")
+    val s = Playback.shown() ?: return if (Playback.restoring) Unit else Centered("Nothing playing")
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         // Until the large art arrives, the list's thumbnail of this song (row or card size) stands in, if it's in memory.
         val context = LocalContext.current

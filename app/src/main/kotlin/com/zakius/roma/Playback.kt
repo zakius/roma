@@ -63,6 +63,7 @@ import roma.core.filterRadio
 import roma.core.romanizeLyrics
 import roma.core.shouldScrobble
 import roma.core.song
+import kotlinx.serialization.Serializable
 import java.io.File
 import kotlin.math.pow
 
@@ -106,7 +107,7 @@ object Playback {
         appContext = c.applicationContext
         Streams.refuseVisionOs = BuildConfig.REFUSE_VISIONOS
         InnerTubeXStreams.tokenProvider = PoTokens(c)
-        val cache = SimpleCache(File(c.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(1L shl 30), StandaloneDatabaseProvider(c))
+        cache = SimpleCache(File(c.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(1L shl 30), StandaloneDatabaseProvider(c))
         val http = OkHttpDataSource.Factory(OkHttpClient())
         // Media items carry roma://<videoId>; the stream URL is looked up only when bytes are needed and not cached.
         val resolving = ResolvingDataSource.Factory(http) { spec ->
@@ -130,9 +131,12 @@ object Playback {
         // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
         // seen before, so the first tap doesn't pay for it.
         scope.launch(Dispatchers.IO) { Store.anySong()?.let { s -> runCatching { streamUrl(s.id) } } }
+        restore()
         player.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {
                 tick++
+                if (events.containsAny(Player.EVENT_TIMELINE_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_REPEAT_MODE_CHANGED)) saveQueue()
+                if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_POSITION_DISCONTINUITY)) savePosition()
                 if (p.isPlaying) startSideWork()
                 // Radio songs arrive after the song started, and queue edits can change what comes next.
                 if (p.isPlaying && sideWorkFor == null && events.contains(Player.EVENT_TIMELINE_CHANGED)) prefetchNext()
@@ -146,6 +150,14 @@ object Playback {
                     return
                 }
                 applyLoudness(e.song.id)
+                if (restoringNow) {
+                    // Back from a restart, paused: the lyrics show at once (from their cache); nothing is announced
+                    // to Last.fm, and the radio top-up and next-song prefetch wait until play is pressed.
+                    resetPlayCount()
+                    sideWorkFor = e.song.id
+                    loadLyrics(e.song)
+                    return
+                }
                 startedTrack()
                 sideWorkFor = e.song.id
                 // Everything else waits until the song is audible (startSideWork), so the stream has the network to
@@ -181,6 +193,7 @@ object Playback {
                 if (player.isPlaying) {
                     clock++
                     countPlayed()
+                    if (clock % 20 == 0) savePosition() // every 10 s, so a killed app loses at most that much
                 }
             }
         }
@@ -260,6 +273,7 @@ object Playback {
         private set
     private var pendingJob: Job? = null
     private lateinit var cached: CacheDataSource.Factory
+    private lateinit var cache: SimpleCache
 
     /** What the player shows: the song being prepared, else the one playing. */
     fun shown(): Song? = pending ?: current()?.song
@@ -412,7 +426,9 @@ object Playback {
                 repeat(4) {
                     if (fresh.isNotEmpty()) return@repeat
                     val endpoint = WatchEndpoint(videoId = seed.id, playlistId = "RDAMVM${seed.id}")
-                    val page = YouTube.next(endpoint, radioContinuation).getOrNull() ?: return@repeat
+                    // A continuation saved before a restart may have expired: start the radio's pages over (the
+                    // songs already queued are filtered out).
+                    val page = YouTube.next(endpoint, radioContinuation).getOrNull() ?: run { radioContinuation = null; return@repeat }
                     radioContinuation = page.continuation
                     val candidates = page.items.map { Store.romanizer.song(it) }
                     fresh = filterRadio(candidates, seed, related!!, already, Store.bans(), settings)
@@ -479,6 +495,100 @@ object Playback {
     }
 
     // ---- Controls ----
+
+    // ---- Continuity: the queue, the song and its position survive a restart ----
+
+    /** What queue.json holds. The position is kept apart (position file): it changes every few seconds. */
+    @Serializable
+    private class Saved(
+        val songs: List<Song>,
+        val sections: List<String>,
+        val index: Int,
+        val repeat: Int,
+        val shuffleOrder: List<String>?,
+        val radioSeed: Song?,
+        val radioContinuation: String?,
+        val mixId: String?,
+        val mixContinuation: String?,
+    )
+
+    /** True until the saved queue is back (or found missing). The player shows nothing rather than "Nothing playing". */
+    var restoring by mutableStateOf(true)
+        private set
+    private var restoringNow = false
+    private val restoreWaiters = ArrayList<() -> Unit>()
+
+    private val queueFile get() = File(appContext.filesDir, "queue.json")
+    private val positionFile get() = File(appContext.filesDir, "position")
+    // One writer thread, in order: a later save never lands before an earlier one.
+    private val saver = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var saveQueued = false
+
+    // A burst of queue changes (radio adding 20 songs) is written once, after it.
+    private fun saveQueue() {
+        if (restoring || saveQueued) return
+        saveQueued = true
+        main.post {
+            saveQueued = false
+            val list = entries()
+            val s = Saved(list.map { it.song }, list.map { it.section }, player.currentMediaItemIndex, player.repeatMode, shuffleOrder, radioSeed, radioContinuation, mixId, mixContinuation)
+            saver.execute { writeAtomically(queueFile, Store.json.encodeToString(s)) }
+        }
+    }
+
+    private fun savePosition() {
+        if (restoring) return
+        val id = current()?.song?.id ?: return
+        val line = "$id ${player.currentPosition}"
+        saver.execute { writeAtomically(positionFile, line) }
+    }
+
+    // A kill mid-write leaves the old file whole instead of half a new one.
+    private fun writeAtomically(f: File, text: String) {
+        val tmp = File(f.path + ".tmp")
+        tmp.writeText(text)
+        tmp.renameTo(f)
+    }
+
+    private fun restore() {
+        scope.launch {
+            val (saved, position) = withContext(Dispatchers.IO) {
+                runCatching { Store.json.decodeFromString<Saved>(queueFile.readText()) }.getOrNull() to
+                    runCatching { positionFile.readText().split(" ").let { it[0] to it[1].toLong() } }.getOrNull()
+            }
+            // A song picked while the file was read wins.
+            if (saved != null && saved.songs.isNotEmpty() && player.mediaItemCount == 0 && pending == null) {
+                val index = saved.index.coerceIn(0, saved.songs.size - 1)
+                val id = saved.songs[index].id
+                val at = if (position?.first == id) position.second else 0L
+                radioSeed = saved.radioSeed
+                radioContinuation = saved.radioContinuation
+                mixId = saved.mixId
+                mixContinuation = saved.mixContinuation
+                shuffleOrder = saved.shuffleOrder
+                restoringNow = true
+                player.setMediaItems(saved.songs.mapIndexed { i, s -> mediaItem(Entry(s, saved.sections.getOrElse(i) { "queued" })) }, index, at)
+                player.repeatMode = saved.repeat
+                restoringNow = false
+                // A song fully on disk is prepared now; any other is prepared by Play, which reads what's cached
+                // before asking the network, so opening the app to browse costs no data.
+                if (fullyCached(id)) player.prepare()
+            }
+            restoring = false
+            if (player.mediaItemCount == 0 && pending == null && Nav.tab == TAB_PLAYER) Nav.tab = TAB_HOME
+            restoreWaiters.forEach { it() }
+            restoreWaiters.clear()
+        }
+    }
+
+    /** The whole song is in the audio cache: it plays, seeks and repeats without the network. */
+    fun fullyCached(id: String): Boolean {
+        val length = androidx.media3.datasource.cache.ContentMetadata.getContentLength(cache.getContentMetadata(id))
+        return length > 0 && cache.isCached(id, 0, length)
+    }
+
+    /** Runs [f] once the saved queue is back: at once if it already is. */
+    fun afterRestore(f: () -> Unit) = if (restoring) restoreWaiters.add(f).let { } else f()
 
     fun togglePlay() {
         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0, 0)
@@ -659,10 +769,14 @@ object Playback {
 
     private fun scrobbleOf(s: Song) = Scrobble(s.artists.firstOrNull()?.name?.original ?: "", s.title.original, s.album?.name?.original, startedAt, s.durationSec)
 
-    private fun startedTrack() {
+    private fun resetPlayCount() {
         playedHalfSeconds = 0
         scrobbled = false
         startedAt = System.currentTimeMillis() / 1000
+    }
+
+    private fun startedTrack() {
+        resetPlayCount()
         val s = current()?.song ?: return
         val (fm, sk) = lastFm() ?: return
         val now = scrobbleOf(s)
@@ -705,6 +819,18 @@ class PlaybackService : MediaSessionService() {
                     MediaSession.ConnectionResult.AcceptedResultBuilder(s)
                         .setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().add(likeCommand).build())
                         .build()
+
+                // Play from a headset, a car or the system's media controls after the app was closed or the phone
+                // restarted: the queue saved before is back (Playback.restore); hand it over once it is.
+                override fun onPlaybackResumption(s: MediaSession, c: MediaSession.ControllerInfo, isForPlayback: Boolean): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+                    val result = com.google.common.util.concurrent.SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+                    Playback.afterRestore {
+                        val p = Playback.player
+                        if (p.mediaItemCount == 0) result.setException(UnsupportedOperationException("nothing saved"))
+                        else result.set(MediaSession.MediaItemsWithStartPosition((0 until p.mediaItemCount).map { p.getMediaItemAt(it) }, p.currentMediaItemIndex, p.currentPosition))
+                    }
+                    return result
+                }
 
                 override fun onCustomCommand(s: MediaSession, c: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
                     if (command.customAction == likeCommand.customAction) Playback.toggleLike()
