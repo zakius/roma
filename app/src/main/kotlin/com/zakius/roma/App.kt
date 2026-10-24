@@ -152,7 +152,7 @@ object Store {
     // ---- Radio and queue ----
 
     fun radioSettings() = RadioSettings(
-        leash = str("radio.leash", "medium"),
+        leash = str("radio.leash", "free"),
         preferAudio = bool("radio.preferAudio", true),
         hideVersions = bool("radio.hideVersions", true),
         skipBanned = bool("radio.skipBanned", true),

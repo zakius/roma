@@ -155,10 +155,10 @@ private fun Card(item: Item, onClick: () -> Unit) {
 }
 
 /** What tapping a card or row does: a song plays (radio follows), anything else opens its page. */
-fun openItem(item: Item, songsAround: List<Song> = emptyList()) {
+/** A song plays alone and YouTube's autoplay follows; anything else opens its page. */
+fun openItem(item: Item) {
     if (item.kind == "song" && item.song != null) {
-        val i = songsAround.indexOfFirst { it.id == item.id }
-        if (i >= 0) Playback.play(songsAround, i) else Playback.play(listOf(item.song!!))
+        Playback.play(listOf(item.song!!))
         Nav.tab = TAB_PLAYER
     } else Nav.open(Page(item.kind, item.id))
 }
@@ -364,8 +364,7 @@ fun HomeScreen() {
         item(key = "mixes") { MixesRow(mixes) }
         items(sections) { sec ->
             Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
-            val songs = sec.items.mapNotNull { it.song }
-            LazyRow { items(sec.items) { item -> Card(item) { openItem(item, songs) } } }
+            LazyRow { items(sec.items) { item -> Card(item) { openItem(item) } } }
         }
         item(key = "end") {
             val f = failed
@@ -438,7 +437,6 @@ fun SearchScreen() {
                     .mapNotNull { Store.romanizer.item(it) }
                     .also { list -> Store.remember(list.mapNotNull { it.song }) }
             }) { remote ->
-                val remoteSongs = remote.mapNotNull { it.song }
                 LazyColumn(Modifier.fillMaxSize()) {
                     if (local.isNotEmpty()) {
                         item { Header("Seen before") }
@@ -448,7 +446,7 @@ fun SearchScreen() {
                     if (remote.isEmpty()) item { Text("No results for “$submitted”.", Modifier.padding(16.dp)) }
                     items(remote) { item ->
                         val s = item.song
-                        if (s != null) SongRow(s, onMenu = { menuFor = s }) { openItem(item, remoteSongs) } else ItemRow(item) { openItem(item) }
+                        if (s != null) SongRow(s, onMenu = { menuFor = s }) { openItem(item) } else ItemRow(item) { openItem(item) }
                     }
                 }
             }
@@ -651,7 +649,7 @@ fun SettingsScreen() {
         Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device), then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
 
         Header("Queue and radio")
-        Options("Radio may drift", "radio.leash", "medium", listOf("close" to "Close: same and related artists", "medium" to "Medium: at most half other artists", "free" to "Free"))
+        Options("Radio may drift", "radio.leash", "free", listOf("close" to "Close: same and related artists", "medium" to "Medium: at most half other artists", "free" to "Free: YouTube's autoplay as is"))
         Switch1("Prefer audio tracks over music videos", "radio.preferAudio", true)
         Switch1("Hide live, sped up, nightcore, slowed", "radio.hideVersions", true)
         Switch1("Skip banned songs and artists", "radio.skipBanned", true)
