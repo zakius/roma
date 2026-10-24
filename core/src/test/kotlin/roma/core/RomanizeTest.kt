@@ -271,4 +271,45 @@ class RomanizeTest {
         assertTrue(r.text("ＬＯＶＥ").isLatin)
         assertFalse(r.text("君の声").isLatin)
     }
+
+    @Test fun wordReadings() {
+        val o = Romanizer(jvmIcu)
+        val before = o.machine("私の歌", sentence = true)
+        o.overrides = listOf(Override("word", "", "私", "watashi"))
+        // A word reading applies to the token inside longer strings: titles, lyric lines, karaoke parts.
+        assertEquals("Watashi no uta", o.machine("私の歌", sentence = true))
+        assertEquals("Watashi no Uta", o.text("私の歌").latin)
+        assertEquals("Uta to Watashi", o.text("歌と私").latin)
+        assertEquals(listOf("Kimi to", " watashi"), o.parts(listOf("君と", "私")))
+        assertEquals("Kimi to watashi", o.parts(listOf("君と私")).single())
+        // Only whole tokens: 私立 (shiritsu) is another word.
+        assertEquals(r.machine("私立", sentence = true), o.machine("私立", sentence = true))
+        assertTrue(before != o.machine("私の歌", sentence = true))
+        // A song's own reading wins over the everywhere one, only in that song.
+        o.overrides = listOf(Override("word", "", "私", "watashi"), Override("word", "s1", "私", "atashi"))
+        assertEquals("Atashi no Uta", o.text("私の歌", songId = "s1").latin)
+        assertEquals("Watashi no Uta", o.text("私の歌", songId = "s2").latin)
+        // A word that is several tokens matches as a run; Korean and Cyrillic match a word between spaces.
+        o.overrides = listOf(Override("word", "", "明日", "asu"), Override("word", "", "봄날", "Spring Day"), Override("word", "", "крови", "krovee"))
+        assertEquals("Asu no yoru", o.machine("明日の夜", sentence = true))
+        assertEquals("BTS Spring Day", o.machine("BTS 봄날"))
+        assertEquals("Gruppa krovee", o.machine("Группа крови"))
+    }
+
+    @Test fun piecesJoinBackIntoTheLine() {
+        for (line in listOf("君に、会いたい", "食べますか？", "「夜に駆ける」 私は", "Группа крови на рукаве", "  あの日の夏")) {
+            val p = r.pieces(line)
+            assertEquals(line, p.joinToString(""), "$p")
+        }
+        assertEquals(listOf("君", "に、", "会いたい"), r.pieces("君に、会いたい"))
+        val latin = r.parts(r.pieces("沈むように"))
+        assertEquals("Shizumu yō ni", latin.joinToString("").trim())
+        assertEquals(setOf("ja"), r.scripts("夜に駆ける"))
+        assertEquals(setOf("zh"), Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh")).scripts("晴天"))
+        assertEquals(setOf("ko", "cyrillic"), r.scripts("봄날 Я"))
+        assertTrue(r.scripts("LiSA").isEmpty())
+        val info = r.lookUp("食べました")
+        assertEquals("taberu", info.first().dictionaryRomaji)
+        assertEquals("verb", info.first().partOfSpeech)
+    }
 }

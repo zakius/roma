@@ -244,7 +244,7 @@ object Playback {
 
     private fun mediaItem(e: Entry): MediaItem {
         val s = e.song
-        val artistLine = if (s.title.isLatin) s.artistLatin else "${s.artistLatin} · ${s.title.original}"
+        val artistLine = if (s.title.isLatin || Store.reads(s.title.original)) s.artistLatin else "${s.artistLatin} · ${s.title.original}"
         return MediaItem.Builder()
             .setMediaId(s.id)
             .setUri("roma://${s.id}")
@@ -252,9 +252,9 @@ object Playback {
             .setTag(e)
             .setMediaMetadata(
                 MediaMetadata.Builder()
-                    .setTitle(s.title.latin)
+                    .setTitle(Store.shown(s.title))
                     .setArtist(artistLine)
-                    .setAlbumTitle(s.album?.name?.latin)
+                    .setAlbumTitle(s.album?.name?.let(Store::shown))
                     .setArtworkUri(s.thumb?.let { Uri.parse(bigThumb(it)) })
                     .build(),
             )

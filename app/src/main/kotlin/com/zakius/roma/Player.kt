@@ -98,7 +98,6 @@ import roma.core.Line
 import roma.core.Lyrics
 import roma.core.attachTranslation
 import roma.core.pickTranslation
-import roma.core.Override
 
 /**
  * The player. Only the area above the bottom block changes (song, lyrics, queue). The bottom block has fixed
@@ -459,9 +458,14 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         val art = coil3.request.ImageRequest.Builder(context).data(s.thumb?.let(::bigThumb)).placeholderMemoryCacheKey(placeholder).build()
         AsyncImage(art, null, Modifier.weight(1f, fill = false).aspectRatio(1f).clip(RoundedCornerShape(8.dp)))
         Spacer(Modifier.height(16.dp))
-        Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true)
-        Spacer(Modifier.height(4.dp))
-        Name(roma.core.Text(s.artistOriginal, s.artistLatin), Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true)
+        // Long-pressing the title or artist opens the correction dialog, the same as More → Correct romanization.
+        var fixing by remember { mutableStateOf(false) }
+        Column(Modifier.pointerInput(s.id) { detectTapGestures(onLongPress = { fixing = true }) }) {
+            Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true)
+            Spacer(Modifier.height(4.dp))
+            Name(roma.core.Text(s.artistOriginal, s.artistLatin), Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true)
+        }
+        if (fixing) CorrectDialog(s) { fixing = false }
         if (current) Playback.error?.let {
             Spacer(Modifier.height(8.dp))
             Text("Can't play this song: $it", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
@@ -538,7 +542,10 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     val state = remember(lines) { LazyListState(firstVisibleItemIndex = if (startLine > 2) startLine - 2 else 0) }
     val showOriginal = Store.bool("lyrics.layer.original", true)
     val showLatin = Store.bool("lyrics.layer.latin", true)
-    var fixWord by remember { mutableStateOf<String?>(null) }
+    val ruby = Store.str("lyrics.layout", "lines") == "ruby"
+    // Whether the song is Japanese, for the "scripts you read" check: kana in any line, as romanization decides it.
+    val sib = remember(lines) { lines.map { it.text }.filter { t -> t.any(Romanizer::isKana) }.take(1) }
+    var fixWord by remember { mutableStateOf<Pair<String, String>?>(null) } // word, its romaji in the line
     // At the start line the list is already in place, so this first run doesn't move it.
     LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = state) {
@@ -553,14 +560,24 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                 val wordIndex = if (active) currentWord else -1
                 // Same weight on every line: bolding the active line widened it and re-wrapped long lines mid-song.
                 val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK)
-                if (showOriginal && line.text.isNotBlank()) {
-                    WordsText(line.words.map { it.text }, line.text, wordIndex, big, onTap = { if (synced) Playback.player.seekTo(line.startMs) }) { w -> fixWord = w }
-                }
-                if (showLatin && line.latin.isNotBlank() && line.latin != line.text && Romanizer.hasNonLatin(line.text)) {
-                    // A romaji word covers every syllable of its Japanese word but sits on the first one's slot (さよなら:
-                    // "sayonara" on さ, nothing on よなら), so it stays lit while the later syllables play.
-                    val latinIndex = (wordIndex downTo 0).firstOrNull { line.wordLatin.getOrNull(it)?.isNotBlank() == true } ?: wordIndex
-                    WordsText(line.wordLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge, onLongPressWord = null)
+                val seek = { if (synced) Playback.player.seekTo(line.startMs) }
+                // Karaoke lines show their timed words; other lines their words as romanization splits them.
+                val karaoke = line.words.isNotEmpty()
+                val units = if (karaoke) line.words.map { it.text } else line.pieces
+                val unitLatin = if (karaoke) line.wordLatin else line.pieceLatin
+                val latinShown = showLatin && line.latin.isNotBlank() && line.latin != line.text && Romanizer.hasNonLatin(line.text) && !Store.reads(line.text, sib)
+                // A romaji word covers every syllable of its Japanese word but sits on the first one's slot (さよなら:
+                // "sayonara" on さ, nothing on よなら), so it stays lit while the later syllables play.
+                val latinIndex = (wordIndex downTo 0).firstOrNull { unitLatin.getOrNull(it)?.isNotBlank() == true } ?: wordIndex
+                val fix = { unit: Int -> fixWord = wordAt(line, units, unit) ?: fixWord }
+                if (ruby && showOriginal && latinShown && line.pieces.size == line.pieceLatin.size) {
+                    // Ruby sets whole words, not karaoke syllables (which would scatter 二|人 apart): the word holding
+                    // the syllable being sung is lit.
+                    val piece = if (karaoke && wordIndex >= 0) pieceAt(line, units, wordIndex) else wordIndex
+                    RubyLine(line.pieces, line.pieceLatin, piece, big, seek) { i -> fixWord = wordAt(line, line.pieces, i) ?: fixWord }
+                } else {
+                    if (showOriginal && line.text.isNotBlank()) WordsText(units, line.text, wordIndex, big, seek, fix)
+                    if (latinShown) WordsText(unitLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge, seek, fix)
                 }
                 val translation = line.translation
                 if (!translation.isNullOrBlank()) {
@@ -577,7 +594,62 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
             }
         }
     }
-    fixWord?.let { w -> if (songId != null) FixReadingDialog(w, songId) { fixWord = null } }
+    fixWord?.let { (w, latin) -> if (songId != null) WordDialog(w, latin, songId) { fixWord = null } }
+}
+
+/**
+ * The word (as [Romanizer.pieces] splits the line: whole dictionary words) under display unit [unit], with its romaji
+ * in this line. Units are karaoke parts or the pieces themselves; a karaoke part inside a word (し of 忙|し|い) gives
+ * the whole word. Null on a blank unit.
+ */
+private fun wordAt(line: Line, units: List<String>, unit: Int): Pair<String, String>? {
+    val k = pieceAt(line, units, unit)
+    val p = line.pieces.getOrNull(k)?.trim()
+    if (p.isNullOrEmpty() || units[unit].isBlank()) return null
+    return p to line.pieceLatin.getOrElse(k) { "" }.trim()
+}
+
+/** The index of the piece holding display unit [unit], or -1. */
+private fun pieceAt(line: Line, units: List<String>, unit: Int): Int {
+    val u = units.getOrNull(unit) ?: return -1
+    // Karaoke parts join into the line plus, at most, the spaces it was trimmed of.
+    val at = units.take(unit).sumOf { it.length } + (u.length - u.trimStart().length) - units.joinToString("").indexOf(line.text).coerceAtLeast(0)
+    var start = 0
+    line.pieces.forEachIndexed { k, p ->
+        if (at < start + p.length) return k
+        start += p.length
+    }
+    return -1
+}
+
+/**
+ * Ruby layout: each word's romaji sits right above it, so the eye never has to match the two lines up. Karaoke
+ * lights the current word in both. Words wrap as wholes.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun RubyLine(units: List<String>, latin: List<String>, current: Int, style: androidx.compose.ui.text.TextStyle, onTap: () -> Unit, onLongPress: (Int) -> Unit) {
+    val on = MaterialTheme.colorScheme.onSurface
+    val hi = MaterialTheme.colorScheme.primary
+    fun color(i: Int, cur: Int) = when {
+        cur < 0 || i < cur -> on
+        i == cur -> hi
+        else -> on.copy(alpha = 0.35f)
+    }
+    val latest by rememberUpdatedState(onTap to onLongPress)
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        units.forEachIndexed { i, u ->
+            if (u.isBlank()) return@forEachIndexed
+            Column(
+                Modifier.pointerInput(i) { detectTapGestures(onTap = { latest.first() }, onLongPress = { latest.second(i) }) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                // An empty slot (punctuation) keeps the words on one baseline.
+                Text(latin[i].trim().ifEmpty { " " }, style = MaterialTheme.typography.bodyMedium, color = color(i, current))
+                Text(u.trim(), style = style, color = color(i, current))
+            }
+        }
+    }
 }
 
 /**
@@ -585,7 +657,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
  * tinted background, and words still to come are dimmed. Long-pressing a word offers to fix its reading.
  */
 @Composable
-private fun WordsText(words: List<String>, whole: String, current: Int, style: androidx.compose.ui.text.TextStyle, onTap: () -> Unit = {}, onLongPressWord: ((String) -> Unit)?) {
+private fun WordsText(words: List<String>, whole: String, current: Int, style: androidx.compose.ui.text.TextStyle, onTap: () -> Unit, onLongPressUnit: (Int) -> Unit) {
     val hi = MaterialTheme.colorScheme.primary
     val sung = SpanStyle(color = MaterialTheme.colorScheme.onSurface)
     val now = SpanStyle(color = hi, background = hi.copy(alpha = 0.18f))
@@ -607,42 +679,24 @@ private fun WordsText(words: List<String>, whole: String, current: Int, style: a
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     // The handler reads the latest values instead of restarting with each karaoke step: keyed on the styled text,
     // a tap or long press on the line being sung was dropped whenever the next word lit up.
-    val latest by rememberUpdatedState(Triple(words, ranges, onTap))
+    val latest by rememberUpdatedState(Triple(ranges, onTap, onLongPressUnit))
     Text(
         text,
         style = style.copy(lineBreak = LYRIC_BREAK),
         onTextLayout = { layout = it },
-        modifier = if (onLongPressWord == null) Modifier else Modifier.pointerInput(whole) {
+        modifier = Modifier.pointerInput(whole) {
             detectTapGestures(
-                onTap = { latest.third() },
+                onTap = { latest.second() },
                 onLongPress = { o ->
                     val offset = layout?.getOffsetForPosition(o) ?: return@detectTapGestures
-                    val (ws, rs) = latest
-                    val word = rs.indexOfFirst { offset in it }.takeIf { it >= 0 }?.let { ws[it].trim() }
-                        ?: wordAt(whole, offset)
-                    if (word.isNotBlank()) onLongPressWord(word)
+                    val (rs, _, press) = latest
+                    // Past the end of a unit (the gap after a line's last word) counts as the unit before.
+                    val unit = rs.indexOfFirst { offset in it }.takeIf { it >= 0 } ?: rs.indexOfLast { it.first <= offset }
+                    if (unit >= 0) press(unit)
                 },
             )
         },
     )
-}
-
-private fun wordAt(s: String, offset: Int): String {
-    if (s.isEmpty()) return ""
-    val i = offset.coerceIn(0, s.length - 1)
-    var a = i
-    var b = i
-    while (a > 0 && !s[a - 1].isWhitespace()) a--
-    while (b < s.length && !s[b].isWhitespace()) b++
-    return s.substring(a, b)
-}
-
-@Composable
-private fun FixReadingDialog(word: String, songId: String, onDone: () -> Unit) {
-    val existing = Store.romanizer.overrides.firstOrNull { it.scope == "song" && it.id == songId && it.original == word }?.latin
-    TextInputDialog("Reading of “$word” in this song", existing ?: Store.romanizer.machine(word, sentence = true), onDone) { latin ->
-        Store.saveOverride(Override("song", songId, word, latin.trim()))
-    }
 }
 
 @Composable
