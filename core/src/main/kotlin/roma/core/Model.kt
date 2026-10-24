@@ -55,3 +55,18 @@ fun matches(song: Song, query: String): Boolean {
 }
 
 private fun fold(s: String) = Romanizer.stripMarks(s).lowercase().replace(Regex("[\\s'’-]+"), "")
+
+/** A card on home, search, library or artist pages: a song, album, playlist or artist. */
+@Serializable
+class Item(val kind: String, val id: String, val title: Text, val subtitle: Text, val thumb: String?, val song: Song? = null)
+
+fun Romanizer.item(y: com.metrolist.innertube.models.YTItem): Item? = when (y) {
+    is SongItem -> song(y).let { Item("song", it.id, it.title, Text(it.artistOriginal, it.artistLatin), it.thumb, it) }
+    is com.metrolist.innertube.models.AlbumItem -> {
+        val artists = y.artists.orEmpty().joinToString(", ") { it.name }
+        Item("album", y.browseId, text(y.title, listOf(artists)), text(artists, listOf(y.title)), y.thumbnail)
+    }
+    is com.metrolist.innertube.models.PlaylistItem -> Item("playlist", y.id, text(y.title), text(y.author?.name ?: ""), y.thumbnail)
+    is com.metrolist.innertube.models.ArtistItem -> Item("artist", y.id, text(y.title, artistId = y.id), Text("", ""), y.thumbnail)
+    else -> null
+}

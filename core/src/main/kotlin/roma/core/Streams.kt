@@ -1,5 +1,8 @@
 package roma.core
 
+import com.metrolist.innertube.YouTube
+import com.metrolist.innertubex.models.YouTubeClient.Companion.WEB_REMIX
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.schabi.newpipe.extractor.NewPipe
@@ -35,7 +38,12 @@ object Streams {
         val best = streams
             .sortedWith(compareBy<AudioStream>({ it.audioTrackType != null && it.audioTrackType?.name != "ORIGINAL" }, { -it.averageBitrate }))
             .firstOrNull() ?: error("No audio stream for $videoId")
-        return AudioSource(best.content, best.format?.mimeType ?: "audio/*", best.averageBitrate, null)
+        return AudioSource(best.content, best.format?.mimeType ?: "audio/*", best.averageBitrate, loudness(videoId))
+    }
+
+    /** YouTube's loudness of the track against its reference level, in dB; positive means louder. Best effort. */
+    private fun loudness(videoId: String): Float? = runBlocking {
+        YouTube.player(videoId, client = WEB_REMIX).getOrNull()?.playerConfig?.audioConfig?.loudnessDb?.toFloat()
     }
 }
 

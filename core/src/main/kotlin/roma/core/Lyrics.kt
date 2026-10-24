@@ -196,6 +196,15 @@ private fun JsonElement?.str(): String? = (this as? JsonPrimitive)?.takeIf { it.
 private fun JsonElement?.obj(): JsonObject? = this as? JsonObject
 private fun JsonElement?.arr(): JsonArray? = this as? JsonArray
 
+private fun foldTitle(s: String) = Romanizer.stripMarks(s).lowercase().replace(Regex("""[(\[（【].*?[)\]）】]"""), "").replace(Regex("""[\s\p{P}]+"""), "")
+
+/** Same song title, ignoring case, spaces, punctuation and bracketed extras such as "(TV Size)". */
+fun sameTitle(a: String, b: String): Boolean {
+    val x = foldTitle(a)
+    val y = foldTitle(b)
+    return x.isNotEmpty() && y.isNotEmpty() && (x.contains(y) || y.contains(x))
+}
+
 /** Picks the candidate whose duration is closest, within 5 s when the song's duration is known. */
 private fun <T> closest(items: List<T>, durationSec: Int, durationOf: (T) -> Double): T? {
     if (durationSec <= 0) return items.firstOrNull()
@@ -209,7 +218,8 @@ object LrcLib : LyricsProvider {
 
     override fun fetch(q: LyricsQuery): Lyrics? {
         val body = get("https://lrclib.net/api/search?track_name=${enc(q.title)}&artist_name=${enc(q.artist)}") ?: return null
-        val items = Json.parseToJsonElement(body).arr()?.mapNotNull { it.obj() } ?: return null
+        val items0 = Json.parseToJsonElement(body).arr()?.mapNotNull { it.obj() } ?: return null
+        val items = items0.filter { sameTitle(it["trackName"].str() ?: "", q.title) }
         val withSynced = items.filter { !it["syncedLyrics"].str().isNullOrBlank() }
         val pick = closest(withSynced, q.durationSec) { it["duration"].str()?.toDoubleOrNull() ?: 0.0 }
         if (pick != null) return Lyrics(name, parseLrc(pick["syncedLyrics"].str()!!), true)
@@ -228,7 +238,7 @@ object NetEase : LyricsProvider {
     override fun fetch(q: LyricsQuery): Lyrics? {
         val body = get("https://music.163.com/api/cloudsearch/pc?s=${enc(q.title + " " + q.artist)}&type=1&limit=10", referer) ?: return null
         val songs = Json.parseToJsonElement(body).obj()?.get("result").obj()?.get("songs").arr()?.mapNotNull { it.obj() } ?: return null
-        val song = closest(songs, q.durationSec) { (it["dt"].str()?.toDoubleOrNull() ?: 0.0) / 1000 } ?: return null
+        val song = closest(songs.filter { sameTitle(it["name"].str() ?: "", q.title) }, q.durationSec) { (it["dt"].str()?.toDoubleOrNull() ?: 0.0) / 1000 } ?: return null
         val id = song["id"].str() ?: return null
         val lyr = Json.parseToJsonElement(get("https://music.163.com/api/song/lyric?id=$id&lv=-1&tv=-1&yv=-1", referer) ?: return null).obj() ?: return null
         val translation = lyr["tlyric"].obj()?.get("lyric").str()
@@ -253,7 +263,7 @@ object KuGou : LyricsProvider {
         val keyword = enc("${q.artist} - ${q.title}")
         val search = get("https://mobileservice.kugou.com/api/v3/search/song?version=9108&plat=0&pagesize=8&showtype=0&keyword=$keyword") ?: return null
         val songs = Json.parseToJsonElement(search).obj()?.get("data").obj()?.get("info").arr()?.mapNotNull { it.obj() } ?: return null
-        val song = closest(songs, q.durationSec) { it["duration"].str()?.toDoubleOrNull() ?: 0.0 } ?: return null
+        val song = closest(songs.filter { sameTitle(it["songname"].str() ?: "", q.title) }, q.durationSec) { it["duration"].str()?.toDoubleOrNull() ?: 0.0 } ?: return null
         val hash = song["hash"].str() ?: return null
         val cands = get("https://krcs.kugou.com/search?ver=1&man=yes&client=mobi&keyword=$keyword&duration=${q.durationSec * 1000}&hash=$hash")
             ?: return null

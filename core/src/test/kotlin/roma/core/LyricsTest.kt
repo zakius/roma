@@ -42,3 +42,11 @@ class LyricsTest {
         assertEquals("kimi no koe", l.lines[0].latin)
     }
 }
+
+class TitleMatchTest {
+    @Test fun titles() {
+        assertTrue(sameTitle("夜に駆ける", "夜に駆ける (Racing into the Night)"))
+        assertTrue(sameTitle("IDOL", "Idol"))
+        kotlin.test.assertFalse(sameTitle("夜に駆ける", "Into The Night"))
+    }
+}
