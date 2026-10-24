@@ -20,9 +20,9 @@ android {
         versionName = "0.1.10"
     }
 
-    // One APK per architecture, named like tennessine's: arm64 for phones, x86_64 for the emulator. The only native
-    // code is androidx's tiny path library, so the two differ by about 10 KB.
-    splits { abi { isEnable = true; reset(); include("arm64-v8a", "x86_64"); isUniversalApk = false } }
+    // One APK for both: phones are arm64, the emulator x86_64. The only native code is androidx's tiny path library
+    // (about 10 KB per architecture), so per-architecture APKs aren't worth it (user, 2026-10-24).
+    defaultConfig { ndk { abiFilters += setOf("arm64-v8a", "x86_64") } }
 
     buildTypes {
         debug { applicationIdSuffix = ".debug" }

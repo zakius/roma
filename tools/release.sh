@@ -1,6 +1,6 @@
 #!/bin/bash
 # Release APK: R8-shrunk release build, Zopfli-recompressed (tools/repack_apk.py), zipaligned and signed with
-# the key named in keystore.properties (outside git). Output: dist/roma-<version>-<abi>.apk, one per architecture.
+# the key named in keystore.properties (outside git). Output: dist/roma-<version>.apk (arm64 and x86_64 in one).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export JAVA_HOME=${JAVA_HOME:-$HOME/.local/share/JetBrains/Toolbox/apps/air/jbr}
@@ -10,9 +10,8 @@ version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
 ./gradlew -q :core:test :app:assembleRelease
 source <(sed 's/^\([a-zA-Z]*\)=\(.*\)$/\1="\2"/' keystore.properties)
 mkdir -p dist
-for in in app/build/outputs/apk/release/app-*-release-unsigned.apk; do
-  abi=$(basename "$in" | sed 's/^app-\(.*\)-release-unsigned.apk$/\1/')
-  out="dist/roma-$version-$abi.apk"
+for in in app/build/outputs/apk/release/app-release-unsigned.apk; do
+  out="dist/roma-$version.apk"
   tmp=$(mktemp -d)
   python3 tools/repack_apk.py "$in" "$tmp/repacked.apk"
   "$tools/zipalign" -f -P 16 4 "$tmp/repacked.apk" "$tmp/aligned.apk"
