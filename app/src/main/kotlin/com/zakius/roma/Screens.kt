@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -297,9 +298,14 @@ private fun Choice(label: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** Loads something once per key and shows a spinner, the error, or the content. */
+/** Loads something once per key and shows [loading] (a spinner), the error, or the content. */
 @Composable
-private fun <T> Loader(key: Any, load: suspend () -> T, content: @Composable (T) -> Unit) {
+private fun <T> Loader(
+    key: Any,
+    load: suspend () -> T,
+    loading: @Composable () -> Unit = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } },
+    content: @Composable (T) -> Unit,
+) {
     var result by remember(key) { mutableStateOf<Result<T>?>(null) }
     var attempt by remember(key) { mutableIntStateOf(0) }
     LaunchedEffect(key, attempt) {
@@ -308,7 +314,7 @@ private fun <T> Loader(key: Any, load: suspend () -> T, content: @Composable (T)
     }
     val r = result
     when {
-        r == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        r == null -> loading()
         r.isFailure -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Couldn't load this page.", textAlign = TextAlign.Center)
             Text(r.exceptionOrNull()?.message ?: "", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
@@ -464,8 +470,15 @@ fun SearchScreen() {
                 items(suggestions) { q -> Text(q, Modifier.fillMaxWidth().clickable { search(q) }.padding(horizontal = 16.dp, vertical = 12.dp)) }
             }
         } else if (submitted.isNotEmpty()) {
-            // The local index holds the Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't.
-            val local = if (filter == 0) Store.searchLocal(submitted) else emptyList()
+            // The local index holds the Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't. These rows
+            // show at once and keep their place when YouTube's results arrive below them.
+            val local = remember(submitted, filter, Store.version) { if (filter == 0) Store.searchLocal(submitted) else emptyList() }
+            fun LazyListScope.localRows() {
+                if (local.isEmpty()) return
+                item { Header("Seen before") }
+                items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
+                item { Header("YouTube Music") }
+            }
             Loader(listOf(submitted, filter, asTyped, Store.version), {
                 roma.core.NetLog.mark("search.start")
                 val r = YouTube.search(submitted, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter].second).getOrThrow()
@@ -475,27 +488,28 @@ fun SearchScreen() {
                     .also { list -> Store.remember(list.mapNotNull { it.song }) }
                 roma.core.NetLog.mark("search.end")
                 Found(items, r.correctedQuery, r.autoCorrected, r.originalParams)
-            }) { found ->
-                // YouTube's spelling correction, one line above the results.
-                val corrected = found.corrected
-                // The corrected query gives way to "…", so the action stays readable on one line.
-                if (corrected != null) {
-                    Row(
-                        Modifier.fillMaxWidth().clickable { if (found.autoCorrected) asTyped = found.originalParams else search(corrected) }
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                    ) {
-                        val style = MaterialTheme.typography.bodyMedium
-                        val color = MaterialTheme.colorScheme.primary
-                        val (lead, action) = if (found.autoCorrected) "Showing results for “$corrected”" to " · Search as typed" else "Did you mean “$corrected”" to "?"
-                        Text(lead, Modifier.weight(1f, fill = false), style = style, color = if (found.autoCorrected) Color.Unspecified else color, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(action, style = style, color = color, maxLines = 1)
-                    }
-                }
+            }, loading = {
                 LazyColumn(Modifier.fillMaxSize()) {
-                    if (local.isNotEmpty()) {
-                        item { Header("Seen before") }
-                        items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
-                        item { Header("YouTube Music") }
+                    localRows()
+                    item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+                }
+            }) { found ->
+                LazyColumn(Modifier.fillMaxSize()) {
+                    localRows()
+                    // YouTube's spelling correction, one line above its results. The corrected query gives way to "…",
+                    // so the action stays readable on one line.
+                    val corrected = found.corrected
+                    if (corrected != null) item {
+                        Row(
+                            Modifier.fillMaxWidth().clickable { if (found.autoCorrected) asTyped = found.originalParams else search(corrected) }
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                        ) {
+                            val style = MaterialTheme.typography.bodyMedium
+                            val color = MaterialTheme.colorScheme.primary
+                            val (lead, action) = if (found.autoCorrected) "Showing results for “$corrected”" to " · Search as typed" else "Did you mean “$corrected”" to "?"
+                            Text(lead, Modifier.weight(1f, fill = false), style = style, color = if (found.autoCorrected) Color.Unspecified else color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(action, style = style, color = color, maxLines = 1)
+                        }
                     }
                     if (found.items.isEmpty()) item { Text("No results for “$submitted”.", Modifier.padding(16.dp)) }
                     items(found.items) { item ->
