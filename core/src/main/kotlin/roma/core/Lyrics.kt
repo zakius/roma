@@ -29,7 +29,10 @@ import kotlin.math.abs
 @Serializable
 class Word(val startMs: Long, val endMs: Long, val text: String)
 
-/** One lyric line. latin and wordLatin are filled by [romanizeLyrics], wordLatin has one entry per word. */
+/**
+ * One lyric line. latin, wordLatin, pieces and pieceLatin are filled by [romanizeLyrics]: wordLatin has one entry per
+ * karaoke word; pieces are the line's words as [Romanizer.pieces] splits them, with their romaji in pieceLatin.
+ */
 @Serializable
 class Line(
     val startMs: Long,
@@ -38,6 +41,8 @@ class Line(
     val translation: String? = null,
     val latin: String = "",
     val wordLatin: List<String> = emptyList(),
+    val pieces: List<String> = emptyList(),
+    val pieceLatin: List<String> = emptyList(),
 )
 
 /** translationSource is set by [attachTranslation]. */
@@ -193,7 +198,7 @@ fun attachTranslation(l: Lyrics, t: Translation?): Lyrics {
                 byText[normalizeLyrics(line.text)].takeIf { normalizeLyrics(line.text).isNotEmpty() }
                     ?: if (l.synced && it.synced) it.lines.filter { o -> abs(o.startMs - line.startMs) <= 1000 }.minByOrNull { o -> abs(o.startMs - line.startMs) }?.translation else null
             }
-            Line(line.startMs, line.text, line.words, tr, line.latin, line.wordLatin)
+            Line(line.startMs, line.text, line.words, tr, line.latin, line.wordLatin, line.pieces, line.pieceLatin)
         },
         l.synced,
         t?.source,
@@ -215,10 +220,12 @@ fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String):
             // A correction of the whole line (or of the title, when a line repeats it) wins over per-word output. Karaoke
             // then highlights the corrected line as one piece: it sits on the first word, the other words get nothing.
             val whole = overrides.firstOrNull { it.original == line.text.trim() && (it.scope == "song" && it.id == songId || it.scope == "text") }?.latin
-            if (whole != null) return@map Line(line.startMs, line.text, line.words, line.translation, whole, line.words.indices.map { if (it == 0) whole else "" })
+            if (whole != null) return@map Line(line.startMs, line.text, line.words, line.translation, whole, line.words.indices.map { if (it == 0) whole else "" }, listOf(line.text), listOf(whole))
+            val pieces = pieces(line.text, sib)
+            val pieceLatin = parts(pieces, sib, songId, lang)
             val wordLatin = if (line.words.isEmpty()) emptyList() else parts(line.words.map { it.text }, sib, songId, lang)
-            val latin = if (line.words.isEmpty()) parts(listOf(line.text), sib, songId, lang).single() else wordLatin.joinToString("").trim()
-            Line(line.startMs, line.text, line.words, line.translation, latin, wordLatin)
+            val latin = (if (line.words.isEmpty()) pieceLatin else wordLatin).joinToString("").trim()
+            Line(line.startMs, line.text, line.words, line.translation, latin, wordLatin, pieces, pieceLatin)
         },
         l.synced,
         l.translationSource,
