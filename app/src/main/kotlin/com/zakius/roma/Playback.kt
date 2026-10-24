@@ -180,12 +180,18 @@ object Playback {
         }
     }
 
-    // Resolving a stream takes 1.5 s or more (NewPipeExtractor), so the next song's URL is looked up while this one plays.
+    // The next song's stream URL is looked up while this one plays, so Next and the automatic transition skip that round trip.
     private fun prefetchNext() {
         val i = player.nextMediaItemIndex
         if (i == C.INDEX_UNSET) return
-        val id = (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song?.id ?: return
-        scope.launch(Dispatchers.IO) { runCatching { streamUrl(id) } }
+        val next = (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song ?: return
+        // Its lyrics and large art too, so they are there the moment it starts: only the one next song, once per song
+        // started, and both are kept (lyrics cache, Coil's disk cache) for when it plays. Wasted only if it's skipped.
+        next.thumb?.let { coil3.SingletonImageLoader.get(appContext).enqueue(coil3.request.ImageRequest.Builder(appContext).data(bigThumb(it)).build()) }
+        scope.launch(Dispatchers.IO) {
+            runCatching { streamUrl(next.id) }
+            runCatching { lyricsResult(next) }
+        }
     }
 
     // Blocking, on ExoPlayer's loader thread. URLs expire after about 6 hours; reuse them for 5.
@@ -564,25 +570,29 @@ object Playback {
 
     private var lyricsJob: Job? = null
 
+    /** Blocking: the cached lyrics, else every provider asked and the answer cached. */
+    private fun lyricsResult(s: Song): LyricsResult {
+        val file = File(appContext.cacheDir, "lyrics/${s.id}.json")
+        // A cache file from before 0.1.6 holds a bare Lyrics, fails to decode and is searched again.
+        runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull()?.let { return it }
+        val q = LyricsQuery(s.id, s.title.original, s.artistOriginal, s.album?.name?.original, s.durationSec)
+        val providers = Store.lyricsOrder().filter { Store.lyricsEnabled(it) }
+        val search = LyricsProviders.find(q, providers, Store.icu)
+        val r = search.result ?: LyricsResult(Lyrics("", emptyList(), false))
+        // "No lyrics" is kept only when every provider answered; after a failure the next play asks again.
+        if (search.result != null || search.complete) {
+            file.parentFile!!.mkdirs()
+            file.writeText(Store.json.encodeToString(r))
+        }
+        return r
+    }
+
     fun loadLyrics(s: Song) {
         lyricsJob?.cancel()
         if (lyrics?.songId != s.id) lyrics = LyricsState(s.id, null)
         lyricsJob = scope.launch {
             val found = withContext(Dispatchers.IO) {
-                val file = File(appContext.cacheDir, "lyrics/${s.id}.json")
-                // A cache file from before 0.1.6 holds a bare Lyrics, fails to decode and is searched again.
-                val raw = runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull() ?: run {
-                    val q = LyricsQuery(s.id, s.title.original, s.artistOriginal, s.album?.name?.original, s.durationSec)
-                    val providers = Store.lyricsOrder().filter { Store.lyricsEnabled(it) }
-                    val search = LyricsProviders.find(q, providers, Store.icu)
-                    val r = search.result ?: LyricsResult(Lyrics("", emptyList(), false))
-                    // "No lyrics" is kept only when every provider answered; after a failure the next play asks again.
-                    if (search.result != null || search.complete) {
-                        file.parentFile!!.mkdirs()
-                        file.writeText(Store.json.encodeToString(r))
-                    }
-                    r
-                }
+                val raw = lyricsResult(s)
                 val siblings = listOf(s.artistOriginal) + listOfNotNull(s.album?.name?.original)
                 LyricsState(s.id, Store.romanizer.romanizeLyrics(raw.lyrics, siblings, s.id), raw.translations)
             }
