@@ -18,9 +18,11 @@ android {
         targetSdk = 36
         versionCode = 11
         versionName = "0.1.10"
-        // Phones are arm64; x86_64 is for the emulator. Only androidx's tiny path library is native.
-        ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
     }
+
+    // One APK per architecture, named like tennessine's: arm64 for phones, x86_64 for the emulator. The only native
+    // code is androidx's tiny path library, so the two differ by about 10 KB.
+    splits { abi { isEnable = true; reset(); include("arm64-v8a", "x86_64"); isUniversalApk = false } }
 
     buildTypes {
         debug { applicationIdSuffix = ".debug" }
