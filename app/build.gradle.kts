@@ -16,8 +16,8 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.1.18"
+        versionCode = 20
+        versionName = "0.1.19"
     }
 
     // One APK for both: phones are arm64, the emulator x86_64. The only native code is androidx's tiny path library
