@@ -233,7 +233,7 @@ object Playback {
 
     /**
      * The song being prepared after a tap: shown in the player at once, while whatever plays keeps playing until the
-     * new song's stream URL is known and its first 256 KB are in the cache. Then the switch starts it without a gap.
+     * new song's stream URL is known and its first 32 KB are in the cache. Then the switch starts it without a gap.
      */
     var pending by mutableStateOf<Song?>(null)
         private set
@@ -291,9 +291,10 @@ object Playback {
         prefetchNext()
     }
 
-    // Resolves the stream URL and caches the first 256 KB, the part playback starts from.
+    // Resolves the stream URL and caches the first 32 KB: the container header plus about 1.5 s of audio at YouTube's
+    // bitrates, more than the 0.5 s the player needs to start. Waiting for more only delays the switch on slow networks.
     private fun precache(id: String) {
-        val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setPosition(0).setLength(256 * 1024L).build()
+        val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setPosition(0).setLength(32 * 1024L).build()
         androidx.media3.datasource.cache.CacheWriter(cached.createDataSource(), spec, null, null).cache()
     }
 
