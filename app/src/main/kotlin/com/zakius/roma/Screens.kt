@@ -575,6 +575,7 @@ private fun LoginScreen() {
                         Store.set("cookie", cookie)
                         Toast.makeText(context, "Signed in", Toast.LENGTH_SHORT).show()
                         Nav.stacks[Nav.tab].clear()
+                        Playback.syncLikes()
                     }
                 }
             }

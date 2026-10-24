@@ -50,6 +50,8 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.runtime.mutableLongStateOf
+import kotlinx.coroutines.delay
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
@@ -119,7 +121,7 @@ fun PlayerScreen() {
         Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
             Slot(rememberVectorPainter(Icons.Default.Close), "Never", entry != null, label = "Never") { Playback.never() }
             Spacer(Modifier.weight(1f)) // deliberately empty: no icon, no label, not tappable
-            Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics, view == "lyrics", label = "Lyrics") { view = if (view == "lyrics") "song" else "lyrics" }
+            Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics") { view = if (view == "lyrics") "song" else "lyrics" }
             Slot(rememberVectorPainter(Icons.Default.List), "Queue", entry != null, view == "queue", label = "Queue") { view = if (view == "queue") "song" else "queue" }
             Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true }
             val liked = entry?.song?.id in Playback.liked
@@ -229,8 +231,9 @@ private fun QueueView() {
 
 @Composable
 private fun LyricsView(lines: List<Line>, synced: Boolean, songId: String?) {
-    Playback.tick
-    val pos = Playback.player.currentPosition
+    // Playback.tick fires every 500 ms, too coarse for word timing: poll the position every 50 ms while lyrics show.
+    var pos by remember { mutableLongStateOf(Playback.player.currentPosition) }
+    LaunchedEffect(Unit) { while (true) { pos = Playback.player.currentPosition; delay(50) } }
     val current = if (synced) lines.indexOfLast { it.startMs <= pos } else -1
     val state = rememberLazyListState()
     val showOriginal = Store.bool("lyrics.layer.original", true)
@@ -267,15 +270,27 @@ private fun LyricsView(lines: List<Line>, synced: Boolean, songId: String?) {
     fixWord?.let { w -> if (songId != null) FixReadingDialog(w, songId) { fixWord = null } }
 }
 
-/** A lyric layer; in karaoke mode the current word is highlighted. Long-pressing a word offers to fix its reading. */
+/**
+ * A lyric layer. In karaoke mode (current >= 0) sung words are full colour, the current word is accent-coloured on a
+ * tinted background, and words still to come are dimmed. Long-pressing a word offers to fix its reading.
+ */
 @Composable
 private fun WordsText(words: List<String>, whole: String, current: Int, style: androidx.compose.ui.text.TextStyle, onTap: () -> Unit = {}, onLongPressWord: ((String) -> Unit)?) {
     val hi = MaterialTheme.colorScheme.primary
+    val sung = SpanStyle(color = MaterialTheme.colorScheme.onSurface)
+    val now = SpanStyle(color = hi, background = hi.copy(alpha = 0.18f))
+    val coming = SpanStyle(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f))
     val ranges = ArrayList<IntRange>()
     val text: AnnotatedString = if (words.isEmpty()) AnnotatedString(whole) else buildAnnotatedString {
         words.forEachIndexed { i, w ->
             val start = length
-            if (i == current) withStyle(SpanStyle(color = hi)) { append(w) } else append(w)
+            val st = when {
+                current < 0 -> null
+                i < current -> sung
+                i == current -> now
+                else -> coming
+            }
+            if (st == null) append(w) else withStyle(st) { append(w) }
             ranges.add(start until length)
         }
     }

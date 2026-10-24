@@ -21,6 +21,7 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
@@ -85,7 +86,7 @@ object Playback {
         private set
 
     private val urls = HashMap<String, Pair<String, Long>>() // videoId to (url, resolved at)
-    private val loudness = HashMap<String, Float>()
+    private val loudness = java.util.concurrent.ConcurrentHashMap<String, Float>()
 
     fun init(c: Context) {
         appContext = c.applicationContext
@@ -101,7 +102,14 @@ object Playback {
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
+            // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays.
+            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 50_000, 500, 2_000).build())
             .build()
+        liked = runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet())
+        syncLikes()
+        // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
+        // seen before, so the first tap doesn't pay for it.
+        Store.anySong()?.let { s -> scope.launch(Dispatchers.IO) { runCatching { streamUrl(s.id) } } }
         player.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {
                 tick++
@@ -118,6 +126,7 @@ object Playback {
                 startedTrack()
                 loadLyrics(e.song)
                 topUpRadio()
+                prefetchNext()
             }
 
             override fun onPlayerError(e: PlaybackException) {
@@ -136,6 +145,14 @@ object Playback {
         }
     }
 
+    // Resolving a stream takes 1.5 s or more (NewPipeExtractor), so the next song's URL is looked up while this one plays.
+    private fun prefetchNext() {
+        val i = player.nextMediaItemIndex
+        if (i == C.INDEX_UNSET) return
+        val id = (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song?.id ?: return
+        scope.launch(Dispatchers.IO) { runCatching { streamUrl(id) } }
+    }
+
     // Blocking, on ExoPlayer's loader thread. URLs expire after about 6 hours; reuse them for 5.
     private fun streamUrl(id: String): String {
         synchronized(urls) {
@@ -143,9 +160,8 @@ object Playback {
         }
         val a = Streams.audio(id)
         synchronized(urls) { urls[id] = a.url to System.currentTimeMillis() }
-        a.loudnessDb?.let { db ->
-            loudness[id] = db
-            main.post { applyLoudness(id) }
+        if (!loudness.containsKey(id)) scope.launch(Dispatchers.IO) {
+            Streams.loudness(id)?.let { db -> loudness[id] = db; withContext(Dispatchers.Main) { applyLoudness(id) } }
         }
         return a.url
     }
@@ -403,6 +419,31 @@ object Playback {
     fun markLiked(ids: Collection<String>) {
         liked = liked + ids
     }
+
+    /** Replaces the liked set with the account's "Liked songs" playlist (LM), so likes made elsewhere show up. */
+    fun syncLikes() {
+        if (!Store.signedIn) return
+        scope.launch {
+            val ids = withContext(Dispatchers.IO) {
+                val first = YouTube.playlist("LM").getOrNull() ?: return@withContext null
+                val all = first.songs.mapTo(LinkedHashSet()) { it.id }
+                var cont = first.songsContinuation
+                // ponytail: stops at 200 pages (about 20,000 likes); raise it if someone has more.
+                repeat(200) {
+                    val c = cont ?: return@repeat
+                    val more = YouTube.playlistContinuation(c).getOrNull() ?: return@withContext null
+                    more.songs.mapTo(all) { it.id }
+                    cont = more.continuation
+                }
+                all
+            } ?: return@launch
+            liked = ids
+            likedFile.writeText(Store.json.encodeToString(ids.toList()))
+            PlaybackService.instance?.updateLikeButton()
+        }
+    }
+
+    private val likedFile get() = java.io.File(appContext.filesDir, "liked.json")
 
     /** After an override or a scheme change: rebuild every name in the queue, lyrics included. */
     fun romanizationChanged() {

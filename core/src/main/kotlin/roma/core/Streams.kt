@@ -16,7 +16,7 @@ import org.schabi.newpipe.extractor.stream.StreamInfo
 import java.util.concurrent.TimeUnit
 
 /** A playable audio URL for one video, picked by NewPipeExtractor. */
-class AudioSource(val url: String, val mimeType: String, val bitrate: Int, val loudnessDb: Float?)
+class AudioSource(val url: String, val mimeType: String, val bitrate: Int)
 
 object Streams {
     private val http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
@@ -38,11 +38,11 @@ object Streams {
         val best = streams
             .sortedWith(compareBy<AudioStream>({ it.audioTrackType != null && it.audioTrackType?.name != "ORIGINAL" }, { -it.averageBitrate }))
             .firstOrNull() ?: error("No audio stream for $videoId")
-        return AudioSource(best.content, best.format?.mimeType ?: "audio/*", best.averageBitrate, loudness(videoId))
+        return AudioSource(best.content, best.format?.mimeType ?: "audio/*", best.averageBitrate)
     }
 
-    /** YouTube's loudness of the track against its reference level, in dB; positive means louder. Best effort. */
-    private fun loudness(videoId: String): Float? = runBlocking {
+    /** YouTube's loudness of the track against its reference level, in dB; positive means louder. Best effort, blocking. */
+    fun loudness(videoId: String): Float? = runBlocking {
         YouTube.player(videoId, client = WEB_REMIX).getOrNull()?.playerConfig?.audioConfig?.loudnessDb?.toFloat()
     }
 }

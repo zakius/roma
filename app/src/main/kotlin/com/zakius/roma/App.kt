@@ -182,6 +182,7 @@ object Store {
     // ---- Local index: every song that entered the app, searchable by its Latin form ----
 
     private val index = ArrayList<Song>()
+    fun anySong(): Song? = index.lastOrNull()
 
     fun remember(songs: List<Song>) {
         if (songs.isEmpty()) return
