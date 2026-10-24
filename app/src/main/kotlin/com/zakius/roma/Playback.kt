@@ -524,6 +524,7 @@ object Playback {
         scope.launch(Dispatchers.IO) {
             if (YouTube.likeVideo(song.id, like).isFailure) withContext(Dispatchers.Main) {
                 liked = if (like) liked - song.id else liked + song.id
+                PlaybackService.instance?.updateLikeButton()
             }
         }
         PlaybackService.instance?.updateLikeButton()
@@ -531,6 +532,7 @@ object Playback {
 
     fun markLiked(ids: Collection<String>) {
         liked = liked + ids
+        PlaybackService.instance?.updateLikeButton()
     }
 
     /** Replaces the liked set with the account's "Liked songs" playlist (LM), so likes made elsewhere show up. */
@@ -558,14 +560,24 @@ object Playback {
 
     private val likedFile get() = java.io.File(appContext.filesDir, "liked.json")
 
-    /** After an override or a scheme change: rebuild every name in the queue, lyrics included. */
+    private var romanizeJob: Job? = null
+
+    /**
+     * After an override or a scheme change: rebuild every name in the queue, lyrics included. The names are romanized
+     * off the main thread (a 1,000-song queue takes a while) and swapped in with one queue change, not one per song.
+     */
     fun romanizationChanged() {
-        for (i in 0 until player.mediaItemCount) {
-            val e = player.getMediaItemAt(i).localConfiguration?.tag as? Entry ?: continue
-            player.replaceMediaItem(i, mediaItem(Entry(Store.romanizer.again(e.song), e.section)))
+        romanizeJob?.cancel()
+        romanizeJob = scope.launch {
+            val before = entries()
+            val again = withContext(Dispatchers.Default) { before.map { Entry(Store.romanizer.again(it.song), it.section) } }
+            // Radio may have added songs meanwhile; any other change to the queue means starting over.
+            val now = entries()
+            if (now.size < before.size || before.indices.any { now[it] !== before[it] }) return@launch romanizationChanged()
+            player.replaceMediaItems(0, before.size, again.map { mediaItem(it) })
+            tick++
         }
         current()?.let { loadLyrics(it.song) }
-        tick++
     }
 
     // ---- Lyrics ----
@@ -713,6 +725,8 @@ class PlaybackService : MediaSessionService() {
  * Lists get small thumbnails (60–120 px); the player and the media notification need a large one.
  * Google-hosted art takes its size in the URL; YouTube video stills come in fixed sizes, hqdefault (480 px) always exists.
  */
-fun bigThumb(url: String) = url
-    .replace(Regex("=w\\d+-h\\d+"), "=w544-h544")
-    .replace(Regex("/(default|mqdefault)\\.jpg"), "/hqdefault.jpg")
+fun bigThumb(url: String) = url.replace(BIG_WH, "=w544-h544").replace(SMALL_STILL, "/hqdefault.jpg")
+
+// Compiled once: a 1,000-song playlist builds 1,000 media items on the main thread when it starts.
+private val BIG_WH = Regex("=w\\d+-h\\d+")
+private val SMALL_STILL = Regex("/(default|mqdefault)\\.jpg")

@@ -50,8 +50,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.runtime.mutableLongStateOf
-import kotlinx.coroutines.delay
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.text.SpanStyle
 import roma.core.Romanizer
@@ -254,13 +257,17 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     val synced = shown.synced
     // The current line and word follow the position once per display frame, at the screen's refresh rate. The
     // states change only when the line or word does, so a frame without a change costs a position read and two
-    // searches, not a redraw. While paused, the loop checks every 200 ms instead.
+    // searches, not a redraw. While paused, the position moves only by a seek (a tapped line), and every seek or
+    // start is a player change (Playback.tick): the loop sleeps until one comes.
     var current by remember(lines) { mutableIntStateOf(-1) }
     var currentWord by remember(lines) { mutableIntStateOf(-1) }
     LaunchedEffect(lines, synced) {
         if (!synced) return@LaunchedEffect
+        var seen = -1
         while (true) {
-            if (Playback.player.isPlaying) withFrameNanos { } else delay(200)
+            if (Playback.player.isPlaying) withFrameNanos { }
+            else if (seen == Playback.tick) snapshotFlow { Playback.tick to Playback.pending }.drop(1).first()
+            seen = Playback.tick
             val pos = if (Playback.pending != null) -1L else Playback.player.currentPosition
             val line = lines.indexOfLast { it.startMs <= pos }
             current = line
@@ -336,16 +343,20 @@ private fun WordsText(words: List<String>, whole: String, current: Int, style: a
         }
     }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    // The handler reads the latest values instead of restarting with each karaoke step: keyed on the styled text,
+    // a tap or long press on the line being sung was dropped whenever the next word lit up.
+    val latest by rememberUpdatedState(Triple(words, ranges, onTap))
     Text(
         text,
         style = style.copy(lineBreak = LYRIC_BREAK),
         onTextLayout = { layout = it },
-        modifier = if (onLongPressWord == null) Modifier else Modifier.pointerInput(text) {
+        modifier = if (onLongPressWord == null) Modifier else Modifier.pointerInput(whole) {
             detectTapGestures(
-                onTap = { onTap() },
+                onTap = { latest.third() },
                 onLongPress = { o ->
                     val offset = layout?.getOffsetForPosition(o) ?: return@detectTapGestures
-                    val word = ranges.indexOfFirst { offset in it }.takeIf { it >= 0 }?.let { words[it].trim() }
+                    val (ws, rs) = latest
+                    val word = rs.indexOfFirst { offset in it }.takeIf { it >= 0 }?.let { ws[it].trim() }
                         ?: wordAt(whole, offset)
                     if (word.isNotBlank()) onLongPressWord(word)
                 },
