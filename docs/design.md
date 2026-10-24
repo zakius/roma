@@ -34,11 +34,28 @@ Step 0, before writing code: check that both libraries are maintained, that they
   - Korean: Revised Romanization.
   - Chinese: pinyin with tone marks by default; option for no tones.
   - Cyrillic: English-style by default; options for Polish-style and ISO 9.
+  - Greek: a classical scheme without accent marks by default (β = b, βίος → "Bios"): ICU's `Greek-Latin` with its marks removed. Option for modern Greek, ELOT 743 (β = v): ICU's `Greek-Latin/UNGEGN` without its macron below (η = i̱), which only serves reversibility. ICU was checked first; it gives the right letters, so no table of our own.
   - Other scripts: ICU defaults.
 - Han text, Japanese or Chinese? Decide in this order:
   1. Kana in the string means Japanese.
   2. Kana in a sibling field (artist, album) means Japanese.
   3. Otherwise use the user's default language (setting).
+  - In lyrics this is decided once per song, from the whole lyrics: kana in any line makes every line Japanese, so a kanji-only line in a J-pop song by a Latin-named artist is still read as Japanese.
+- Capitalization:
+  - Titles and names get title case. Japanese particles (part of speech 助詞 in Kuromoji) stay lowercase: "Yoru ni Kakeru", "Kimi no Na wa". Korean, Chinese and other caseless scripts capitalize every word ("Qíng Tiān": Chinese stays one word per syllable). Cyrillic and Greek keep the original's capitals ("Gruppa krovi").
+  - The first word is always capitalized, in any script (βίος → "Bios", "の歌" → "No uta").
+  - Lyric lines get sentence case: only the line's first letter is capitalized ("Shizumu yō ni"). Title case on every lyric line reads like a list of headlines.
+  - Parts that were Latin already never change ("LiSA", "feat.", "(Ballade Ver.)"). A user correction is shown exactly as typed.
+- Japanese word spacing: short auxiliaries, suffixes and the te-form attach to their verb ("aruita", "aruite"); a subsidiary verb after the te-form is its own word ("tokete yuku", "tabete iru"); contractions such as てる and ちゃう stay glued ("tabeteru").
+- Mixed script:
+  - Before romanizing, the half-width and full-width forms block (U+FF00–U+FFEF) is NFKC-normalized: ＬＯＶＥ → LOVE, ｱｲ → アイ, （ → " (". Only that block: full NFKC also changes Latin text (² → 2, ﬁ → fi) and kaomoji (´ becomes a space and an accent).
+  - Japanese punctuation becomes Latin: 、 → ","  。 → "."  「」『』 → `"`  ・ → space (only between two words)  ～ 〜 → "~".
+  - Strings are read by code point, so 𠮷 is Han and an emoji doesn't make a title non-Latin.
+- Stylized text stays as is:
+  - A word that mixes Latin letters with Greek or Cyrillic letters is not romanized ("ΛRCTIC", "ЯOCK", "μ's"). Only Greek and Cyrillic: Japanese mixed with Latin is normal and is romanized ("Bokura no LIVE").
+  - A single Greek or Cyrillic letter between symbols, with no space or line edge on either side, stays: (´・ω・`) keeps its ω. One-letter words between spaces are romanized (Russian я, и, в).
+  - Known limit: inside Japanese text, Kuromoji splits "ΛRCTIC" into Λ and RCTIC, so the rule doesn't hold there.
+- A title's own Latin form: when a song or album title carries one after " - ", " / " or in parentheses, and that part is fully Latin, the Latin form is just that part ("スピカ - Spica" → "Spica"). A part that looks like a version tag (ver, live, remix, feat., TV size, …) doesn't count, so "(Ballade Ver.)" is kept. Artist names don't get this rule ("… - Topic").
 - Overrides: the user can correct any string. Scope is this string, this song or this artist. Stored locally and exportable as one file.
 - Display modes: Romanized, Both (Latin with the original small underneath), Ruby (reading above the original), Original. Defaults: lists show Both; the player shows the Latin title with the original underneath.
 - Search: the local index includes the romanized forms, so "kimi no" finds 君の声. Remote search sends the query as typed.
@@ -51,6 +68,7 @@ Step 0, before writing code: check that both libraries are maintained, that they
   3. YouTube Music's own lyrics (unsynced).
 - Providers sit behind one small interface, so you can add or reorder them. Settings list the providers in order, each with an on/off switch.
 - Display per line: original, romanization, translation (if available). Each layer can be turned on or off. In karaoke mode, highlight the current word in **both** the original and the romanization: romanize per token so the timings map 1:1.
+- Translations show only when their language matches the "Translation language" setting: by default the device language, then English. KuGou and NetEase send Chinese translations, which are no use here. No provider tags the language, so it is read from the script: Han is Chinese, kana Japanese, Hangul Korean, Cyrillic Russian, Latin English. A song whose translation doesn't match shows no translation layer; the "Show translation" switch stays in place, dimmed.
 - Tapping a line seeks to it. Long-pressing a word lets the user correct its reading (an override scoped to the song).
 
 ## Controls: fixed positions
@@ -107,12 +125,13 @@ Decisions taken while building v1, where the spec left room or turned out differ
 - Extra dependency the spec didn't name: `desugar_jdk_libs_nio`, which NewPipeExtractor needs below API 33.
 - Streams: NewPipeExtractor's current YouTube client needs no PoToken, so no WebView token generator. Loudness comes from one extra `player` call (WEB_REMIX); it only turns loud tracks down, because the volume can't go above 1.
 - Official Latin names: the YouTube channel name is used as is. MusicBrainz aliases are not fetched (not cheap: rate-limited, needs matching).
+- Official Latin song titles: YouTube Music has no separate field for one. With `hl=en` (InnerTubeX's default, en-US) the watch-next and radio responses often give the title as "original - Latin" ("アイドル - Idol", "群青 - Gunjō", "打上花火 - Fireworks"), and search sometimes does ("咲き誇れ - The Bloom"); with `hl=ja` they give the plain original. The own-Latin-form rule picks these up. The same song can come with either title depending on where it entered the app; that is accepted.
 - Lyrics providers: NetEase (word timing as YRC, line LRC, Chinese translations) and KuGou (word timing as KRC, decrypted with the well-known key) use unofficial APIs with no token. LRCLIB is free and keyless. Musixmatch is left out: richsync needs a user token taken from their app, which breaks their ToS. Every provider must match the title as well as the duration, because duration alone picked an English cover. A song with no lyrics is cached as "none" too; Settings has "Search lyrics again".
 - Radio leash: close keeps only the seed's artist and the related artists from its artist page. Medium lets in other artists only while they stay fewer than the on-leash songs. Free applies no artist filter. Reasons shown are "same artist" and "related artist"; YouTube's radio gives no "often played after".
 - "Prefer audio tracks" drops a music video when the same title by the same artist exists as an audio track; a video with no audio twin stays.
 - Shuffle reorders only the "You queued" songs after the current one, and turning it off restores their order. Radio stays after them, as the pinning rule requires.
 - Playing from a list starts a new queue: the rest of the list goes into "You queued" and radio from the tapped song follows. Queueing a song that is already in the radio moves it out of the radio.
-- The ⋯ menu, in this order everywhere: Play next, Add to queue, Start radio, Like, Go to artist, Go to album, Correct romanization…, Remove from queue, Ban song, Ban artist. Unavailable items are dimmed, not hidden.
+- The ⋯ menu, in this order everywhere: Play next, Add to queue, Start radio, Like, Go to artist, Go to album, Correct romanization…, Don't romanize title, Don't romanize artist, Remove from queue, Ban song, Ban artist. "Don't romanize title" stores a song-scoped correction with latin = original, "Don't romanize artist" an artist-scoped one; both are dimmed when the text is already Latin, and once set they read "Romanize title" / "Romanize artist" and undo it. The correction dialog has "Keep original", which does the same for the chosen field and scope. Settings lists every correction; tapping one removes it. Unavailable items are dimmed, not hidden.
 - Library tabs: Playlists, Albums, Artists. Search's Playlists filter is community playlists.
 - Known romanization limit: IPADIC reads some compounds by their parts (二人 → "ninin", not "futari"). Overrides fix it per song.
 

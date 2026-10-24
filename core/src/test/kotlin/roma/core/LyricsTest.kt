@@ -39,7 +39,22 @@ class LyricsTest {
         val r = Romanizer(jvmIcu)
         val l = r.romanizeLyrics(Lyrics("t", parseLrc("[00:01.00]<00:01.00>君<00:01.50>の<00:02.00>声<00:03.00>"), true), emptyList(), "x")
         assertEquals(3, l.lines[0].wordLatin.size)
-        assertEquals("kimi no koe", l.lines[0].latin)
+        assertEquals("Kimi no koe", l.lines[0].latin)
+    }
+
+    @Test fun japaneseDecidedPerSong() {
+        // A kanji-only line in a song whose other lines have kana is Japanese, even with a Chinese default.
+        val r = Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh"))
+        val l = r.romanizeLyrics(Lyrics("t", parseLrc("[00:01.00]夜に駆ける\n[00:02.00]花火\n[00:03.00]Hello"), true), listOf("Artist"), "x")
+        assertEquals(listOf("Yoru ni kakeru", "Hanabi", "Hello"), l.lines.map { it.latin })
+        val zh = r.romanizeLyrics(Lyrics("t", parseLrc("[00:01.00]花火"), true), listOf("Artist"), "x")
+        assertEquals("Huā huǒ", zh.lines[0].latin)
+    }
+
+    @Test fun translationLanguageFromScript() {
+        assertEquals("zh", translationLanguage(Lyrics("t", withTranslation(parseLrc("[00:01.00]君の声"), "[00:01.00]你的声音"), true)))
+        assertEquals("en", translationLanguage(Lyrics("t", withTranslation(parseLrc("[00:01.00]君の声"), "[00:01.00]your voice"), true)))
+        assertEquals(null, translationLanguage(Lyrics("t", parseLrc("[00:01.00]君の声"), true)))
     }
 }
 

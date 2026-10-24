@@ -69,15 +69,37 @@ object LyricsProviders {
     }
 }
 
-fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String): Lyrics = Lyrics(
-    l.source,
-    l.lines.map { line ->
-        val wordLatin = if (line.words.isEmpty()) emptyList() else parts(line.words.map { it.text }, siblings, songId)
-        val latin = if (line.words.isEmpty()) text(line.text, siblings, songId).latin else wordLatin.joinToString("").trim()
-        Line(line.startMs, line.text, line.words, line.translation, latin, wordLatin)
-    },
-    l.synced,
-)
+/** Lines in sentence case. Japanese or Chinese is decided once per song: kana in any line makes every line Japanese. */
+fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String): Lyrics {
+    val sib = siblings + l.lines.map { it.text }.filter { it.any(Romanizer::isKana) }.take(1)
+    return Lyrics(
+        l.source,
+        l.lines.map { line ->
+            val wordLatin = if (line.words.isEmpty()) emptyList() else parts(line.words.map { it.text }, sib, songId)
+            val latin = if (line.words.isEmpty()) parts(listOf(line.text), sib, songId).single() else wordLatin.joinToString("").trim()
+            Line(line.startMs, line.text, line.words, line.translation, latin, wordLatin)
+        },
+        l.synced,
+    )
+}
+
+/**
+ * The language of the translations, from their script, since no provider tags it: Han means Chinese.
+ * Null when there are none.
+ */
+fun translationLanguage(l: Lyrics): String? {
+    val t = l.lines.mapNotNull { it.translation }.joinToString("")
+    if (t.isBlank()) return null
+    val scripts = t.codePoints().toArray().map { Character.UnicodeScript.of(it) }.toSet()
+    return when {
+        t.any(Romanizer::isKana) -> "ja"
+        Character.UnicodeScript.HAN in scripts -> "zh"
+        Character.UnicodeScript.HANGUL in scripts -> "ko"
+        Character.UnicodeScript.CYRILLIC in scripts -> "ru"
+        Character.UnicodeScript.GREEK in scripts -> "el"
+        else -> "en" // ponytail: Latin script is taken for English; no provider sends other Latin-script translations yet
+    }
+}
 
 // ---- Parsers ----
 

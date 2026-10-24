@@ -20,6 +20,8 @@ class RomanizeSettings(
     val chineseTones: Boolean = true,
     /** "english", "polish" or "iso9". */
     val cyrillic: String = "english",
+    /** "classical" (β = b, no accents) or "elot" (ELOT 743, modern: β = v). */
+    val greek: String = "classical",
     /** "ja" or "zh": what Han text is when neither it nor its sibling fields hold kana. */
     val hanDefault: String = "ja",
 )
@@ -31,66 +33,89 @@ class Override(val scope: String, val id: String, val original: String, val lati
 class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeSettings()) {
     var overrides: List<Override> = emptyList()
 
-    /** Romanizes s, honouring overrides. Siblings are the other fields of the same item (artist, album, title). */
-    fun text(s: String, siblings: List<String> = emptyList(), songId: String? = null, artistId: String? = null): Text {
+    /**
+     * Romanizes s, honouring overrides. Siblings are the other fields of the same item (artist, album, title).
+     * A song or album title passes [titleOf] = true, so "スピカ - Spica" shows its own Latin form.
+     */
+    fun text(s: String, siblings: List<String> = emptyList(), songId: String? = null, artistId: String? = null, titleOf: Boolean = false): Text {
         val o = overrides.firstOrNull { it.original == s && it.scope == "song" && it.id == songId }
             ?: overrides.firstOrNull { it.original == s && it.scope == "artist" && it.id == artistId }
             ?: overrides.firstOrNull { it.original == s && it.scope == "text" }
-        return Text(s, o?.latin ?: machine(s, siblings))
+        return Text(s, o?.latin ?: (if (titleOf) ownLatin(s) else null) ?: machine(s, siblings))
     }
 
-    fun machine(s: String, siblings: List<String> = emptyList()): String {
-        if (!hasNonLatin(s)) return s
-        return if (isJapanese(s, siblings)) japanese(s).joinToString("") { it.second } else other(s)
+    /** Title case for names and titles; [sentence] case (only the first letter) for lyric lines. */
+    fun machine(s: String, siblings: List<String> = emptyList(), sentence: Boolean = false): String {
+        val n = normalize(s)
+        if (!hasNonLatin(n)) return n
+        return capFirst(n, raw(n, siblings, !sentence))
     }
+
+    private fun raw(n: String, siblings: List<String>, title: Boolean) =
+        punctuation(if (isJapanese(n, siblings)) japanese(n, title).joinToString("") { it.second } else other(n, title))
 
     /**
      * Romanizes a line split into parts (karaoke words), one result per part, so word timings map 1:1.
      * Japanese is read as a whole line, so each reading stays right in context; a token that spans several parts
-     * goes to the part where it starts.
+     * goes to the part where it starts. Lyrics are in sentence case: only the line's first letter is capitalized.
      */
     fun parts(parts: List<String>, siblings: List<String> = emptyList(), songId: String? = null): List<String> {
-        val line = parts.joinToString("")
+        val norm = parts.map(::normalize)
+        val line = norm.joinToString("")
         val override = overrides.filter { it.scope == "song" && it.id == songId }
-        if (!isJapanese(line, siblings)) {
-            return parts.map { p -> override.firstOrNull { it.original == p.trim() }?.latin ?: machine(p, siblings) }
+        val out: MutableList<String> = if (!isJapanese(line, siblings)) {
+            norm.map { if (hasNonLatin(it)) raw(it, siblings, false) else it }.toMutableList()
+        } else {
+            val words = Array(norm.size) { StringBuilder() }
+            val starts = norm.runningFold(0) { acc, p -> acc + p.length }
+            var pos = 0
+            for ((surface, romaji) in japanese(line, false)) {
+                val i = (starts.indexOfLast { it <= pos }).coerceIn(0, norm.size - 1)
+                words[i].append(romaji)
+                pos += surface.length
+            }
+            words.map { punctuation(it.toString()) }.toMutableList()
         }
-        val out = Array(parts.size) { StringBuilder() }
-        val starts = parts.runningFold(0) { acc, p -> acc + p.length }
-        var pos = 0
-        for ((surface, romaji) in japanese(line)) {
-            val i = (starts.indexOfLast { it <= pos }).coerceIn(0, parts.size - 1)
-            out[i].append(romaji)
-            pos += surface.length
-        }
-        return parts.indices.map { i -> override.firstOrNull { it.original == parts[i].trim() }?.latin ?: out[i].toString() }
+        val first = out.indexOfFirst { it.isNotBlank() }
+        if (first >= 0) out[first] = capFirst(norm[first], out[first])
+        return parts.indices.map { i -> override.firstOrNull { it.original == parts[i].trim() }?.latin ?: out[i] }
     }
 
     fun isJapanese(s: String, siblings: List<String>): Boolean = when {
         s.any(::isKana) -> true
         siblings.any { sib -> sib.any(::isKana) } -> true
-        s.none(::isHan) -> false
+        !hasHan(s) -> false
         else -> settings.hanDefault == "ja"
     }
 
-    // Non-Japanese text: convert each run of one script, keep a space between words.
-    private fun other(s: String): String {
+    // Non-Japanese text: convert each run of one script, keep a space between words. Stylized words stay as they are.
+    private fun other(s: String, title: Boolean): String {
         val out = StringBuilder()
-        var i = 0
-        while (i < s.length) {
-            val script = scriptOf(s[i])
-            var j = i + 1
-            while (j < s.length && scriptOf(s[j]) == script) j++
-            val run = s.substring(i, j)
-            val converted = when (script) {
-                Character.UnicodeScript.HAN -> chinese(run)
-                Character.UnicodeScript.HANGUL -> hangul(run)
-                Character.UnicodeScript.CYRILLIC -> cyrillic(run)
-                Character.UnicodeScript.LATIN, Character.UnicodeScript.COMMON, Character.UnicodeScript.INHERITED -> run
-                else -> icu.transliterate("Any-Latin", run)
+        for (chunk in Regex("""\s+|\S+""").findAll(s).map { it.value }) {
+            if (chunk.isBlank() || stylized(chunk)) {
+                out.append(chunk)
+                continue
             }
-            appendWord(out, converted)
-            i = j
+            val cps = chunk.codePoints().toArray()
+            var i = 0
+            while (i < cps.size) {
+                val script = Character.UnicodeScript.of(cps[i])
+                var j = i + 1
+                while (j < cps.size && Character.UnicodeScript.of(cps[j]) == script) j++
+                val run = String(cps, i, j - i)
+                // A lone Greek or Cyrillic letter between symbols is part of a kaomoji: (´・ω・`)
+                val kaomoji = j - i == 1 && i > 0 && j < cps.size && !Character.isLetter(cps[i - 1]) && !Character.isLetter(cps[j])
+                val converted = when (script) {
+                    Character.UnicodeScript.HAN -> words(chinese(run), title)
+                    Character.UnicodeScript.HANGUL -> words(hangul(run), title)
+                    Character.UnicodeScript.CYRILLIC -> if (kaomoji) run else cyrillic(run)
+                    Character.UnicodeScript.GREEK -> if (kaomoji) run else greek(run)
+                    Character.UnicodeScript.LATIN, Character.UnicodeScript.COMMON, Character.UnicodeScript.INHERITED -> run
+                    else -> words(icu.transliterate("Any-Latin", run), title)
+                }
+                appendWord(out, converted)
+                i = j
+            }
         }
         return out.toString()
     }
@@ -100,25 +125,32 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
         return if (settings.chineseTones) pinyin else stripMarks(pinyin)
     }
 
+    // ICU's Greek-Latin is the classical scheme (β = b, η = ē); we drop its marks. UNGEGN is ELOT 743, whose
+    // macron below (η = i̱) only serves reversibility.
+    fun greek(s: String): String =
+        if (settings.greek == "elot") icu.transliterate("Greek-Latin/UNGEGN", s).replace("\u0331", "")
+        else stripMarks(icu.transliterate("Greek-Latin", s))
+
     // ---- Japanese ----
 
     private val tokenizer by lazy { Tokenizer() }
 
-    /** (surface, romaji with its leading space) per token. */
-    private fun japanese(s: String): List<Pair<String, String>> {
+    /** (surface, romaji with its leading space) per token. In [title] case every word but a particle is capitalized. */
+    private fun japanese(s: String, title: Boolean): List<Pair<String, String>> {
         val result = ArrayList<Pair<String, String>>()
         var prevWord = false
         var prevPos = ""
+        var prevSurface = ""
         var sokuon = false // the previous token ended in ッ, so this one's first consonant doubles: dat|ta
         for (t in tokenizer.tokenize(s)) {
             val surface = t.surface
-            val japaneseText = surface.any { isKana(it) || isHan(it) }
+            val japaneseText = surface.any(::isKana) || hasHan(surface)
             var romaji = when {
                 japaneseText -> {
                     val reading = if (t.reading == "*") toKatakana(surface) else t.reading
                     kana(spoken(reading, t.pronunciation))
                 }
-                hasNonLatin(surface) -> other(surface)
+                hasNonLatin(surface) -> other(surface, title)
                 else -> surface
             }
             if (sokuon && japaneseText) {
@@ -127,17 +159,21 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
             }
             sokuon = japaneseText && toKatakana(surface).endsWith('ッ')
             // Short auxiliaries, suffixes and the te-form attach to the word before them: "aruita", "aruite".
-            // Longer auxiliaries such as よう and みたい stay separate words.
+            // Longer auxiliaries such as よう and みたい stay separate words, and so does a subsidiary verb
+            // after the te-form: "tokete yuku", "tabete iru". Contractions such as てる and ちゃう stay glued.
             val aux = t.partOfSpeechLevel1 == "助動詞" && surface.length <= 2 && surface !in LOOSE_AUX &&
                 prevPos in setOf("動詞", "形容詞", "助動詞")
+            val subsidiary = t.partOfSpeechLevel2 == "非自立" && t.partOfSpeechLevel1 == "動詞"
             val glue = aux || t.partOfSpeechLevel2 == "接尾" ||
-                t.partOfSpeechLevel2 == "非自立" && t.partOfSpeechLevel1 == "動詞" ||
+                subsidiary && prevSurface != "て" && prevSurface != "で" ||
                 (t.partOfSpeechLevel2 == "接続助詞" && (surface == "て" || surface == "で"))
             val isWord = romaji.firstOrNull()?.isLetterOrDigit() == true
             val space = prevWord && isWord && !glue
+            if (title && japaneseText && isWord && !(prevWord && glue) && t.partOfSpeechLevel1 != "助詞") romaji = capitalize(romaji, false)
             result.add(surface to (if (space) " " else "") + romaji)
             prevWord = romaji.lastOrNull()?.isLetterOrDigit() == true
             prevPos = t.partOfSpeechLevel1
+            prevSurface = surface
         }
         return result
     }
@@ -306,19 +342,70 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
         return out.toString()
     }
 
-    private fun capitalize(r: String, allCaps: Boolean) = if (allCaps) r.uppercase() else r.replaceFirstChar { it.uppercaseChar() }
 
     companion object {
         fun isKana(c: Char) = (c in 'ぁ'..'ヺ') || c in 'ㇰ'..'ㇿ' || c in 'ｦ'..'ﾝ'
-        fun isHan(c: Char) = Character.UnicodeScript.of(c.code) == Character.UnicodeScript.HAN
-        fun hasNonLatin(s: String) = s.any {
-            val sc = Character.UnicodeScript.of(it.code)
+        fun hasHan(s: String) = s.codePoints().anyMatch { Character.UnicodeScript.of(it) == Character.UnicodeScript.HAN }
+        fun hasNonLatin(s: String) = s.codePoints().anyMatch {
+            val sc = Character.UnicodeScript.of(it)
             sc != Character.UnicodeScript.LATIN && sc != Character.UnicodeScript.COMMON && sc != Character.UnicodeScript.INHERITED
         }
 
         fun stripMarks(s: String) = Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "")
 
-        private fun scriptOf(c: Char) = Character.UnicodeScript.of(c.code)
+        /**
+         * NFKC, but only on the half-width and full-width forms block: ＬＯＶＥ → LOVE, ｱｲ → アイ, ～ → ~.
+         * Full NFKC would also change Latin text (² → 2, ﬁ → fi) and kaomoji (´ → space + accent).
+         * A full-width parenthesis carries its own spacing, so it gets a space next to a word: テトリス（feat. X）.
+         */
+        fun normalize(s: String) = Regex("[\\uFF00-\\uFFEF]+").replace(s.replace(Regex("(?<=\\S)（"), " （").replace(Regex("）(?=[^\\s)）])"), "） ")) {
+            Normalizer.normalize(it.value, Normalizer.Form.NFKC)
+        }
+
+        /** "スピカ - Spica" → "Spica": the Latin form a title carries after " - ", " / " or in parentheses. */
+        fun ownLatin(s: String): String? {
+            val n = normalize(s)
+            val m = Regex("""^(.+?) (?:-|/) (.+)$""").find(n) ?: Regex("""^(.+?)\s*\(([^()]+)\)$""").find(n) ?: return null
+            val (left, right) = m.destructured
+            if (!hasNonLatin(left) || hasNonLatin(right) || right.none { it.isLetter() } || VERSION_TAG.containsMatchIn(right)) return null
+            return right.trim()
+        }
+
+        // ponytail: a word list for version tags, so "(Ballade Ver.)" and "(feat. X)" aren't taken for a translation.
+        private val VERSION_TAG = Regex("""(?i)\b(ver|version|size|mix|remix|live|edit|acoustic|instrumental|inst|cover|feat|ft|prod|from|op|ed|opening|ending|theme|remaster|remastered|mv|short|full|tv|demo|karaoke|off vocal)\b""")
+
+        /** A word mixing Latin with Greek or Cyrillic letters is stylized (ΛRCTIC, ЯOCK, μ's): keep it. */
+        private fun stylized(word: String): Boolean {
+            val scripts = word.codePoints().filter(Character::isLetter).toArray().map { Character.UnicodeScript.of(it) }.toSet()
+            return Character.UnicodeScript.LATIN in scripts &&
+                (Character.UnicodeScript.GREEK in scripts || Character.UnicodeScript.CYRILLIC in scripts)
+        }
+
+        // 、。「」『』・～ as Latin punctuation. ・ becomes a space only between words, so (´・ω・`) keeps it.
+        private fun punctuation(s: String): String = s
+            .replace(Regex("、(?=\\p{L})"), ", ").replace('、', ',')
+            .replace(Regex("。(?=\\p{L})"), ". ").replace('。', '.')
+            .replace(Regex("(?<=[\\p{L}\\p{N}])[「『]"), " \"").replace(Regex("[」』](?=[\\p{L}\\p{N}])"), "\" ").replace(Regex("[「」『』]"), "\"")
+            .replace(Regex("(?<=\\p{L})・(?=\\p{L})"), " ")
+            .replace('〜', '~').replace('～', '~')
+
+        /** Capitalizes each space-separated word: Korean, Chinese (one word per syllable) and other caseless scripts. */
+        private fun words(s: String, title: Boolean) = if (title) s.split(' ').joinToString(" ") { capitalize(it, false) } else s
+
+        // The first word is always capitalized (βίος → "Bios"), unless it was Latin already or stayed as it was (ω in a kaomoji).
+        private fun capFirst(original: String, latin: String): String {
+            val cp = original.codePoints().filter(Character::isLetter).findFirst().orElse(-1)
+            val out = latin.firstOrNull { it.isLetter() } ?: return latin
+            if (cp < 0 || Character.UnicodeScript.of(cp) == Character.UnicodeScript.LATIN || Character.UnicodeScript.of(out.code) != Character.UnicodeScript.LATIN) return latin
+            return capitalize(latin, false)
+        }
+
+        // Uppercases the first letter, wherever it is: "~anata" → "~Anata".
+        private fun capitalize(r: String, allCaps: Boolean): String {
+            if (allCaps) return r.uppercase()
+            val i = r.indexOfFirst { it.isLetter() }
+            return if (i < 0) r else r.substring(0, i) + r[i].uppercase() + r.substring(i + 1)
+        }
 
         private fun appendWord(out: StringBuilder, word: String) {
             if (out.isNotEmpty() && word.isNotEmpty() && out.last().isLetterOrDigit() && word.first().isLetterOrDigit()) out.append(' ')

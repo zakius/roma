@@ -12,23 +12,101 @@ class RomanizeTest {
     private val r = Romanizer(jvmIcu)
 
     @Test fun japanese() {
-        assertEquals("yoru ni kakeru", r.machine("夜に駆ける"))
-        assertEquals("kimi no koe", r.machine("君の声"))
-        assertEquals("tōkyō", r.machine("東京"))
-        assertEquals("eiga", r.machine("映画"))
-        assertEquals("watashi wa", r.machine("私は"))
-        assertEquals("kōhī", r.machine("コーヒー"))
-        assertEquals("shizumu yō ni", r.machine("沈むように"))
-        assertEquals("sayonara dake datta", r.machine("さよならだけだった"))
-        assertEquals("subete ga wakatta", r.machine("全てが分かった"))
+        assertEquals("Yoru ni Kakeru", r.machine("夜に駆ける"))
+        assertEquals("Kimi no Koe", r.machine("君の声"))
+        assertEquals("Kimi no Na wa", r.machine("君の名は"))
+        assertEquals("Tōkyō", r.machine("東京"))
+        assertEquals("Eiga", r.machine("映画"))
+        assertEquals("Watashi wa", r.machine("私は"))
+        assertEquals("Kōhī", r.machine("コーヒー"))
+        assertEquals("Shizumu Yō ni", r.machine("沈むように"))
+        assertEquals("Sayonara dake Datta", r.machine("さよならだけだった"))
+        assertEquals("Subete ga Wakatta", r.machine("全てが分かった"))
         assertEquals("matcha", r.kana("マッチャ"))
         assertEquals("kon'ya", r.kana("コンヤ"))
         assertEquals("fan", r.kana("ファン"))
     }
 
+    @Test fun sentenceCase() {
+        // Lyric lines: only the first letter is capitalized.
+        assertEquals("Shizumu yō ni", r.machine("沈むように", sentence = true))
+        assertEquals("Sayonara dake datta", r.machine("さよならだけだった", sentence = true))
+        assertEquals("Subete ga wakatta", r.machine("全てが分かった", sentence = true))
+        assertEquals("No uta", r.machine("の歌", sentence = true))
+    }
+
+    @Test fun titleCase() {
+        assertEquals("Departures ~Anata ni Okuru Ai no Uta~", r.machine("Departures ~あなたにおくるアイの歌~"))
+        // Latin parts are never changed.
+        assertEquals("Bokura no LIVE Kimi to no LIFE", r.machine("ぼくらのLIVE 君とのLIFE"))
+        assertEquals("LiSA no Uta (Ballade Ver.)", r.machine("LiSAの歌 (Ballade Ver.)"))
+        // Korean and Chinese: every word; Chinese has one word per syllable.
+        assertEquals("BTS Bomnal", r.machine("BTS 봄날"))
+        assertEquals("Qíng Tiān", Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh")).machine("晴天"))
+        // Cyrillic keeps the original's capitals.
+        assertEquals("Gruppa krovi", r.machine("Группа крови"))
+        assertEquals("Ya lyublyu tebya", r.machine("Я люблю тебя"))
+    }
+
+    @Test fun subsidiaryVerbs() {
+        assertEquals("Tokete Yuku", r.machine("溶けてゆく"))
+        assertEquals("tokete yuku", r.machine("溶けてゆく", sentence = true).lowercase())
+        assertEquals("Tabete iru", r.machine("食べている", sentence = true))
+        assertEquals("Tabeteru", r.machine("食べてる", sentence = true))
+        assertEquals("Tabechau", r.machine("食べちゃう", sentence = true))
+    }
+
+    @Test fun mixedScript() {
+        // Full-width Latin and half-width kana are normalized first.
+        assertEquals("LOVE", r.machine("ＬＯＶＥ"))
+        assertEquals("Ai", r.machine("ｱｲ"))
+        assertEquals("Kimi ni, Todoke.", r.machine("君に、届け。"))
+        assertEquals("Romio Jurietto", r.machine("ロミオ・ジュリエット"))
+        assertEquals("Kimi no \"Uta\"", r.machine("君の「歌」"))
+        // Code points, not UTF-16 chars: an emoji doesn't make a title non-Latin.
+        assertTrue(r.text("Happy 🎉").isLatin)
+        assertEquals("Yě Jiā", Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh")).machine("𠮷野家").substringAfter(' '))
+    }
+
+    @Test fun stylizedStaysAsIs() {
+        assertEquals("(´・ω・`)", r.machine("(´・ω・`)"))
+        assertEquals("ΛRCTIC", r.machine("ΛRCTIC"))
+        assertEquals("ЯOCK", r.machine("ЯOCK"))
+        assertEquals("μ's", r.machine("μ's"))
+        assertEquals("Ya i ty", r.machine("Я и ты"))
+        assertEquals("Zvyozdy i ya", r.machine("звёзды и я"))
+    }
+
+    @Test fun greek() {
+        assertEquals("Bios", r.machine("Βίος"))
+        assertEquals("Bios", r.machine("βίος"))
+        assertEquals("Athena", r.machine("Αθηνα"))
+        val elot = Romanizer(jvmIcu, RomanizeSettings(greek = "elot"))
+        assertEquals("Víos", elot.machine("βίος"))
+        assertEquals("Efcharistó", elot.machine("ευχαριστώ"))
+    }
+
+    @Test fun ownLatinForm() {
+        assertEquals("Spica", r.text("スピカ - Spica", titleOf = true).latin)
+        assertEquals("Idol", r.text("アイドル - Idol", titleOf = true).latin)
+        assertEquals("Silhouette", r.text("シルエット (Silhouette)", titleOf = true).latin)
+        // Version tags are not a Latin form.
+        assertEquals("Yoru ni Kakeru (Ballade Ver.)", r.text("夜に駆ける (Ballade Ver.)", titleOf = true).latin)
+        assertEquals("Tetorisu (feat. Kasane Teto)", r.text("テトリス（feat. Kasane Teto）", titleOf = true).latin)
+        // Only titles: an artist name is romanized whole.
+        assertEquals("Supika - Spica", r.text("スピカ - Spica").latin)
+    }
+
+    @Test fun correctionShownAsTyped() {
+        val o = Romanizer(jvmIcu)
+        o.overrides = listOf(Override("song", "s1", "夜に駆ける", "yoru ni KAKERU"), Override("song", "s1", "アイドル", "アイドル"))
+        assertEquals("yoru ni KAKERU", o.text("夜に駆ける", songId = "s1").latin)
+        assertTrue(o.text("アイドル", songId = "s1").isLatin) // "Don't romanize"
+    }
+
     @Test fun noMacrons() {
         val plain = Romanizer(jvmIcu, RomanizeSettings(japaneseMacrons = false))
-        assertEquals("tokyo", plain.machine("東京"))
+        assertEquals("Tokyo", plain.machine("東京"))
     }
 
     @Test fun hanDecision() {
@@ -38,17 +116,17 @@ class RomanizeTest {
         val zh = Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh"))
         assertFalse(zh.isJapanese("晴天", listOf("周杰伦")))
         assertTrue(zh.isJapanese("晴天", listOf("あいみょん")))
-        assertEquals("qíng tiān", zh.machine("晴天"))
-        assertEquals("qing tian", Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).machine("晴天"))
+        assertEquals("Qíng Tiān", zh.machine("晴天"))
+        assertEquals("Qing Tian", Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).machine("晴天"))
     }
 
     @Test fun korean() {
-        assertEquals("saranghae", r.machine("사랑해"))
-        assertEquals("hangugeo", r.machine("한국어"))
-        assertEquals("gamsahamnida", r.machine("감사합니다"))
-        assertEquals("silla", r.machine("신라"))
-        assertEquals("joahae", r.machine("좋아해"))
-        assertEquals("BTS bomnal", r.machine("BTS 봄날"))
+        assertEquals("Saranghae", r.machine("사랑해"))
+        assertEquals("Hangugeo", r.machine("한국어"))
+        assertEquals("Gamsahamnida", r.machine("감사합니다"))
+        assertEquals("Silla", r.machine("신라"))
+        assertEquals("Joahae", r.machine("좋아해"))
+        assertEquals("BTS Bomnal", r.machine("BTS 봄날"))
     }
 
     @Test fun cyrillic() {
@@ -79,8 +157,8 @@ class RomanizeTest {
         val words = listOf("夜", "に", "駆", "ける")
         val latin = r.parts(words)
         assertEquals(4, latin.size)
-        assertEquals("yoru ni kakeru", latin.joinToString("").trim())
-        assertEquals(listOf("ni", "hao"), Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).parts(listOf("你", "好")))
+        assertEquals("Yoru ni kakeru", latin.joinToString("").trim())
+        assertEquals(listOf("Ni", "hao"), Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).parts(listOf("你", "好")))
     }
 
     @Test fun localSearch() {
