@@ -5,7 +5,8 @@
 -dontwarn java.beans.**
 -dontwarn javax.script.**
 -dontwarn org.slf4j.**
-# Kuromoji loads its dictionary by class-relative resource paths.
--keep class com.atilika.kuromoji.** { *; }
+# Sudachi creates its plugins by class name from sudachi.json; javax.json finds its provider by ServiceLoader.
+-keep class com.worksap.nlp.sudachi.** { *; }
+-keep class org.glassfish.json.** { *; }
 # Optional JDK classes referenced by Rhino and other JVM libraries, absent on Android.
 -dontwarn jdk.dynalink.**
