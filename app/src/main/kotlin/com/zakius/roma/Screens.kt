@@ -80,6 +80,7 @@ import coil3.compose.AsyncImage
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import roma.core.Item
@@ -406,15 +407,20 @@ private val FILTERS = listOf(
     "Playlists" to YouTube.SearchFilter.FILTER_COMMUNITY_PLAYLIST,
 )
 
+private class Found(val items: List<Item>, val corrected: String?, val autoCorrected: Boolean, val originalParams: String?)
+
 @Composable
 fun SearchScreen() {
     var query by rememberSaveable { mutableStateOf("") }
     var submitted by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableIntStateOf(0) }
+    // Set by "Search for … instead": YouTube's params for the query as typed, without its spelling correction.
+    var asTyped by rememberSaveable { mutableStateOf<String?>(null) }
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val focus = remember { FocusRequester() }
     var focusedOnce by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (!focusedOnce) { focus.requestFocus(); focusedOnce = true } }
+    fun search(q: String) { query = q; submitted = q.trim(); asTyped = null }
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
             query, { query = it },
@@ -422,29 +428,54 @@ fun SearchScreen() {
             placeholder = { Text("Songs, albums, artists") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { submitted = query.trim() }),
+            keyboardActions = KeyboardActions(onSearch = { search(query) }),
         )
         // Fixed order; videos are left out on purpose.
         Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FILTERS.forEachIndexed { i, (label, _) -> FilterChip(filter == i, { filter = i }, label = { Text(label) }) }
+            FILTERS.forEachIndexed { i, (label, _) -> FilterChip(filter == i, { filter = i; asTyped = null }, label = { Text(label) }) }
         }
-        if (submitted.isNotEmpty()) {
+        // While the text differs from the last search, YouTube's suggestions take the results' place.
+        var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+        LaunchedEffect(query) {
+            suggestions = emptyList()
+            if (query.isBlank() || query.trim() == submitted) return@LaunchedEffect
+            delay(250)
+            suggestions = withContext(Dispatchers.IO) { YouTube.searchSuggestions(query).getOrNull()?.queries.orEmpty() }
+        }
+        if (suggestions.isNotEmpty() && query.trim() != submitted) {
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(suggestions) { q -> Text(q, Modifier.fillMaxWidth().clickable { search(q) }.padding(horizontal = 16.dp, vertical = 12.dp)) }
+            }
+        } else if (submitted.isNotEmpty()) {
             // The local index holds the Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't.
             val local = if (filter == 0) Store.searchLocal(submitted) else emptyList()
-            Loader(submitted to filter to Store.version, {
-                YouTube.search(submitted, FILTERS[filter].second).getOrThrow().items
+            Loader(listOf(submitted, filter, asTyped, Store.version), {
+                val r = YouTube.search(submitted, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter].second).getOrThrow()
+                val items = r.items
                     .filter { it !is SongItem || !it.isVideoSong || filter != 0 }
                     .mapNotNull { Store.romanizer.item(it) }
                     .also { list -> Store.remember(list.mapNotNull { it.song }) }
-            }) { remote ->
+                Found(items, r.correctedQuery, r.autoCorrected, r.originalParams)
+            }) { found ->
+                // YouTube's spelling correction, one line above the results.
+                val corrected = found.corrected
+                if (corrected != null) {
+                    val line = if (found.autoCorrected) "Showing results for “$corrected” · Search for “$submitted” instead" else "Did you mean “$corrected”?"
+                    Text(
+                        line,
+                        Modifier.fillMaxWidth().clickable { if (found.autoCorrected) asTyped = found.originalParams else search(corrected) }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 LazyColumn(Modifier.fillMaxSize()) {
                     if (local.isNotEmpty()) {
                         item { Header("Seen before") }
                         items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
                         item { Header("YouTube Music") }
                     }
-                    if (remote.isEmpty()) item { Text("No results for “$submitted”.", Modifier.padding(16.dp)) }
-                    items(remote) { item ->
+                    if (found.items.isEmpty()) item { Text("No results for “$submitted”.", Modifier.padding(16.dp)) }
+                    items(found.items) { item ->
                         val s = item.song
                         if (s != null) SongRow(s, onMenu = { menuFor = s }) { openItem(item) } else ItemRow(item) { openItem(item) }
                     }

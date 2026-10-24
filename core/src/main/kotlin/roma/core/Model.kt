@@ -47,11 +47,30 @@ fun Romanizer.again(s: Song): Song {
     return Song(s.id, title, artists, album, s.durationSec, s.thumb, s.video, s.reason)
 }
 
-/** Local search: the query matches the original or the Latin form, ignoring case, accents and spaces. */
-fun matches(song: Song, query: String): Boolean {
+/**
+ * Local search: the query matches the original or the Latin form, ignoring case, accents (ō = o) and spaces.
+ * Small typos pass: one in a query of 5 or more letters, two from 9. Returns how many typos it took, or null.
+ */
+fun matchDistance(song: Song, query: String): Int? {
     val q = fold(query)
-    if (q.isEmpty()) return false
-    return listOf(song.title.original, song.title.latin, song.artistOriginal, song.artistLatin).any { fold(it).contains(q) }
+    if (q.isEmpty()) return null
+    val allowed = when { q.length >= 9 -> 2; q.length >= 5 -> 1; else -> 0 }
+    return listOf(song.title.original, song.title.latin, song.artistOriginal, song.artistLatin, song.artistLatin + song.title.latin)
+        .minOf { substringDistance(q, fold(it)) }.takeIf { it <= allowed }
+}
+
+fun matches(song: Song, query: String) = matchDistance(song, query) != null
+
+// Fewest edits that turn q into some substring of text (Sellers' algorithm).
+private fun substringDistance(q: String, text: String): Int {
+    var prev = IntArray(text.length + 1) // row 0: q is empty, so any start in text costs nothing
+    for (i in 1..q.length) {
+        val row = IntArray(text.length + 1)
+        row[0] = i
+        for (j in 1..text.length) row[j] = minOf(prev[j - 1] + if (q[i - 1] == text[j - 1]) 0 else 1, prev[j] + 1, row[j - 1] + 1)
+        prev = row
+    }
+    return prev.min()
 }
 
 private fun fold(s: String) = Romanizer.stripMarks(s).lowercase().replace(Regex("[\\s'’-]+"), "")

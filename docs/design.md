@@ -14,7 +14,7 @@ Working name; rename freely.
 
 | Concern | Choice |
 |---|---|
-| YT Music API (home, search, library, radio, likes, playlists) | `innertube` Kotlin module from Metrolist, vendored into `core` (package `com.metrolist.innertube`, unchanged; a no-op `timber.log.Timber` stands in for its logger). Since October 2026 it is a facade over Metrolist's InnerTubeX library (Kotlin Multiplatform, JVM target, from JitPack), which pulls in QuackJS. Not published on its own, so vendoring is the only option. |
+| YT Music API (home, search, library, radio, likes, playlists) | `innertube` Kotlin module from Metrolist, vendored into `core` (package `com.metrolist.innertube`, unchanged except the search correction fields, see Search; a no-op `timber.log.Timber` stands in for its logger). Since October 2026 it is a facade over Metrolist's InnerTubeX library (Kotlin Multiplatform, JVM target, from JitPack), which pulls in QuackJS. Not published on its own, so vendoring is the only option. |
 | Stream URLs (signature / n-param / PoToken) | NewPipeExtractor. Its team fixes YouTube changes fastest. |
 | Playback, media session, notification | Media3 (ExoPlayer + MediaSessionService) |
 | Login | WebView sign-in to music.youtube.com, cookies kept. No GMS account picker. |
@@ -58,7 +58,7 @@ Step 0, before writing code: check that both libraries are maintained, that they
 - A title's own Latin form: when a song or album title carries one after " - ", " / " or in parentheses, and that part is fully Latin, the Latin form is just that part ("スピカ - Spica" → "Spica"). A part that looks like a version tag (ver, live, remix, feat., TV size, …) doesn't count, so "(Ballade Ver.)" is kept. Artist names don't get this rule ("… - Topic").
 - Overrides: the user can correct any string. Scope is this string, this song or this artist. Stored locally and exportable as one file.
 - Display modes: Romanized, Both (Latin with the original small underneath), Ruby (reading above the original), Original. Defaults: lists show Both; the player shows the Latin title with the original underneath.
-- Search: the local index includes the romanized forms, so "kimi no" finds 君の声. Remote search sends the query as typed.
+- Search: the local index includes the romanized forms, so "kimi no" finds 君の声. Remote search sends the query as typed; YouTube's own spelling correction applies (see Search).
 
 ## Lyrics
 
@@ -117,6 +117,10 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 
 - Filters in a fixed order: Songs, Albums, Artists, Playlists. Videos are excluded by default.
 - Results show Latin with the original underneath.
+- Spelling (checked 2026-10-24): YouTube Music corrects typos with and without the Songs filter. "yoasbi yoru ni kakru" and "kenshi yonezy lemon" come back as results for "yoasobi yoru ni kakeru" and "kenshi yonezu lemon" (`showingResultsForRenderer`); "kino grupa krovi" comes back for the query as typed, which already finds Группа крови, plus a suggestion "kino gruppa krovi" (`didYouMeanRenderer`). Both sit in an `itemSectionRenderer` before the results, which innertube used to drop; the vendored `YouTube.search` now reads them (`SearchResult.correctedQuery`, `autoCorrected`, `originalParams`). This is the only change to the vendored innertube.
+- One line above the results, under the filters, shows the correction: "Showing results for X · Search for Y instead" (tap: search the query as typed, with YouTube's `originalQueryEndpoint` params, which turn the correction off for that filter) or "Did you mean X?" (tap: search X). Changing the filter or the query clears the "as typed" choice.
+- Suggestions: while the text differs from the last search, YouTube's suggestions (`searchSuggestions`, 250 ms after the last keystroke) take the results' place; tapping one searches it.
+- "Seen before" (local) matching ignores case, accents (ō = o), spaces, apostrophes and hyphens, and tolerates typos: none in a query under 5 letters, one from 5, two from 9 (edit distance to any part of the title, the artist, or artist + title). Closer matches come first, at most 20.
 
 ## Implementation notes (2026-10-24)
 

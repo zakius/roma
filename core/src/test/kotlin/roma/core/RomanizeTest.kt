@@ -194,5 +194,13 @@ class RomanizeTest {
         assertTrue(matches(s, "kiminokoe"))
         assertTrue(matches(s, "君の"))
         assertFalse(matches(s, "tokyo"))
+        // Typos, spaces and macrons.
+        val y = Song("y", r.text("夜に駆ける"), listOf(Named(null, Text("YOASOBI", "YOASOBI"))))
+        assertEquals(1, matchDistance(y, "yoru ni kakru"))
+        assertEquals(2, matchDistance(y, "yoasbi yoru ni kakru"))
+        assertTrue(matches(Song("t", r.text("東京"), emptyList()), "tokyo"))
+        assertTrue(matches(Song("k", Text("Lemon", "Lemon"), listOf(Named(null, Text("米津玄師", "Kenshi Yonezu")))), "yonezy"))
+        // Short queries must match exactly, so the list isn't flooded.
+        assertFalse(matches(Song("l", Text("Live", "Live"), emptyList()), "love"))
     }
 }

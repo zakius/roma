@@ -62,6 +62,15 @@ data class ItemSectionRenderer(
         val musicShelfRenderer: MusicShelfRenderer? = null,
         val musicPlaylistShelfRenderer: MusicPlaylistShelfRenderer? = null,
         val gridRenderer: GridRenderer? = null,
+        // roma: search spelling corrections.
+        val showingResultsForRenderer: Correction? = null,
+        val didYouMeanRenderer: Correction? = null,
+    )
+
+    @Serializable
+    data class Correction(
+        val correctedQuery: Runs? = null,
+        val originalQueryEndpoint: NavigationEndpoint? = null,
     )
 
     @Serializable

@@ -20,7 +20,7 @@ import roma.core.RomanizeSettings
 import roma.core.Romanizer
 import roma.core.Song
 import roma.core.again
-import roma.core.matches
+import roma.core.matchDistance
 import java.io.File
 
 class App : Application() {
@@ -196,5 +196,7 @@ object Store {
     }
 
     // The stored Latin forms date from when each song was seen; romanize the hits again so they follow today's rules.
-    fun searchLocal(q: String): List<Song> = synchronized(index) { index.filter { matches(it, q) }.take(20) }.map { romanizer.again(it) }
+    fun searchLocal(q: String): List<Song> = synchronized(index) {
+        index.mapNotNull { s -> matchDistance(s, q)?.let { s to it } }.sortedBy { it.second }.take(20).map { it.first }
+    }.map { romanizer.again(it) }
 }

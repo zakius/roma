@@ -6,6 +6,7 @@ import com.metrolist.innertube.models.Artist
 import com.metrolist.innertube.models.ArtistItem
 import com.metrolist.innertube.models.BrowseEndpoint
 import com.metrolist.innertube.models.EpisodeItem
+import com.metrolist.innertube.models.ItemSectionRenderer
 import com.metrolist.innertube.models.GridRenderer
 import com.metrolist.innertube.models.MediaInfo
 import com.metrolist.innertube.models.MusicCarouselShelfRenderer
@@ -322,6 +323,8 @@ object YouTube {
             val response = innerTube.search(WEB_REMIX, query, filter.value, setLogin = recordSearchHistory).body<SearchResponse>()
             val searchItems = mutableListOf<YTItem>()
             var searchContinuation: String? = null
+            var correction: ItemSectionRenderer.Correction? = null
+            var autoCorrected = false
 
             response.contents
                 ?.tabbedSearchResultsRenderer
@@ -346,12 +349,19 @@ object YouTube {
                                 ?.mapNotNull { SearchPage.toYTItem(it) }
                                 ?: emptyList()
                         searchItems.addAll(items)
+                        section.itemSectionRenderer.contents?.forEach { c ->
+                            c.showingResultsForRenderer?.let { correction = it; autoCorrected = true }
+                            c.didYouMeanRenderer?.let { correction = it }
+                        }
                     }
                 }
 
             SearchResult(
                 items = searchItems.distinctBy { it.id },
                 continuation = searchContinuation,
+                correctedQuery = correction?.correctedQuery?.runs?.joinToString("") { it.text },
+                autoCorrected = autoCorrected,
+                originalParams = correction?.originalQueryEndpoint?.searchEndpoint?.params,
             )
         }
 
