@@ -218,7 +218,7 @@ class Romanizer(
                 if (romaji.startsWith("ch")) romaji = "t$romaji" else if (c != null && c.isLetter() && c !in "aiueonāīūēō") romaji = c + romaji
             }
             sokuon = japaneseText && toKatakana(surface).endsWith('ッ')
-            // Auxiliaries, suffixes, a prefix, the te-form and ば attach to their word: "aruita", "aruite",
+            // Auxiliaries, suffixes, a prefix, the te-form (and ちゃ じゃ for ては では) and ば attach to their word: "aruita", "aruite",
             // "tabemasu", "okāsan", "sannin", "ikeba", "datte". A subsidiary verb straight after a verb stem glues
             // ("hashiridasu", "ureshikunai" for ない); after the te-form or an adjective it is its own word:
             // "tokete yuku", "tabete iru", "tsuyoku nareru". Contractions such as てる and ちゃう are
@@ -229,7 +229,7 @@ class Romanizer(
                 pos == "接尾辞" || prevPos == "接頭辞" ||
                 pos == "動詞" && t.pos[1] == "非自立可能" && prevPos == "動詞" ||
                 pos == "形容詞" && t.pos[1] == "非自立可能" && afterInflected ||
-                t.pos[1] == "接続助詞" && (surface == "て" || surface == "で" || surface == "ば" && afterInflected) ||
+                t.pos[1] == "接続助詞" && (surface in setOf("て", "で", "ちゃ", "じゃ") || surface == "ば" && afterInflected) ||
                 surface == "って" && prev?.surface == "だ" ||
                 prev?.pos?.get(1) == "数詞" && pos == "名詞" || stray
             // A sentence-final particle can't start a phrase: there it is a misread first syllable. Sudachi reads

@@ -33,7 +33,11 @@ class App : Application() {
         super.onCreate()
         Store.init(this)
         Playback.init(this)
-        thread(name = "sudachi") { Store.romanizer.warmUp() }
+        thread(name = "sudachi") {
+            val t0 = System.nanoTime()
+            Store.romanizer.warmUp()
+            android.util.Log.i("roma", "Sudachi dictionary ready in ${(System.nanoTime() - t0) / 1_000_000} ms")
+        }
     }
 }
 

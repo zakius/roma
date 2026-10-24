@@ -242,6 +242,7 @@ class RomanizeTest {
         assertEquals("Sannin", r.machine("三人", sentence = true))
         assertEquals("Hashiridasu", r.machine("走り出す", sentence = true))
         assertEquals("Ureshikunai", r.machine("嬉しくない", sentence = true))
+        assertEquals("Shinja dame", r.machine("死んじゃだめ", sentence = true))
         assertEquals("Iku deshō", r.machine("行くでしょう", sentence = true))
         assertEquals("Kirei na Hana", r.machine("綺麗な花"))
         // A reading in brackets (yomigana) is dropped; karaoke parts stay aligned.
