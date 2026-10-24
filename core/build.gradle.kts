@@ -22,8 +22,12 @@ dependencies {
     implementation("io.ktor:ktor-client-encoding:3.6.0")
     // Stream URLs.
     api("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
+    // Japanese readings. Kuromoji (IPADIC bundled) is far smaller than Sudachi plus its dictionary.
+    implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     testImplementation(kotlin("test"))
+    // Android supplies android.icu; on the JVM the tests use ICU4J.
+    testImplementation("com.ibm.icu:icu4j:78.1")
 }
 
 tasks.test { useJUnitPlatform() }
