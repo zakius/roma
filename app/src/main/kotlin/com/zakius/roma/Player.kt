@@ -84,7 +84,7 @@ fun PlayerScreen() {
     var menuOpen by remember { mutableStateOf(false) }
     val entry = Playback.current()
     val p = Playback.player
-    val lyricsState = Playback.lyrics?.takeIf { it.songId == entry?.song?.id }
+    val lyricsState = Playback.lyrics?.takeIf { it.songId == Playback.shown()?.id }
     val lyrics = lyricsState?.lyrics
     val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty()
     if (view == "lyrics" && !hasLyrics && lyrics != null) view = "song"
@@ -92,7 +92,7 @@ fun PlayerScreen() {
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (view) {
-                "lyrics" -> if (lyricsState != null && lyrics != null) LyricsView(lyricsState, lyrics, entry?.song?.id) else Centered("Looking for lyrics…")
+                "lyrics" -> if (lyricsState != null && lyrics != null) LyricsView(lyricsState, lyrics, Playback.shown()?.id) else Centered("Looking for lyrics…")
                 "queue" -> QueueView()
                 else -> SongView()
             }
@@ -167,17 +167,19 @@ private fun RowScope.Slot(icon: Painter, description: String, enabled: Boolean, 
 private fun SeekBar() {
     Playback.tick
     val p = Playback.player
-    val duration = p.duration.takeIf { it > 0 } ?: 0L
+    val duration = Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: 0L
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
-    val pos = if (dragging) dragValue else p.currentPosition.toFloat()
+    // While a picked song is being prepared, the old one's progress would belong to another title: show the new start.
+    val preparing = Playback.pending != null
+    val pos = if (preparing) 0f else if (dragging) dragValue else p.currentPosition.toFloat()
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Slider(
             value = pos.coerceIn(0f, duration.toFloat().coerceAtLeast(1f)),
             onValueChange = { dragging = true; dragValue = it },
             onValueChangeFinished = { p.seekTo(dragValue.toLong()); dragging = false },
             valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
-            enabled = duration > 0,
+            enabled = duration > 0 && Playback.pending == null,
             modifier = Modifier.height(32.dp),
         )
         Row(Modifier.fillMaxWidth().height(18.dp)) {
@@ -196,8 +198,7 @@ private fun time(ms: Long): String {
 @Composable
 private fun SongView() {
     Playback.tick
-    val e = Playback.current() ?: return Centered("Nothing playing")
-    val s = e.song
+    val s = Playback.shown() ?: return Centered("Nothing playing")
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         AsyncImage(s.thumb?.let(::bigThumb), null, Modifier.weight(1f, fill = false).aspectRatio(1f).clip(RoundedCornerShape(8.dp)))
         Spacer(Modifier.height(16.dp))
@@ -259,7 +260,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
         if (!synced) return@LaunchedEffect
         while (true) {
             if (Playback.player.isPlaying) withFrameNanos { } else delay(200)
-            val pos = Playback.player.currentPosition
+            val pos = if (Playback.pending != null) -1L else Playback.player.currentPosition
             val line = lines.indexOfLast { it.startMs <= pos }
             current = line
             currentWord = lines.getOrNull(line)?.words?.indexOfLast { it.startMs <= pos } ?: -1

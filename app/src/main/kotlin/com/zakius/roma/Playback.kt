@@ -41,6 +41,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import roma.core.LastFm
 import roma.core.Lyrics
@@ -104,6 +105,7 @@ object Playback {
             if (spec.uri.scheme != "roma") spec else spec.withUri(Uri.parse(streamUrl(spec.uri.host!!)))
         }
         val source = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(resolving)
+        cached = source
         player = ExoPlayer.Builder(c)
             .setMediaSourceFactory(DefaultMediaSourceFactory(source))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
@@ -222,9 +224,41 @@ object Playback {
     /** Plays [songs] from [start]; the rest of the list is queued and radio from the started song follows. */
     fun play(songs: List<Song>, start: Int = 0) = play(songs, start, null, null)
 
+    /**
+     * The song being prepared after a tap: shown in the player at once, while whatever plays keeps playing until the
+     * new song's stream URL is known and its first 256 KB are in the cache. Then the switch starts it without a gap.
+     */
+    var pending by mutableStateOf<Song?>(null)
+        private set
+    private var pendingJob: Job? = null
+    private lateinit var cached: CacheDataSource.Factory
+
+    /** What the player shows: the song being prepared, else the one playing. */
+    fun shown(): Song? = pending ?: current()?.song
+
     private fun play(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
         if (songs.isEmpty()) return
         Store.remember(songs)
+        val song = songs[start]
+        pendingJob?.cancel()
+        pending = song
+        loadLyrics(song)
+        pendingJob = scope.launch {
+            withContext(Dispatchers.IO) {
+                withTimeoutOrNull(8_000) { runCatching { precache(song.id) } } // on failure the player's own error handling takes over
+            }
+            pending = null
+            switchTo(songs, start, mix, mixNext)
+        }
+    }
+
+    // Resolves the stream URL and caches the first 256 KB, the part playback starts from.
+    private fun precache(id: String) {
+        val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setPosition(0).setLength(256 * 1024L).build()
+        androidx.media3.datasource.cache.CacheWriter(cached.createDataSource(), spec, null, null).cache()
+    }
+
+    private fun switchTo(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
         mixId = mix
         mixContinuation = mixNext
         radioSeed = songs[start]

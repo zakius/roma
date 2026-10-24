@@ -131,7 +131,7 @@ fun Root() {
         if (stack.isNotEmpty()) stack.removeAt(stack.size - 1) else Nav.tab = TAB_HOME
     }
     Playback.tick // redraw when the player changes, for the Player tab's dimming
-    val loaded = Playback.player.mediaItemCount > 0
+    val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Box(Modifier.weight(1f)) {
             val page = stack.lastOrNull()
