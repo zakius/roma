@@ -73,6 +73,8 @@ import roma.core.Override
 fun PlayerScreen() {
     Playback.tick
     var view by rememberSaveable { mutableStateOf("song") }
+    // Back closes the lyrics or queue view first, then leaves the player as usual.
+    androidx.activity.compose.BackHandler(enabled = view != "song") { view = "song" }
     var menuOpen by remember { mutableStateOf(false) }
     val entry = Playback.current()
     val p = Playback.player
