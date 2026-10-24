@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +59,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -78,12 +80,15 @@ import coil3.compose.AsyncImage
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import roma.core.Item
 import roma.core.LastFm
 import roma.core.Override
 import roma.core.Song
+import roma.core.isPersonalMix
 import roma.core.item
+import roma.core.personalMixes
 import roma.core.song
 
 // ---------------------------------------------------------------- Shared pieces
@@ -306,22 +311,89 @@ private fun Header(text: String) {
 
 class Section(val title: roma.core.Text, val items: List<Item>)
 
+private const val MIX_PAGES = 10
+
+/**
+ * Home: the pinned "Your mixes" row, then YouTube's shelves. The first pages load until the mixes turn up (at most
+ * [MIX_PAGES]); after that a page loads when the user nears the end. New shelves only ever go at the bottom.
+ */
 @Composable
 fun HomeScreen() {
-    Loader("home" to Store.version, {
-        val page = YouTube.home().getOrThrow()
-        page.sections.map { sec ->
-            val items = sec.items.mapNotNull { Store.romanizer.item(it) }
-            Store.remember(items.mapNotNull { it.song })
-            Section(Store.romanizer.text(sec.title), items)
-        }.filter { it.items.isNotEmpty() }
-    }) { sections ->
-        LazyColumn(Modifier.fillMaxSize()) {
-            items(sections) { sec ->
-                Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
-                val songs = sec.items.mapNotNull { it.song }
-                LazyRow { items(sec.items) { item -> Card(item) { openItem(item, songs) } } }
+    var sections by remember(Store.version) { mutableStateOf(listOf<Section>()) }
+    var mixes by remember { mutableStateOf(Store.mixes) }
+    var more by remember(Store.version) { mutableStateOf(true) }
+    var failed by remember(Store.version) { mutableStateOf<String?>(null) }
+    var attempt by remember(Store.version) { mutableIntStateOf(0) }
+    // Where paging stands; kept across Retry so it carries on from the failed page.
+    var cont by remember(Store.version) { mutableStateOf<String?>(null) }
+    var page by remember(Store.version) { mutableIntStateOf(0) }
+    val found = remember(Store.version) { ArrayList<Item>() }
+    var looking by remember(Store.version) { mutableStateOf(Store.signedIn) }
+    val list = rememberLazyListState()
+    LaunchedEffect(Store.version, attempt) {
+        failed = null
+        while (more) {
+            if (!looking) snapshotFlow { list.layoutInfo.run { (visibleItemsInfo.lastOrNull()?.index ?: 0) >= totalItemsCount - 3 } }.first { it }
+            val from = cont
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    Store.ensureVisitorData()
+                    val p = YouTube.home(from).getOrThrow()
+                    p.continuation to p.sections.map { sec ->
+                        val items = sec.items.mapNotNull { Store.romanizer.item(it) }
+                        Store.remember(items.mapNotNull { it.song })
+                        Section(Store.romanizer.text(sec.title), items)
+                    }
+                }
             }
+            val (next, shelves) = result.getOrElse { failed = it.message ?: it.toString(); return@LaunchedEffect }
+            page++
+            cont = next
+            more = next != null
+            found += personalMixes(shelves.flatMap { it.items })
+            // The mixes live in the pinned row only.
+            sections = sections + shelves.map { Section(it.title, it.items.filterNot { i -> i.kind == "playlist" && isPersonalMix(i.id) }) }.filter { it.items.isNotEmpty() }
+            if (looking && (found.isNotEmpty() || page >= MIX_PAGES || !more)) {
+                looking = false
+                mixes = personalMixes(found)
+                Store.mixes = mixes
+            }
+        }
+    }
+    LazyColumn(Modifier.fillMaxSize(), list) {
+        item(key = "mixes") { MixesRow(mixes) }
+        items(sections) { sec ->
+            Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
+            val songs = sec.items.mapNotNull { it.song }
+            LazyRow { items(sec.items) { item -> Card(item) { openItem(item, songs) } } }
+        }
+        item(key = "end") {
+            val f = failed
+            when {
+                f != null -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Couldn't load Home.", textAlign = TextAlign.Center)
+                    Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                    TextButton(onClick = { attempt++ }) { Text("Retry") }
+                }
+                more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            }
+        }
+    }
+}
+
+/** Always first on Home and never gone: signed out or with no mixes it holds a dimmed hint instead. */
+@Composable
+private fun MixesRow(mixes: List<Item>?) {
+    Text("Your mixes", Modifier.padding(start = 16.dp, top = 16.dp), style = MaterialTheme.typography.titleMedium)
+    @Composable
+    fun Hint(text: String) = Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).alpha(0.5f), style = MaterialTheme.typography.bodyMedium)
+    if (!Store.signedIn) return Hint("Sign in to see your mixes")
+    // Signed in, the row keeps a card's height while it loads or is empty, so the shelves below never jump.
+    Box(Modifier.height(212.dp)) {
+        when {
+            mixes == null -> Hint("Looking for your mixes…")
+            mixes.isEmpty() -> Hint("No mixes yet")
+            else -> LazyRow { items(mixes) { m -> Card(m) { Playback.playMix(m.id); Nav.tab = TAB_PLAYER } } }
         }
     }
 }
@@ -425,7 +497,7 @@ fun PageScreen(p: Page) {
                     Column(Modifier.weight(1f)) {
                         Name(d.title, Store.listMode, MaterialTheme.typography.titleLarge)
                         if (d.subtitle.isNotBlank()) Text(d.subtitle, style = MaterialTheme.typography.bodySmall)
-                        if (d.songs.isNotEmpty()) TextButton(onClick = { Playback.play(d.songs); Nav.tab = TAB_PLAYER }) { Text("Play") }
+                        if (d.songs.isNotEmpty()) TextButton(onClick = { playList(p, d.songs); Nav.tab = TAB_PLAYER }) { Text("Play") }
                     }
                 }
             }
@@ -438,6 +510,10 @@ fun PageScreen(p: Page) {
     }
     menuFor?.let { SongMenu(it, null) { menuFor = null } }
 }
+
+/** Generated playlists (mixes, editorial RD… lists) page on as they play; anything else plays what the page holds. */
+private fun playList(p: Page, songs: List<Song>) =
+    if (p.kind == "playlist" && p.id.removePrefix("VL").startsWith("RD")) Playback.playMix(p.id) else Playback.play(songs)
 
 private suspend fun loadDetail(p: Page): Detail {
     val r = Store.romanizer
@@ -461,7 +537,8 @@ private suspend fun loadDetail(p: Page): Detail {
                 all.addAll(more.songs)
                 cont = more.continuation
             }
-            val songs = all.map { r.song(it) }
+            // Generated playlists (RD…) loop: their continuations return songs already listed.
+            val songs = all.distinctBy { it.id }.map { r.song(it) }
             Store.remember(songs)
             if (id == "LM") Playback.markLiked(songs.map { it.id })
             Detail(r.text(pl.playlist.title), pl.playlist.author?.name?.let { r.text(it).latin } ?: "", pl.playlist.thumbnail, songs, emptyList())

@@ -135,11 +135,24 @@ Decisions taken while building v1, where the spec left room or turned out differ
 - Library tabs: Playlists, Albums, Artists. Search's Playlists filter is community playlists.
 - Known romanization limit: IPADIC reads some compounds by their parts (二人 → "ninin", not "futari"). Overrides fix it per song.
 
+## Home and personal mixes (2026-10-24)
+
+- Home starts with a pinned "Your mixes" row, always first. Signed out it holds a dimmed "Sign in to see your mixes"; signed in with none found, "No mixes yet". Signed in, the row keeps a card's height while it loads or is empty, so the shelves below don't jump. The last mixes found are kept in prefs and shown until the next lookup finishes.
+- Order in the row is fixed: My Supermix, My Mix 1–7, Discover Mix, New Release Mix, Replay Mix, then other personal mixes (Archive Mix and any new ones) by title.
+- Below it come YouTube's shelves. The first pages load until the mixes turn up (at most 10 pages), later pages as the user scrolls. New shelves only go at the bottom. The mixes are taken out of YouTube's own shelves, so they show once.
+- How mixes are identified: by playlist ID, not the localized shelf title. Personal mixes have fixed IDs that are **the same for every account**; the account's cookies decide the contents. All start with `RDTMAK5uy_`. The fixed list (Supermix `RDTMAK5uy_kset8DisdE7LSD4TNjEVvrKRTmG7a56sY`, My Mix 1–7, Discover, New Release, Replay) comes from Music Assistant's `YT_PERSONAL_PLAYLISTS` and cliamp issue #619 (`roma.core.Mixes`). Other prefixes: `RDCLAK5uy_` editorial playlists, `RDAMVM<videoId>` song radio, `RDMM` YouTube "My Mix", `LM` liked songs.
+  - The IDs resolve without cookies too, to an anonymous mix (checked: Supermix and My Mix 1 return 100 songs signed out; Discover Mix returns nothing). So the row can't simply list every known ID: the home feed says which mixes this account has, the table gives their order.
+  - Metrolist has no mix detection: its Android Auto "Mixes" takes every playlist from up to 4 home pages (commit 38c8e122). No dedicated browse ID was found. `FEmusic_made_for_you` (mentioned in a ytmtui issue) answers HTTP 400 signed out, so it is unverified.
+  - Not verified (needs an account): that the signed-in home feed lists the mixes under these IDs, and whether per-artist mixes use `RDTMAK5uy_` (if they do, they land in "others").
+- Why Home never had the mixes: InnerTubeX sends account cookies on browse and next calls only when `YouTube.useLoginForBrowse` is on (default off; Metrolist turns it on). roma now turns it on, so home and radio are the account's.
+- Signed out, home continuation pages come back empty unless every request carries the same visitor data; Home fetches one if none is stored.
+- Playing a mix (tap in the row), or the Play button on any `RD…` playlist page: the songs go into "You queued" as a playlist, not radio. The radio filters (audio over video, duplicates, bans) apply; the leash doesn't (`filterMix`). The next page loads when 3 songs are left. Continuations of generated playlists loop back to songs already listed (an editorial list gives about 100 distinct songs over 6 pages, the Supermix about 137), so 3 pages with nothing new end the mix and radio follows, unless "stop when the queue ends" is on. The playlist page drops these repeats too.
+
 ## Process
 
 - Local git repo. Don't create a GitHub repo or a signing key without asking the user.
 - Build toolchain: mirror ~/dev/plainfin (AGP, Kotlin, Gradle, SDK at ~/Android/Sdk, JDK under ~/.local/share/JetBrains/Toolbox/apps/air/jbr). Read its build files first.
 - Test on an emulator. Never install on the user's own devices without asking first.
 - Leave one small runnable check per non-trivial piece: romanization (including the Japanese/Chinese decision), the lyrics parsers (LRC, enhanced LRC), queue filtering.
-  - `./gradlew :core:test`: romanization, lyrics parsers (LRC, enhanced LRC, KRC, YRC), radio filters, scrobble rule, Last.fm signature.
+  - `./gradlew :core:test`: romanization, lyrics parsers (LRC, enhanced LRC, KRC, YRC), radio filters, personal mix identification and order, scrobble rule, Last.fm signature.
   - `./gradlew :core:networkCheck`: live check that innertube search, NewPipe stream resolution and each lyrics provider still work.
