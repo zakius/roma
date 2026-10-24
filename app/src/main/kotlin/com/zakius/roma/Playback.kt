@@ -112,12 +112,8 @@ object Playback {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays.
-            // (The next song's preloading is set right after build, below.)
             .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 50_000, 500, 2_000).build())
             .build()
-        // Media3 prepares the next song in the queue in the background (its first 5 s), so an automatic transition
-        // or a skip from the notification finds it ready.
-        player.preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
         liked = runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet())
         syncLikes()
         // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
@@ -127,6 +123,8 @@ object Playback {
             override fun onEvents(p: Player, events: Player.Events) {
                 tick++
                 if (p.isPlaying) startSideWork()
+                // Radio songs arrive after the song started, and queue edits can change what comes next.
+                if (p.isPlaying && sideWorkFor == null && events.contains(Player.EVENT_TIMELINE_CHANGED)) prefetchNext()
             }
 
             override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
@@ -175,13 +173,19 @@ object Playback {
         }
     }
 
-    // Resolving a stream takes 1.5 s or more (NewPipeExtractor), so the next song's URL is looked up while this one plays.
+    // The next song's stream URL and first bytes are fetched while this one plays, so Next (from the app or the
+    // notification) and the automatic transition start it from the cache. Media3's own preloading isn't used: it
+    // keeps the next song's download open, and the cache can't serve or store those bytes meanwhile.
     private fun prefetchNext() {
         val i = player.nextMediaItemIndex
         if (i == C.INDEX_UNSET) return
         val id = (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song?.id ?: return
-        scope.launch(Dispatchers.IO) { runCatching { streamUrl(id) } }
+        if (id == prefetched) return
+        prefetched = id
+        scope.launch(Dispatchers.IO) { runCatching { precache(id) } }
     }
+
+    private var prefetched: String? = null
 
     // Blocking, on ExoPlayer's loader thread. URLs expire after about 6 hours; reuse them for 5.
     private fun streamUrl(id: String): String {
@@ -294,7 +298,8 @@ object Playback {
     // Resolves the stream URL and caches the first 32 KB: the container header plus about 1.5 s of audio at YouTube's
     // bitrates, more than the 0.5 s the player needs to start. Waiting for more only delays the switch on slow networks.
     private fun precache(id: String) {
-        val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setPosition(0).setLength(32 * 1024L).build()
+        // The key must be the media items' custom cache key, or the player doesn't find these bytes.
+        val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setKey(id).setPosition(0).setLength(32 * 1024L).build()
         androidx.media3.datasource.cache.CacheWriter(cached.createDataSource(), spec, null, null).cache()
     }
 
