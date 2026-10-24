@@ -72,6 +72,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -459,14 +460,18 @@ fun SearchScreen() {
             }) { found ->
                 // YouTube's spelling correction, one line above the results.
                 val corrected = found.corrected
+                // The corrected query gives way to "…", so the action stays readable on one line.
                 if (corrected != null) {
-                    val line = if (found.autoCorrected) "Showing results for “$corrected” · Search for “$submitted” instead" else "Did you mean “$corrected”?"
-                    Text(
-                        line,
+                    Row(
                         Modifier.fillMaxWidth().clickable { if (found.autoCorrected) asTyped = found.originalParams else search(corrected) }
                             .padding(horizontal = 16.dp, vertical = 8.dp),
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
+                    ) {
+                        val style = MaterialTheme.typography.bodyMedium
+                        val color = MaterialTheme.colorScheme.primary
+                        val (lead, action) = if (found.autoCorrected) "Showing results for “$corrected”" to " · Search as typed" else "Did you mean “$corrected”" to "?"
+                        Text(lead, Modifier.weight(1f, fill = false), style = style, color = if (found.autoCorrected) Color.Unspecified else color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(action, style = style, color = color, maxLines = 1)
+                    }
                 }
                 LazyColumn(Modifier.fillMaxSize()) {
                     if (local.isNotEmpty()) {

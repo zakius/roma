@@ -29,11 +29,24 @@ object Streams {
         started = true
     }
 
-    /** Blocking: call off the main thread. */
+    /**
+     * Blocking: call off the main thread. The fast path asks NewPipe's stream extractor for the audio streams only,
+     * and the downloader answers the requests whose results roma doesn't use itself (see [stub]): 5 of 7 requests,
+     * about 1.2 s. If that fails, the full StreamInfo lookup runs.
+     */
     fun audio(videoId: String): AudioSource {
         start()
-        val info = StreamInfo.getInfo(ServiceList.YouTube, "https://music.youtube.com/watch?v=$videoId")
-        val streams: List<AudioStream> = info.audioStreams.filter { it.content.isNotEmpty() }
+        val url = "https://music.youtube.com/watch?v=$videoId"
+        val streams = try {
+            lean.set(true)
+            val e = ServiceList.YouTube.getStreamExtractor(url)
+            e.fetchPage()
+            e.audioStreams.filter { it.content.isNotEmpty() }.ifEmpty { null }
+        } catch (_: Exception) {
+            null
+        } finally {
+            lean.set(false)
+        } ?: StreamInfo.getInfo(ServiceList.YouTube, url).audioStreams.filter { it.content.isNotEmpty() }
         // Prefer the original track over dubbed ones, then the highest bitrate.
         val best = streams
             .sortedWith(compareBy<AudioStream>({ it.audioTrackType != null && it.audioTrackType?.name != "ORIGINAL" }, { -it.averageBitrate }))
@@ -47,8 +60,31 @@ object Streams {
     }
 }
 
+/** Set while [Streams.audio] takes its fast path, on that thread. */
+private val lean = ThreadLocal.withInitial { false }
+
+/**
+ * The fast path's local answers. NewPipe 0.26.5 takes its streams from the VISIONOS client, which also checks
+ * playability. It asks the ANDROID client too (its streams need a PoToken we don't send, so they go unused) and
+ * the WEB client for metadata and `next`. A minimal answer leaves those fields blank; NewPipe rejects a JSON
+ * answer shorter than 50 characters.
+ */
+private fun stub(request: Request): String? {
+    val body = request.dataToSend()?.let { String(it) } ?: return null
+    val client = Regex(""""clientName":"(\w+)"""").find(body)?.groupValues?.get(1)
+    val videoId = Regex(""""videoId":"([\w-]+)"""").find(body)?.groupValues?.get(1)
+    return when {
+        client == "WEB" -> """{"responseContext": {}, "roma": "WEB metadata and next are not used"}"""
+        client == "ANDROID" && request.url().contains("/visitor_id") -> """{"responseContext": {"visitorData": "roma-skipped-android-client"}}"""
+        client == "ANDROID" && videoId != null ->
+            """{"playerResponse": {"playabilityStatus": {"status": "OK"}, "videoDetails": {"videoId": "$videoId"}}}"""
+        else -> null
+    }
+}
+
 private class OkHttpDownloader(private val http: OkHttpClient) : Downloader() {
     override fun execute(request: Request): Response {
+        if (lean.get()) stub(request)?.let { return Response(200, "OK", emptyMap(), it, request.url()) }
         val body = request.dataToSend()?.toRequestBody()
         val builder = okhttp3.Request.Builder().url(request.url()).method(request.httpMethod(), body)
         builder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0")
