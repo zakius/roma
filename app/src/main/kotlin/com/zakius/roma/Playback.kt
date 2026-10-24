@@ -78,8 +78,11 @@ object Playback {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val main = Handler(Looper.getMainLooper())
 
-    /** Bumped on every player change and twice a second while playing; the UI reads it to redraw. */
+    /** Bumped on every player change; the UI reads it to redraw. */
     var tick by mutableIntStateOf(0)
+        private set
+    /** Bumped twice a second while playing. Only the seek bar reads it, so the clock doesn't redraw the whole player. */
+    var clock by mutableIntStateOf(0)
         private set
     var lyrics by mutableStateOf<LyricsState?>(null)
         private set
@@ -118,11 +121,14 @@ object Playback {
         // Media3 prepares the next song in the queue in the background (its first 5 s), so an automatic transition
         // or a skip from the notification finds it ready.
         player.preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
-        liked = runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet())
-        syncLikes()
+        scope.launch {
+            liked = withContext(Dispatchers.IO) { runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet()) }
+            PlaybackService.instance?.updateLikeButton()
+            syncLikes()
+        }
         // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
         // seen before, so the first tap doesn't pay for it.
-        Store.anySong()?.let { s -> scope.launch(Dispatchers.IO) { runCatching { streamUrl(s.id) } } }
+        scope.launch(Dispatchers.IO) { Store.anySong()?.let { s -> runCatching { streamUrl(s.id) } } }
         player.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {
                 tick++
@@ -168,7 +174,7 @@ object Playback {
             while (true) {
                 delay(500)
                 if (player.isPlaying) {
-                    tick++
+                    clock++
                     countPlayed()
                 }
             }

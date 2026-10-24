@@ -166,6 +166,7 @@ private fun RowScope.Slot(icon: Painter, description: String, enabled: Boolean, 
 @Composable
 private fun SeekBar() {
     Playback.tick
+    Playback.clock
     val p = Playback.player
     val duration = Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: 0L
     var dragging by remember { mutableStateOf(false) }
@@ -229,7 +230,7 @@ private fun QueueView() {
     if (radio.isNotEmpty()) { rows.add("Radio" to -1); radio.forEach { rows.add(null to it) } }
     if (queued.isEmpty() && radio.isEmpty()) rows.add((if (Store.stopAtEnd) "Nothing next: autoplay is off" else "Nothing next yet") to -1)
     LazyColumn(Modifier.fillMaxSize()) {
-        itemsIndexed(rows) { _, (header, i) ->
+        itemsIndexed(rows, contentType = { _, (header, _) -> header == null }) { _, (header, i) ->
             if (header != null) {
                 Text(header, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             } else {

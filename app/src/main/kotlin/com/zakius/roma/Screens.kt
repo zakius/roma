@@ -409,7 +409,7 @@ private val FILTERS = listOf(
     "Playlists" to YouTube.SearchFilter.FILTER_COMMUNITY_PLAYLIST,
 )
 
-private class Found(val items: List<Item>, val corrected: String?, val autoCorrected: Boolean, val originalParams: String?)
+private class Found(val items: List<Item>, val local: List<Song>, val corrected: String?, val autoCorrected: Boolean, val originalParams: String?)
 
 @Composable
 fun SearchScreen() {
@@ -449,15 +449,17 @@ fun SearchScreen() {
                 items(suggestions) { q -> Text(q, Modifier.fillMaxWidth().clickable { search(q) }.padding(horizontal = 16.dp, vertical = 12.dp)) }
             }
         } else if (submitted.isNotEmpty()) {
-            // The local index holds the Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't.
-            val local = if (filter == 0) Store.searchLocal(submitted) else emptyList()
             Loader(listOf(submitted, filter, asTyped, Store.version), {
                 val r = YouTube.search(submitted, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter].second).getOrThrow()
                 val items = r.items
                     .filter { it !is SongItem || !it.isVideoSong || filter != 0 }
                     .mapNotNull { Store.romanizer.item(it) }
-                    .also { list -> Store.remember(list.mapNotNull { it.song }) }
-                Found(items, r.correctedQuery, r.autoCorrected, r.originalParams)
+                // The local index holds the Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't. Looked up
+                // here, off the main thread and once per search, not on every recomposition (each keystroke), and before
+                // this search's own results join the index.
+                val local = if (filter == 0) Store.searchLocal(submitted) else emptyList()
+                Store.remember(items.mapNotNull { it.song })
+                Found(items, local, r.correctedQuery, r.autoCorrected, r.originalParams)
             }) { found ->
                 // YouTube's spelling correction, one line above the results.
                 val corrected = found.corrected
@@ -474,6 +476,7 @@ fun SearchScreen() {
                         Text(action, style = style, color = color, maxLines = 1)
                     }
                 }
+                val local = found.local
                 LazyColumn(Modifier.fillMaxSize()) {
                     if (local.isNotEmpty()) {
                         item { Header("Seen before") }
