@@ -87,6 +87,13 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 - Option: stop when the queue ends (no autoplay).
 - Playback: gapless; loudness normalization if the stream provides loudness data.
 
+## Last.fm
+
+- In-app scrobbling: browser auth flow to get a session key; `track.updateNowPlaying` and `track.scrobble`. Follow the standard rules: the track is longer than 30 s, and it was played for half its length or 4 min. Keep an offline queue and send it in batches of up to 50.
+- Scrobble the **original** metadata, not the romanized form, so tracks match Last.fm's database.
+- The user registers their own API key and secret in settings. Don't ship one.
+- Not in v1: recommendations. The API no longer has a per-user recommendation endpoint. Doing it ourselves means `track.getSimilar` from the user's top tracks, then matching each result to a YT Music track, and the matching is the hard part. A possible later radio source.
+
 ## Search
 
 - Filters in a fixed order: Songs, Albums, Artists, Playlists. Videos are excluded by default.
