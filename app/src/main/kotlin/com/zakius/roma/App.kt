@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import com.metrolist.innertube.YouTube
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import roma.core.Bans
@@ -34,6 +35,8 @@ class App : Application() {
         Store.init(this)
         Playback.init(this)
         thread(name = "sudachi") {
+            // Below the UI threads, so unpacking and loading the dictionary doesn't slow the first frame.
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
             val t0 = System.nanoTime()
             Store.romanizer.warmUp()
             android.util.Log.i("roma", "Sudachi dictionary ready in ${(System.nanoTime() - t0) / 1_000_000} ms")
@@ -52,6 +55,7 @@ class Banned(val kind: String, val id: String, val name: String)
 object Store {
     lateinit var prefs: SharedPreferences
     lateinit var files: File
+    private lateinit var pages: File
     val json = Json { ignoreUnknownKeys = true }
     var version by mutableIntStateOf(0)
         private set
@@ -80,6 +84,7 @@ object Store {
         prefs = c.getSharedPreferences("roma", Context.MODE_PRIVATE)
         assets = c.assets
         files = c.filesDir
+        pages = File(c.cacheDir, "pages")
         romanizer.settings = romanizeSettings()
         romanizer.overrides = loadOverrides()
         YouTube.cookie = prefs.getString("cookie", null)
@@ -108,7 +113,7 @@ object Store {
             romanizer.settings = romanizeSettings()
             Playback.romanizationChanged()
         }
-        if (key.startsWith("rom.") || key == "cookie") dataVersion++
+        if (key.startsWith("rom.") || key == "cookie") dataChanged()
         version++
     }
 
@@ -126,6 +131,28 @@ object Store {
     var mixes: List<Item>?
         get() = prefs.getString("home.mixes", null)?.let { runCatching { json.decodeFromString<List<Item>>(it) }.getOrNull() }
         set(v) = prefs.edit().putString("home.mixes", json.encodeToString(v)).apply()
+
+    // ---- Pages on disk: the last copy of Home, the library tabs and pages, shown at once on the next start ----
+
+    // Pages are read, written and dropped on their own thread, in order, so a read never sees a dropped page.
+    private val pageThread = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    private fun pageFile(key: String) = File(pages, key.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".json")
+
+    /** Blocking: call it off the main thread. */
+    fun <T> readPage(key: String, serializer: KSerializer<T>): T? =
+        pageThread.submit<T?> { runCatching { json.decodeFromString(serializer, pageFile(key).readText()) }.getOrNull() }.get()
+
+    fun <T> writePage(key: String, value: T, serializer: KSerializer<T>) = pageThread.execute {
+        pages.mkdirs()
+        pageFile(key).writeText(json.encodeToString(serializer, value))
+    }
+
+    /** What pages hold changed (account, romanization): the disk copies go, and open pages load again. */
+    private fun dataChanged() {
+        pageThread.execute { pages.listFiles()?.forEach { it.delete() } }
+        dataVersion++
+    }
 
     // ---- Romanization ----
 
@@ -158,7 +185,7 @@ object Store {
         romanizer.overrides = list
         overridesFile.writeText(json.encodeToString(list))
         Playback.romanizationChanged()
-        dataVersion++
+        dataChanged()
         version++
     }
 

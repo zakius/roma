@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
         val notify = android.Manifest.permission.POST_NOTIFICATIONS
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(notify) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(notify), 0)
         handleLastFm(intent)
+        Home.start() // before the first frame, so Home's request and its disk copy are on their way
         setContent { Theme { Root() } }
     }
 

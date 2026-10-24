@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -58,6 +59,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -87,10 +89,18 @@ import androidx.compose.ui.viewinterop.AndroidView
 import coil3.compose.AsyncImage
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import roma.core.Item
 import roma.core.LastFm
 import roma.core.Override
@@ -315,42 +325,70 @@ private fun Choice(label: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-// The last results by key, so going back to a page or a tab shows it at once (with its scroll position, see Root)
-// while it loads again behind it. ponytail: 20 entries, enough for a few tabs' back stacks.
-private val loaded = object : LinkedHashMap<Any, Any?>(32, 0.75f, true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Any, Any?>) = size > 20
+/** A loaded page, when it was fetched, and with which [Store.dataVersion]. */
+private class Kept(val value: Any, val at: Long, val dataVersion: Int)
+
+// The last results by key, so going back to a page or a tab shows it at once (with its scroll position, see Root).
+// ponytail: 20 entries, enough for a few tabs' back stacks; the disk keeps pages beyond that.
+private val loaded = object : LinkedHashMap<String, Kept>(32, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Kept>) = size > 20
 }
 
 /**
- * Loads something per key and shows [loading] (a spinner), the error, or the content. A result shown before stays
- * on screen while the page loads again (when it is opened again, or after [Store.dataVersion] changes), and is
- * swapped for the new one only when that succeeds, so the list neither blanks nor loses its place.
+ * Loads a page and shows [loading] (a spinner), the error, or the content.
+ *
+ * A page loaded before shows at once: from memory, else (with [disk]) from the copy kept across starts. It loads
+ * again behind it unless it was fetched in the last 10 minutes with today's [Store.dataVersion], and a failed load
+ * keeps the older copy on screen. [rows] lists what each item of the page's LazyColumn ([list]) shows, by index;
+ * with it, the new copy takes over only while the items on screen are the same in both, so nothing moves under the
+ * finger. Until then it waits for the user to scroll, and the next visit shows it. [load] may hand over its first
+ * pages through `partial` while it fetches the rest (they only add rows at the bottom); they show when nothing else
+ * is shown yet.
  */
 @Composable
-private fun <T> Loader(
-    key: Any,
-    load: suspend () -> T,
+private fun <T : Any> Loader(
+    key: String,
+    load: suspend (partial: suspend (T) -> Unit) -> T,
+    list: LazyListState? = null,
+    rows: ((T) -> List<Any?>)? = null,
+    disk: KSerializer<T>? = null,
     loading: @Composable () -> Unit = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } },
     content: @Composable (T) -> Unit,
 ) {
     @Suppress("UNCHECKED_CAST")
-    var result by remember(key) { mutableStateOf(if (key in loaded) Result.success(loaded[key] as T) else null) }
+    var shown by remember(key) { mutableStateOf(loaded[key]?.value as T?) }
+    var failed by remember(key) { mutableStateOf<String?>(null) }
     var attempt by remember(key) { mutableIntStateOf(0) }
     LaunchedEffect(key, attempt, Store.dataVersion) {
-        if (result?.isFailure == true) result = null
-        val r = withContext(Dispatchers.IO) { runCatching { load() } }
-        if (r.isSuccess) loaded[key] = r.getOrNull()
-        if (r.isSuccess || result == null) result = r
+        failed = null
+        val kept = loaded[key]
+        if (attempt == 0 && kept != null && kept.dataVersion == Store.dataVersion && System.currentTimeMillis() - kept.at < 10 * 60_000) return@LaunchedEffect
+        if (shown == null && disk != null) shown = withContext(Dispatchers.IO) { Store.readPage(key, disk) }
+        var partial = false
+        val result = withContext(Dispatchers.IO) {
+            runCatching { load { p -> withContext(Dispatchers.Main) { if (shown == null || partial) { shown = p; partial = true } } } }
+        }
+        val fresh = result.getOrElse { if (shown == null || partial) failed = it.message ?: it.toString(); return@LaunchedEffect }
+        loaded[key] = Kept(fresh, System.currentTimeMillis(), Store.dataVersion)
+        if (disk != null) Store.writePage(key, fresh, disk)
+        val old = shown
+        if (old != null && !partial && rows != null && list != null) {
+            val a = rows(old)
+            val b = rows(fresh)
+            snapshotFlow { list.layoutInfo.visibleItemsInfo.map { it.index } }.first { on -> on.all { a.getOrNull(it) == b.getOrNull(it) } }
+        }
+        shown = fresh
     }
-    val r = result
+    val f = failed
+    val r = shown
     when {
-        r == null -> loading()
-        r.isFailure -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        f != null -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Couldn't load this page.", textAlign = TextAlign.Center)
-            Text(r.exceptionOrNull()?.message ?: "", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+            Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
             TextButton(onClick = { attempt++ }) { Text("Retry") }
         }
-        else -> content(r.getOrThrow())
+        r == null -> loading()
+        else -> content(r)
     }
 }
 
@@ -361,40 +399,93 @@ private fun Header(text: String) {
 
 // ---------------------------------------------------------------- Home
 
+@Serializable
 class Section(val title: roma.core.Text, val items: List<Item>)
 
 private const val MIX_PAGES = 10
 
 /**
  * Home: the pinned "Your mixes" row, then YouTube's shelves. The first pages load until the mixes turn up (at most
- * [MIX_PAGES]); after that a page loads when the user nears the end. New shelves only ever go at the bottom.
+ * [MIX_PAGES]); after that a page loads when the user nears the end.
+ *
+ * The state lives here rather than in the screen, so going back to Home shows it at once, where it was, and the
+ * first page starts loading before the screen is drawn ([start] runs in MainActivity.onCreate). The last Home is
+ * kept on disk and shows at once on the next start. It loads again after 30 minutes or a romanization change, and
+ * the fresh shelves never move what is on screen: a shelf gets its new contents only if they hold the same items or
+ * the shelf is off-screen (otherwise once it scrolls off), new shelves go at the bottom, and nothing is reordered or
+ * removed. The mixes row follows the same rule. Signing in or out starts Home over.
  */
-// Home's shelves and paging live outside the screen, so going back to Home shows them at once, where they were.
-// Signing in or out and romanization changes start it over (Store.dataVersion).
-private class HomeState(val dataVersion: Int) {
+object Home {
     var sections by mutableStateOf(listOf<Section>())
+        private set
     var mixes by mutableStateOf(Store.mixes)
+        private set
     var more by mutableStateOf(true)
+        private set
     var failed by mutableStateOf<String?>(null)
-    var attempt by mutableIntStateOf(0)
+        private set
+    val list = LazyListState()
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var job: Job? = null
+    private var dataVersion = -1
+    private var account: String? = null
+    private var fetchedAt = 0L
     // Where paging stands; kept across Retry so it carries on from the failed page.
-    var cont: String? = null
-    var page = 0
-    val found = ArrayList<Item>()
-    var looking = Store.signedIn
-}
+    private var cont: String? = null
+    private var page = 0
+    private val found = ArrayList<Item>()
+    private var looking = false
+    // This run's shelves: what the disk copy becomes.
+    private val fresh = ArrayList<Section>()
+    // New contents for shelves that were on screen, by shelf index, and for the mixes row.
+    private val waiting = HashMap<Int, Section>()
+    private var waitingMixes: List<Item>? = null
 
-private var home: HomeState? = null
+    /** Loads Home unless it is loading or fresh. Call it whenever Home may be shown. */
+    fun start() {
+        val stale = System.currentTimeMillis() - fetchedAt > 30 * 60_000 || dataVersion != Store.dataVersion
+        if (job != null && failed == null && !stale) return
+        dataVersion = Store.dataVersion
+        if (account != YouTube.cookie) {
+            account = YouTube.cookie
+            if (job != null) {
+                sections = emptyList()
+                mixes = Store.mixes
+                waiting.clear()
+                waitingMixes = null
+            }
+        }
+        if (failed == null) {
+            cont = null
+            page = 0
+            found.clear()
+            fresh.clear()
+            more = true
+            looking = Store.signedIn
+        }
+        failed = null
+        fetchedAt = System.currentTimeMillis()
+        job?.cancel()
+        job = scope.launch { load() }
+    }
 
-@Composable
-fun HomeScreen() {
-    val h = home?.takeIf { it.dataVersion == Store.dataVersion } ?: HomeState(Store.dataVersion).also { home = it }
-    val list = rememberLazyListState()
-    LaunchedEffect(h, h.attempt) {
-        h.failed = null
-        while (h.more) {
-            if (!h.looking) snapshotFlow { list.layoutInfo.run { (visibleItemsInfo.lastOrNull()?.index ?: 0) >= totalItemsCount - 3 } }.first { it }
-            val from = h.cont
+    private suspend fun load() = coroutineScope {
+        if (sections.isEmpty()) launch {
+            val disk = withContext(Dispatchers.IO) { Store.readPage("home", ListSerializer(Section.serializer())) }
+            if (sections.isEmpty() && disk != null) sections = disk
+        }
+        // Waiting contents go in as their shelf leaves the screen. This runs only when the list scrolls.
+        launch {
+            snapshotFlow { list.layoutInfo.visibleItemsInfo.map { it.index }.toSet() }.collect { on ->
+                if (waitingMixes != null && 0 !in on) { mixes = waitingMixes; waitingMixes = null }
+                val off = waiting.keys.filter { it + 1 !in on }
+                if (off.isNotEmpty()) sections = sections.toMutableList().also { l -> off.forEach { l[it] = waiting.remove(it)!! } }
+            }
+        }
+        while (more) {
+            if (!looking && page > 0) snapshotFlow { list.layoutInfo.run { (visibleItemsInfo.lastOrNull()?.index ?: 0) >= totalItemsCount - 3 } }.first { it }
+            val from = cont
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     Store.ensureVisitorData()
@@ -406,35 +497,67 @@ fun HomeScreen() {
                     }
                 }
             }
-            val (next, shelves) = result.getOrElse { h.failed = it.message ?: it.toString(); return@LaunchedEffect }
-            h.page++
-            h.cont = next
-            h.more = next != null
-            h.found += personalMixes(shelves.flatMap { it.items })
+            val (next, shelves) = result.getOrElse { failed = it.message ?: it.toString(); fetchedAt = 0; return@coroutineScope }
+            page++
+            cont = next
+            more = next != null
+            found += personalMixes(shelves.flatMap { it.items })
             // The mixes live in the pinned row only.
-            h.sections = h.sections + shelves.map { Section(it.title, it.items.filterNot { i -> i.kind == "playlist" && isPersonalMix(i.id) }) }.filter { it.items.isNotEmpty() }
-            if (h.looking && (h.found.isNotEmpty() || h.page >= MIX_PAGES || !h.more)) {
-                h.looking = false
-                h.mixes = personalMixes(h.found)
-                Store.mixes = h.mixes
+            val add = shelves.map { Section(it.title, it.items.filterNot { i -> i.kind == "playlist" && isPersonalMix(i.id) }) }.filter { it.items.isNotEmpty() }
+            fresh += add
+            Store.writePage("home", fresh.toList(), ListSerializer(Section.serializer()))
+            merge(add)
+            if (looking && (found.isNotEmpty() || page >= MIX_PAGES || !more)) {
+                looking = false
+                val m = personalMixes(found)
+                Store.mixes = m
+                val old = mixes
+                if (old == null || sameItems(old, m) || 0 !in visible()) mixes = m else waitingMixes = m
             }
         }
     }
-    LazyColumn(Modifier.fillMaxSize(), list) {
-        item(key = "mixes") { MixesRow(h.mixes) }
-        items(h.sections) { sec ->
+
+    private fun visible() = list.layoutInfo.visibleItemsInfo.map { it.index }.toSet()
+
+    private fun sameItems(a: List<Item>, b: List<Item>) = a.map { it.id } == b.map { it.id }
+
+    /** Fresh shelves into the shown ones, by title; see [Home]. LazyColumn item i + 1 is shelf i. */
+    private fun merge(add: List<Section>) {
+        val shown = sections.toMutableList()
+        val on = visible()
+        val matched = HashSet<Int>()
+        for (s in add) {
+            val i = shown.indices.firstOrNull { it !in matched && shown[it].title.original == s.title.original }
+            if (i == null) {
+                matched += shown.size
+                shown += s
+            } else {
+                matched += i
+                if (sameItems(shown[i].items, s.items) || i + 1 !in on) { shown[i] = s; waiting.remove(i) } else waiting[i] = s
+            }
+        }
+        sections = shown
+    }
+}
+
+@Composable
+fun HomeScreen() {
+    LaunchedEffect(Store.dataVersion) { Home.start() }
+    LazyColumn(Modifier.fillMaxSize(), Home.list) {
+        item(key = "mixes") { MixesRow(Home.mixes) }
+        items(Home.sections) { sec ->
             Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
             LazyRow { items(sec.items) { item -> Card(item) { openItem(item) } } }
         }
         item(key = "end") {
-            val f = h.failed
+            val f = Home.failed
             when {
                 f != null -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Couldn't load Home.", textAlign = TextAlign.Center)
                     Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-                    TextButton(onClick = { h.attempt++ }) { Text("Retry") }
+                    TextButton(onClick = { Home.start() }) { Text("Retry") }
                 }
-                h.more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                Home.more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             }
         }
     }
@@ -518,7 +641,7 @@ fun SearchScreen() {
                 items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
                 item { Header("YouTube Music") }
             }
-            Loader(listOf(submitted, filter, asTyped), {
+            Loader(listOf(submitted, filter, asTyped).toString(), {
                 val r = YouTube.search(submitted, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter].second).getOrThrow()
                 val items = r.items
                     .filter { it !is SongItem || !it.isVideoSong || filter != 0 }
@@ -576,23 +699,27 @@ fun LibraryScreen() {
     val tabs = listOf("Playlists" to "FEmusic_liked_playlists", "Albums" to "FEmusic_liked_albums", "Artists" to "FEmusic_library_corpus_track_artists")
     Column(Modifier.fillMaxSize()) {
         TabRow(tab) { tabs.forEachIndexed { i, (label, _) -> Tab(tab == i, { tab = i }, text = { Text(label) }) } }
-        Loader(tabs[tab].second, { loadLibrary(tabs[tab].second) }) { items ->
+        val id = tabs[tab].second
+        val list = key(tab) { rememberLazyListState() }
+        Loader("library:$id", { partial -> loadLibrary(id, partial) }, list, { items -> items.map { it.id } }, ListSerializer(Item.serializer())) { items ->
             if (items.isEmpty()) Centered("Nothing here yet.")
-            LazyColumn(Modifier.fillMaxSize()) { items(items) { item -> ItemRow(item) { openItem(item) } } }
+            LazyColumn(Modifier.fillMaxSize(), list) { items(items) { item -> ItemRow(item) { openItem(item) } } }
         }
     }
 }
 
 // ---------------------------------------------------------------- Album, playlist, artist pages
 
+@Serializable
 class Detail(val title: roma.core.Text, val subtitle: String, val thumb: String?, val songs: List<Song>, val items: List<Item>)
 
 @Composable
 fun PageScreen(p: Page) {
     if (p.kind == "login") return LoginScreen()
     var menuFor by remember { mutableStateOf<Song?>(null) }
-    Loader(p.kind + p.id, { loadDetail(p) }) { d ->
-        LazyColumn(Modifier.fillMaxSize()) {
+    val list = rememberLazyListState()
+    Loader("${p.kind}:${p.id}", { partial -> loadDetail(p, partial) }, list, ::detailRows, Detail.serializer()) { d ->
+        LazyColumn(Modifier.fillMaxSize(), list) {
             item {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     AsyncImage(shownThumb(d.thumb, 96.dp), null, Modifier.size(96.dp).clip(if (p.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
@@ -618,7 +745,12 @@ fun PageScreen(p: Page) {
 private fun playList(p: Page, songs: List<Song>) =
     if (p.kind == "playlist" && p.id.removePrefix("VL").startsWith("RD")) Playback.playMix(p.id) else Playback.play(songs)
 
-private suspend fun loadDetail(p: Page): Detail {
+/** What each LazyColumn item of a page shows, in order: see [Loader]. */
+private fun detailRows(d: Detail): List<Any?> =
+    listOf(listOf(d.title.original, d.subtitle, d.thumb, d.songs.isEmpty())) + d.songs.map { it.id } +
+        (if (d.items.isEmpty()) emptyList() else listOf("more") + d.items.map { it.id })
+
+private suspend fun loadDetail(p: Page, partial: suspend (Detail) -> Unit): Detail {
     val r = Store.romanizer
     return when (p.kind) {
         "album" -> {
@@ -631,20 +763,24 @@ private suspend fun loadDetail(p: Page): Detail {
         "playlist" -> {
             val id = p.id.removePrefix("VL")
             val pl = YouTube.playlist(id).getOrThrow()
-            val all = pl.songs.toMutableList()
+            val title = r.text(pl.playlist.title)
+            val author = pl.playlist.author?.name?.let { r.text(it).latin } ?: ""
+            // Generated playlists (RD…) loop: their continuations return songs already listed.
+            val songs = ArrayList<Song>()
+            val seen = HashSet<String>()
+            fun add(items: List<SongItem>) = items.filter { seen.add(it.id) }.map { r.song(it) }.also { songs += it; Store.remember(it) }
+            add(pl.songs)
             var cont = pl.songsContinuation
             // ponytail: loads at most 10 continuation pages (about 1000 songs); page on scroll if libraries get bigger.
             repeat(10) {
                 val c = cont ?: return@repeat
+                partial(Detail(title, author, pl.playlist.thumbnail, songs.toList(), emptyList()))
                 val more = YouTube.playlistContinuation(c).getOrNull() ?: return@repeat
-                all.addAll(more.songs)
+                add(more.songs)
                 cont = more.continuation
             }
-            // Generated playlists (RD…) loop: their continuations return songs already listed.
-            val songs = all.distinctBy { it.id }.map { r.song(it) }
-            Store.remember(songs)
             if (id == "LM") Playback.markLiked(songs.map { it.id })
-            Detail(r.text(pl.playlist.title), pl.playlist.author?.name?.let { r.text(it).latin } ?: "", pl.playlist.thumbnail, songs, emptyList())
+            Detail(title, author, pl.playlist.thumbnail, songs, emptyList())
         }
         else -> {
             val a = YouTube.artist(p.id).getOrThrow()
@@ -820,17 +956,18 @@ private fun Options(title: String, key: String, def: String, options: List<Pair<
     }
 }
 
-/** All pages of a library tab: the first page holds only about 25 items. */
-private suspend fun loadLibrary(browseId: String): List<Item> {
+/** All pages of a library tab: the first page holds only about 25 items; each page shows as it arrives. */
+private suspend fun loadLibrary(browseId: String, partial: suspend (List<Item>) -> Unit): List<Item> {
     val first = YouTube.library(browseId).getOrThrow()
-    val all = first.items.toMutableList()
+    val all = first.items.mapNotNull { Store.romanizer.item(it) }.toMutableList()
     var cont = first.continuation
     // ponytail: stops at 50 pages (about 1,250 items); raise it if a library is bigger.
     repeat(50) {
         val c = cont ?: return@repeat
+        partial(all.toList())
         val more = YouTube.libraryContinuation(c).getOrNull() ?: return@repeat
-        all.addAll(more.items)
+        all.addAll(more.items.mapNotNull { Store.romanizer.item(it) })
         cont = more.continuation
     }
-    return all.mapNotNull { Store.romanizer.item(it) }
+    return all
 }
