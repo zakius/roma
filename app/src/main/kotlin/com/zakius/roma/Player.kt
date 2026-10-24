@@ -53,9 +53,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.runtime.mutableLongStateOf
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -246,14 +246,15 @@ private fun LyricsView(lines: List<Line>, synced: Boolean, songId: String?) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = state) {
         itemsIndexed(lines) { i, line ->
             val active = i == current
-            val alpha = if (!synced || active) 1f else 0.55f
+            val alpha = if (!synced || active) 1f else 0.45f
             Column(
                 Modifier.fillMaxWidth().alpha(alpha)
                     .pointerInput(line) { detectTapGestures(onTap = { if (synced) Playback.player.seekTo(line.startMs) }) }
                     .padding(vertical = 8.dp),
             ) {
                 val wordIndex = if (active) line.words.indexOfLast { it.startMs <= pos } else -1
-                val big = MaterialTheme.typography.titleLarge.copy(fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+                // Same weight on every line: bolding the active line widened it and re-wrapped long lines mid-song.
+                val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK)
                 if (showOriginal && line.text.isNotBlank()) {
                     WordsText(line.words.map { it.text }, line.text, wordIndex, big, onTap = { if (synced) Playback.player.seekTo(line.startMs) }) { w -> fixWord = w }
                 }
@@ -297,7 +298,7 @@ private fun WordsText(words: List<String>, whole: String, current: Int, style: a
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     Text(
         text,
-        style = style,
+        style = style.copy(lineBreak = LYRIC_BREAK),
         onTextLayout = { layout = it },
         modifier = if (onLongPressWord == null) Modifier else Modifier.pointerInput(text) {
             detectTapGestures(
@@ -347,3 +348,7 @@ val LyricsIcon: ImageVector by lazy {
         )
     }.build()
 }
+
+// Balanced wrapping evens out the line lengths instead of leaving one word on the last line; Phrase keeps Japanese
+// phrases (bunsetsu) together instead of breaking between any two characters (Android 13+, ignored before).
+private val LYRIC_BREAK = LineBreak(LineBreak.Strategy.Balanced, LineBreak.Strictness.Normal, LineBreak.WordBreak.Phrase)
