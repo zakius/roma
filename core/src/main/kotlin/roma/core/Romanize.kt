@@ -108,10 +108,12 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
     private fun japanese(s: String): List<Pair<String, String>> {
         val result = ArrayList<Pair<String, String>>()
         var prevWord = false
+        var prevPos = ""
+        var sokuon = false // the previous token ended in ッ, so this one's first consonant doubles: dat|ta
         for (t in tokenizer.tokenize(s)) {
             val surface = t.surface
             val japaneseText = surface.any { isKana(it) || isHan(it) }
-            val romaji = when {
+            var romaji = when {
                 japaneseText -> {
                     val reading = if (t.reading == "*") toKatakana(surface) else t.reading
                     kana(spoken(reading, t.pronunciation))
@@ -119,13 +121,23 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
                 hasNonLatin(surface) -> other(surface)
                 else -> surface
             }
-            // Auxiliaries, suffixes and the te-form attach to the word before them: "aruite", not "arui te".
-            val glue = t.partOfSpeechLevel1 == "助動詞" || t.partOfSpeechLevel2 == "接尾" ||
-                t.partOfSpeechLevel2 == "非自立" || (t.partOfSpeechLevel2 == "接続助詞" && (surface == "て" || surface == "で"))
+            if (sokuon && japaneseText) {
+                val c = romaji.firstOrNull()
+                if (romaji.startsWith("ch")) romaji = "t$romaji" else if (c != null && c.isLetter() && c !in "aiueonāīūēō") romaji = c + romaji
+            }
+            sokuon = japaneseText && toKatakana(surface).endsWith('ッ')
+            // Short auxiliaries, suffixes and the te-form attach to the word before them: "aruita", "aruite".
+            // Longer auxiliaries such as よう and みたい stay separate words.
+            val aux = t.partOfSpeechLevel1 == "助動詞" && surface.length <= 2 && surface !in LOOSE_AUX &&
+                prevPos in setOf("動詞", "形容詞", "助動詞")
+            val glue = aux || t.partOfSpeechLevel2 == "接尾" ||
+                t.partOfSpeechLevel2 == "非自立" && t.partOfSpeechLevel1 == "動詞" ||
+                (t.partOfSpeechLevel2 == "接続助詞" && (surface == "て" || surface == "で"))
             val isWord = romaji.firstOrNull()?.isLetterOrDigit() == true
             val space = prevWord && isWord && !glue
             result.add(surface to (if (space) " " else "") + romaji)
             prevWord = romaji.lastOrNull()?.isLetterOrDigit() == true
+            prevPos = t.partOfSpeechLevel1
         }
         return result
     }
@@ -312,6 +324,8 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
             if (out.isNotEmpty() && word.isNotEmpty() && out.last().isLetterOrDigit() && word.first().isLetterOrDigit()) out.append(' ')
             out.append(word)
         }
+
+        private val LOOSE_AUX = setOf("よう", "様", "そう", "らしい")
 
         private fun toKatakana(s: String) = buildString { for (c in s) append(if (c in 'ぁ'..'ゖ') c + 0x60 else c) }
         private fun macron(c: Char) = "āīūēō"["aiueo".indexOf(c)]
