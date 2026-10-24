@@ -471,7 +471,7 @@ fun LibraryScreen() {
     val tabs = listOf("Playlists" to "FEmusic_liked_playlists", "Albums" to "FEmusic_liked_albums", "Artists" to "FEmusic_library_corpus_track_artists")
     Column(Modifier.fillMaxSize()) {
         TabRow(tab) { tabs.forEachIndexed { i, (label, _) -> Tab(tab == i, { tab = i }, text = { Text(label) }) } }
-        Loader(tabs[tab].second to Store.version, { YouTube.library(tabs[tab].second).getOrThrow().items.mapNotNull { Store.romanizer.item(it) } }) { items ->
+        Loader(tabs[tab].second to Store.version, { loadLibrary(tabs[tab].second) }) { items ->
             if (items.isEmpty()) Centered("Nothing here yet.")
             LazyColumn(Modifier.fillMaxSize()) { items(items) { item -> ItemRow(item) { openItem(item) } } }
         }
@@ -711,4 +711,19 @@ private fun Options(title: String, key: String, def: String, options: List<Pair<
         Text(title, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
         options.forEach { (v, label) -> Choice(label, value == v) { Store.set(key, v) } }
     }
+}
+
+/** All pages of a library tab: the first page holds only about 25 items. */
+private suspend fun loadLibrary(browseId: String): List<Item> {
+    val first = YouTube.library(browseId).getOrThrow()
+    val all = first.items.toMutableList()
+    var cont = first.continuation
+    // ponytail: stops at 50 pages (about 1,250 items); raise it if a library is bigger.
+    repeat(50) {
+        val c = cont ?: return@repeat
+        val more = YouTube.libraryContinuation(c).getOrNull() ?: return@repeat
+        all.addAll(more.items)
+        cont = more.continuation
+    }
+    return all.mapNotNull { Store.romanizer.item(it) }
 }
