@@ -4,6 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// The Japanese dictionary comes from :core's download (see core/build.gradle.kts).
+evaluationDependsOn(":core")
+
 android {
     namespace = "com.zakius.roma"
     compileSdk = 37
@@ -33,8 +36,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     buildFeatures { compose = true; buildConfig = true }
+    // Stored uncompressed, so Sudachi memory-maps the dictionary straight from the APK.
+    androidResources { noCompress += "dic" }
+    sourceSets["main"].assets.srcDir(project(":core").extra["sudachiAssets"] as File)
     packaging { resources { excludes += setOf("META-INF/*.md", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module") } }
 }
+
+tasks.named("preBuild") { dependsOn(":core:sudachiDict") }
 
 dependencies {
     implementation(project(":core"))

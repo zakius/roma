@@ -1,7 +1,12 @@
 package roma.core
 
-import com.atilika.kuromoji.ipadic.Tokenizer
+import com.worksap.nlp.sudachi.Config
+import com.worksap.nlp.sudachi.DictionaryFactory
+import com.worksap.nlp.sudachi.MMap
+import com.worksap.nlp.sudachi.Tokenizer
+import com.worksap.nlp.sudachi.dictionary.BinaryDictionary
 import kotlinx.serialization.Serializable
+import java.nio.ByteBuffer
 import java.text.Normalizer
 
 /** A string as it came from the service, next to its Latin form. Both are equal when the original is already Latin. */
@@ -30,7 +35,15 @@ class RomanizeSettings(
 @Serializable
 class Override(val scope: String, val id: String, val original: String, val latin: String)
 
-class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeSettings()) {
+/**
+ * [dictionary] supplies SudachiDict's system_small.dic, memory-mapped, little-endian. It is called once, on the first
+ * Japanese string (or [warmUp]). By default it maps the file named by the system property roma.sudachi (the JVM tests).
+ */
+class Romanizer(
+    private val icu: Icu,
+    var settings: RomanizeSettings = RomanizeSettings(),
+    private val dictionary: () -> ByteBuffer = { MMap.map(System.getProperty("roma.sudachi") ?: error("roma.sudachi: path to system_small.dic")) },
+) {
     var overrides: List<Override> = emptyList()
 
     /**
@@ -61,8 +74,11 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
      * [cyrLang] is the Cyrillic language decided for the whole song; by default it is read from this line.
      */
     fun parts(parts: List<String>, siblings: List<String> = emptyList(), songId: String? = null, cyrLang: String? = null): List<String> {
-        val norm = parts.map(::normalize)
-        val line = norm.joinToString("")
+        // Karaoke splits ブル|一|ライト into separate parts, so the long-vowel fix runs again across the joined line
+        // (it replaces one character with one, so the parts keep their lengths).
+        val joined = longVowelMarks(parts.map(::normalize).joinToString(""))
+        val norm = parts.map(::normalize).runningFold(0) { at, p -> at + p.length }.zipWithNext { a, b -> joined.substring(a, b) }
+        val line = joined
         val override = overrides.filter { it.scope == "song" && it.id == songId }
         val out: MutableList<String> = if (!isJapanese(line, siblings)) {
             val lang = cyrLang ?: cyrillicLanguage(line)
@@ -138,23 +154,62 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
 
     // ---- Japanese ----
 
-    private val tokenizer by lazy { Tokenizer() }
+    // A Sudachi tokenizer isn't thread-safe: calls take turns on it (a line takes well under a millisecond).
+    private val tokenizer by lazy {
+        DictionaryFactory().create(Config.defaultConfig().systemDictionary(BinaryDictionary.loadSystem(dictionary()))).create()
+    }
+
+    /** Loads the dictionary now, so the first Japanese string doesn't wait for it. Call off the main thread. */
+    fun warmUp() { tokenizer }
+
+    private class Token(val surface: String, val reading: String, val pos: List<String>)
+
+    private fun tokens(s: String): List<Token> {
+        val raw = synchronized(tokenizer) {
+            // A morpheme's begin/end index the original text; surface() can be rewritten (君(きみ) keeps its yomigana).
+            tokenizer.tokenize(Tokenizer.SplitMode.C, s).map { Token(s.substring(it.begin(), it.end()), it.readingForm(), it.partOfSpeech()) }
+        }
+        // Lyric readings: a run of whole tokens that spells a key takes the table's reading as one noun.
+        val out = ArrayList<Token>()
+        var i = 0
+        while (i < raw.size) {
+            var j = i
+            var text = ""
+            var hit = -1
+            while (j < raw.size && text.length < LYRIC_KEY_MAX) {
+                text += raw[j++].surface
+                if (text in LYRIC_READINGS) hit = j
+            }
+            if (hit < 0) {
+                out.add(raw[i++])
+                continue
+            }
+            val surface = raw.subList(i, hit).joinToString("") { it.surface }
+            out.add(Token(surface, LYRIC_READINGS.getValue(surface), if (hit - i == 1) raw[i].pos else NOUN))
+            i = hit
+        }
+        return out
+    }
 
     /** (surface, romaji with its leading space) per token. In [title] case every word but a particle is capitalized. */
     private fun japanese(s: String, title: Boolean): List<Pair<String, String>> {
         val result = ArrayList<Pair<String, String>>()
+        val tokens = tokens(s)
         var prevWord = false
-        var prevPos = ""
-        var prevSurface = ""
+        var prev: Token? = null
         var sokuon = false // the previous token ended in ッ, so this one's first consonant doubles: dat|ta
-        for (t in tokenizer.tokenize(s)) {
+        var stray = false
+        for ((i, t) in tokens.withIndex()) {
             val surface = t.surface
+            val pos = t.pos[0]
+            val prevPos = prev?.pos?.get(0)
             val japaneseText = surface.any(::isKana) || hasHan(surface)
+            // A kanji the dictionary doesn't know (a simplified Chinese 词 in a credit line) has no kana reading: it goes
+            // through the Chinese path below instead of being left in the output. Joined numbers (三) are OOV too, but
+            // keep their reading.
+            val unknownHan = hasHan(surface) && t.reading.none(::isKana)
             var romaji = when {
-                japaneseText -> {
-                    val reading = if (t.reading == "*") toKatakana(surface) else t.reading
-                    kana(spoken(reading, t.pronunciation))
-                }
+                japaneseText && !unknownHan -> kana(spoken(if (t.reading.none(::isKana)) toKatakana(surface) else t.reading, t, tokens.getOrNull(i + 1)))
                 hasNonLatin(surface) -> other(surface, title, cyrillicLanguage(surface))
                 else -> surface
             }
@@ -163,41 +218,51 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
                 if (romaji.startsWith("ch")) romaji = "t$romaji" else if (c != null && c.isLetter() && c !in "aiueonāīūēō") romaji = c + romaji
             }
             sokuon = japaneseText && toKatakana(surface).endsWith('ッ')
-            // Short auxiliaries, suffixes and the te-form attach to the word before them: "aruita", "aruite".
-            // Longer auxiliaries such as よう and みたい stay separate words, and so does a subsidiary verb
-            // after the te-form: "tokete yuku", "tabete iru". Contractions such as てる and ちゃう stay glued.
-            val aux = t.partOfSpeechLevel1 == "助動詞" && surface.length <= 2 && surface !in LOOSE_AUX &&
-                prevPos in setOf("動詞", "形容詞", "助動詞")
-            val subsidiary = t.partOfSpeechLevel2 == "非自立" && t.partOfSpeechLevel1 == "動詞"
-            val glue = aux || t.partOfSpeechLevel2 == "接尾" ||
-                subsidiary && prevSurface != "て" && prevSurface != "で" ||
-                (t.partOfSpeechLevel2 == "接続助詞" && (surface == "て" || surface == "で"))
+            // Auxiliaries, suffixes, a prefix, the te-form (and ちゃ じゃ for ては では) and ば attach to their word: "aruita", "aruite",
+            // "tabemasu", "okāsan", "sannin", "ikeba", "datte". A subsidiary verb straight after a verb stem glues
+            // ("hashiridasu", "ureshikunai" for ない); after the te-form or an adjective it is its own word:
+            // "tokete yuku", "tabete iru", "tsuyoku nareru". Contractions such as てる and ちゃう are
+            // auxiliaries, so they glue. Auxiliaries that read as words of their own (です, らしい) stay apart, and
+            // so do よう and みたい, which Sudachi tags as 形状詞.
+            val afterInflected = prevPos == "動詞" || prevPos == "形容詞" || prevPos == "助動詞"
+            val glue = pos == "助動詞" && afterInflected && t.pos[4] !in LOOSE_AUX ||
+                pos == "接尾辞" || prevPos == "接頭辞" ||
+                pos == "動詞" && t.pos[1] == "非自立可能" && prevPos == "動詞" ||
+                pos == "形容詞" && t.pos[1] == "非自立可能" && afterInflected ||
+                t.pos[1] == "接続助詞" && (surface in setOf("て", "で", "ちゃ", "じゃ") || surface == "ば" && afterInflected) ||
+                surface == "って" && prev?.surface == "だ" ||
+                prev?.pos?.get(1) == "数詞" && pos == "名詞" || stray
+            // A sentence-final particle can't start a phrase: there it is a misread first syllable. Sudachi reads
+            // よふかし (夜更かし) as よ|ふかし, so it joins the next word: "Yofukashi no Uta".
+            stray = t.pos[1] == "終助詞" && !prevWord && tokens.getOrNull(i + 1)?.surface?.any(::isKana) == true
+            // Particles stay lowercase in titles, and so does だ as に, な or で after a na-adjective ("Shizumu Yō ni").
+            val particle = pos == "助詞" && !stray || pos == "助動詞" && t.pos[4] == "助動詞-ダ" && surface in setOf("に", "な", "で")
             val isWord = romaji.firstOrNull()?.isLetterOrDigit() == true
             val space = prevWord && isWord && !glue
-            if (title && japaneseText && isWord && !(prevWord && glue) && t.partOfSpeechLevel1 != "助詞") romaji = capitalize(romaji, false)
+            if (title && japaneseText && isWord && !(prevWord && glue) && !particle) romaji = capitalize(romaji, false)
             result.add(surface to (if (space) " " else "") + romaji)
             prevWord = romaji.lastOrNull()?.isLetterOrDigit() == true
-            prevPos = t.partOfSpeechLevel1
-            prevSurface = surface
+            prev = t
         }
         return result
     }
 
-    // IPADIC's pronunciation marks long vowels (トーキョー) and particles (ワ); its reading keeps the spelling (トウキョウ).
-    // Take the long vowel only where the spelling has ウ or オ, so 映画 stays "eiga" while 東京 becomes "tōkyō".
-    private fun spoken(reading: String, pron: String?): String {
-        if (pron == null || pron == "*" || pron.length != reading.length) return reading
+    /**
+     * Sudachi's reading is the kana spelling (東京 トウキョウ, particle は ハ). Hepburn writes what is said: particles は
+     * へ as wa e, and a long o or u as ō ū where the spelling has オウ, オオ or ウウ inside a word (tōkyō, ōkii, kūki).
+     * エイ and イイ stay (eiga, ōkii). A verb's final ウ is its ending, not a long vowel (思う omou), except in the
+     * volitional (行こう ikō). 何 is nan before t, d and n sounds and as a number (nande, nando), else nani.
+     */
+    private fun spoken(reading: String, t: Token, next: Token?): String {
+        if (t.pos[0] == "助詞") when (t.surface) { "は" -> return "ワ"; "へ" -> return "エ" }
+        if (t.surface == "何" && t.pos[0] == "代名詞") return if (next?.reading?.firstOrNull()?.let { it in "タチツテトダヂヅデドナニヌネノ" } == true) "ナン" else "ナニ"
+        val verbEnding = t.pos[0] == "動詞" && t.pos[5] != "意志推量形"
         val sb = StringBuilder()
-        for (i in reading.indices) {
-            val r = reading[i]
-            val p = pron[i]
-            sb.append(
-                when {
-                    p == 'ー' && (r == 'ウ' || r == 'オ') -> 'ー'
-                    r == 'ハ' && p == 'ワ' || r == 'ヘ' && p == 'エ' || r == 'ヲ' && p == 'オ' -> p
-                    else -> r
-                },
-            )
+        for ((i, c) in reading.withIndex()) {
+            val before = reading.getOrNull(i - 1)
+            val long = before != null && (c == 'ウ' && (before in O_ROW || before in U_ROW) || c == 'オ' && before in O_ROW) &&
+                !(verbEnding && i == reading.lastIndex)
+            sb.append(if (long) 'ー' else c)
         }
         return sb.toString()
     }
@@ -472,7 +537,15 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
          */
         fun normalize(s: String) = Regex("[\\uFF00-\\uFFEF]+").replace(s.replace(Regex("(?<=\\S)（"), " （").replace(Regex("）(?=[^\\s)）])"), "） ")) {
             Normalizer.normalize(it.value, Normalizer.Form.NFKC)
-        }
+        }.let(::longVowelMarks)
+
+        /**
+         * Lyrics typed on Chinese keyboards often write the katakana long-vowel mark ー as the kanji 一 or a dash:
+         * ブル一ライト. After katakana, and not before a kanji (カード一枚 is "one card"), those mean ー.
+         */
+        fun longVowelMarks(s: String) = s
+            .replace(Regex("(?<=[ァ-ヺ])[一—―－‐](?=[ァ-ヺ]|[^\\p{IsHan}]|$)"), "ー")
+            .replace(Regex("(?<=[ァ-ヺ])-(?=[ァ-ヺ])"), "ー")
 
         /** "スピカ - Spica" → "Spica": the Latin form a title carries after " - ", " / " or in parentheses. */
         fun ownLatin(s: String): String? {
@@ -526,7 +599,24 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
             out.append(word)
         }
 
-        private val LOOSE_AUX = setOf("よう", "様", "そう", "らしい")
+        // Auxiliaries (by conjugation type) that stay separate words after a verb: "iku deshō", "kuru rashii".
+        private val LOOSE_AUX = setOf("助動詞-デス", "助動詞-ラシイ", "助動詞-ダ")
+        private val NOUN = listOf("名詞", "普通名詞", "一般", "*", "*", "*")
+        private const val O_ROW = "オコソトノホモヨロゴゾドボポョォ"
+        private const val U_ROW = "ウクスツヌフムユルグズヅブプュゥ"
+
+        /**
+         * Readings Sudachi gets wrong for songs, as kana with ー for a long vowel. A key matches a run of whole tokens.
+         * Sudachi gives the formal or written reading (明日 アス, 私 ワタクシ, 一度 ヒトタビ, 言う ユウ); lyrics sing
+         * the everyday one. Its small dictionary splits the family words (母|さん reads ハハサン) and number + counter
+         * pairs that change sound (一|回 イチカイ). お before 母さん is a prefix and glues, so "okāsan".
+         */
+        private val LYRIC_READINGS = mapOf(
+            "明日" to "アシタ", "私" to "ワタシ", "一度" to "イチド", "一回" to "イッカイ", "一日" to "イチニチ", "一歩" to "イッポ", "言う" to "イウ",
+            "母さん" to "カーサン", "父さん" to "トーサン", "兄さん" to "ニイサン", "姉さん" to "ネーサン",
+            "母ちゃん" to "カーチャン", "父ちゃん" to "トーチャン", "兄ちゃん" to "ニイチャン", "姉ちゃん" to "ネーチャン",
+        )
+        private val LYRIC_KEY_MAX = LYRIC_READINGS.keys.maxOf { it.length }
 
         private fun toKatakana(s: String) = buildString { for (c in s) append(if (c in 'ぁ'..'ゖ') c + 0x60 else c) }
         private fun macron(c: Char) = "āīūēō"["aiueo".indexOf(c)]

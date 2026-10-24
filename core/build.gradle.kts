@@ -1,5 +1,7 @@
 // Plain JVM module: no Android imports, so a desktop client could reuse it.
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.net.URI
+import java.security.MessageDigest
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
@@ -22,17 +24,50 @@ dependencies {
     implementation("io.ktor:ktor-client-encoding:3.6.0")
     // Stream URLs.
     api("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
-    // Japanese readings. Kuromoji (IPADIC bundled) is far smaller than Sudachi plus its dictionary.
-    implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
+    // Japanese words and readings. The dictionary isn't in the jar: see sudachiDict below.
+    implementation("com.worksap.nlp:sudachi:0.8.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     testImplementation(kotlin("test"))
     // Android supplies android.icu; on the JVM the tests use ICU4J.
     testImplementation("com.ibm.icu:icu4j:78.1")
 }
 
-tasks.test { useJUnitPlatform() }
+// SudachiDict "small", downloaded once into the Gradle cache (115 MB unpacked, too big for git). The app ships it as
+// an asset; the JVM tests read it from here. To update: change the version and the zip's sha256 (docs/design.md).
+val sudachiVersion = "20261015"
+val sudachiSha256 = "91134373add92680278281b64bd92952faf2a685c8d05db7e727d0f9ffbd09f5"
+val sudachiDir = File(gradle.gradleUserHomeDir, "caches/roma/sudachi-$sudachiVersion")
+extra["sudachiAssets"] = File(sudachiDir, "assets")
+
+tasks.register("sudachiDict") {
+    val assets = File(sudachiDir, "assets")
+    outputs.dir(assets)
+    doLast {
+        if (File(assets, "system_small.dic").exists()) return@doLast
+        val zip = File(sudachiDir, "small.zip")
+        sudachiDir.mkdirs()
+        URI("https://github.com/WorksApplications/SudachiDict/releases/download/v$sudachiVersion/sudachi-dictionary-$sudachiVersion-small.zip")
+            .toURL().openStream().use { input -> zip.outputStream().use { input.copyTo(it) } }
+        val digest = MessageDigest.getInstance("SHA-256").digest(zip.readBytes()).joinToString("") { "%02x".format(it) }
+        check(digest == sudachiSha256) { "SudachiDict zip: sha256 $digest, expected $sudachiSha256" }
+        project.copy {
+            from(zipTree(zip)) { include("*/system_small.dic", "*/LEGAL"); eachFile { path = if (name == "LEGAL") "sudachi-LEGAL.txt" else name } }
+            into(assets)
+            includeEmptyDirs = false
+        }
+        zip.delete()
+    }
+}
+
+tasks.test {
+    useJUnitPlatform()
+    dependsOn("sudachiDict")
+    systemProperty("roma.sudachi", File(sudachiDir, "assets/system_small.dic").path)
+}
 
 tasks.register<JavaExec>("networkCheck") {
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass = "roma.core.NetworkCheckKt"
+    dependsOn("sudachiDict")
+    systemProperty("roma.sudachi", File(sudachiDir, "assets/system_small.dic").path)
+    mainClass = (project.findProperty("main") as String?) ?: "roma.core.NetworkCheckKt"
 }

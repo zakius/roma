@@ -3,6 +3,7 @@ package com.zakius.roma
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.res.AssetManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
@@ -22,12 +23,21 @@ import roma.core.Song
 import roma.core.again
 import roma.core.matchDistance
 import java.io.File
+import java.io.FileInputStream
+import java.nio.ByteOrder
+import java.nio.channels.FileChannel
+import kotlin.concurrent.thread
 
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
         Store.init(this)
         Playback.init(this)
+        thread(name = "sudachi") {
+            val t0 = System.nanoTime()
+            Store.romanizer.warmUp()
+            android.util.Log.i("roma", "Sudachi dictionary ready in ${(System.nanoTime() - t0) / 1_000_000} ms")
+        }
     }
 }
 
@@ -43,10 +53,19 @@ object Store {
         private set
 
     val icu = Icu { id, text -> android.icu.text.Transliterator.getInstance(id).transliterate(text) }
-    val romanizer = Romanizer(icu)
+    private lateinit var assets: AssetManager
+
+    // The dictionary is an uncompressed asset (noCompress "dic"), so it is mapped in place from the APK: no copy,
+    // and its 115 MB stay out of the heap.
+    val romanizer = Romanizer(icu) {
+        assets.openFd("system_small.dic").use { fd ->
+            FileInputStream(fd.fileDescriptor).channel.use { it.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.length) }
+        }.order(ByteOrder.LITTLE_ENDIAN)
+    }
 
     fun init(c: Context) {
         prefs = c.getSharedPreferences("roma", Context.MODE_PRIVATE)
+        assets = c.assets
         files = c.filesDir
         romanizer.settings = romanizeSettings()
         romanizer.overrides = loadOverrides()
