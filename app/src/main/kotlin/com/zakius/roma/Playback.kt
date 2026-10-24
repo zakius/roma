@@ -301,8 +301,10 @@ object Playback {
 
     // Resolves the stream URL and caches the first 32 KB: the container header plus about 1.5 s of audio at YouTube's
     // bitrates, more than the 0.5 s the player needs to start. Waiting for more only delays the switch on slow networks.
+    // The key is the media item's cache key (the video ID): under the roma:// URI the player wouldn't find the bytes
+    // and would download them again.
     private fun precache(id: String) {
-        val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setPosition(0).setLength(32 * 1024L).build()
+        val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setKey(id).setPosition(0).setLength(32 * 1024L).build()
         androidx.media3.datasource.cache.CacheWriter(cached.createDataSource(), spec, null, null).cache()
     }
 
