@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -57,6 +58,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
@@ -68,12 +70,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -117,13 +121,24 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
     }
 }
 
+/**
+ * Google-hosted art at the size it is drawn: innertube hands over the largest thumbnail (often 544 px or more,
+ * 80–115 KB), which a 48–128 dp image doesn't need. YouTube video stills come in fixed sizes and stay as they are.
+ */
+@Composable
+fun shownThumb(url: String?, size: Dp): String? {
+    val px = with(LocalDensity.current) { size.roundToPx() }
+    if (url == null || "googleusercontent.com/" !in url) return url
+    return url.replace(Regex("=w\\d+-h\\d+"), "=w$px-h$px").replace(Regex("=s\\d+"), "=s$px")
+}
+
 @Composable
 fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: () -> Unit, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(s.thumb, null, Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
+        AsyncImage(shownThumb(s.thumb, 48.dp), null, Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             val style = if (highlight) MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) else MaterialTheme.typography.bodyLarge
@@ -138,7 +153,7 @@ fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: 
 @Composable
 fun ItemRow(item: Item, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(item.thumb, null, Modifier.size(56.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(4.dp)))
+        AsyncImage(shownThumb(item.thumb, 56.dp), null, Modifier.size(56.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(4.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Name(item.title, Store.listMode)
@@ -150,7 +165,7 @@ fun ItemRow(item: Item, onClick: () -> Unit) {
 @Composable
 private fun Card(item: Item, onClick: () -> Unit) {
     Column(Modifier.width(140.dp).clickable(onClick = onClick).padding(6.dp)) {
-        AsyncImage(item.thumb, null, Modifier.size(128.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
+        AsyncImage(shownThumb(item.thumb, 128.dp), null, Modifier.size(128.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
         Spacer(Modifier.height(4.dp))
         Name(item.title, Store.listMode, MaterialTheme.typography.bodyMedium)
         if (item.subtitle.latin.isNotBlank()) Text(item.subtitle.latin, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -284,9 +299,14 @@ private fun Choice(label: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** Loads something once per key and shows a spinner, the error, or the content. */
+/** Loads something once per key and shows [loading] (a spinner), the error, or the content. */
 @Composable
-private fun <T> Loader(key: Any, load: suspend () -> T, content: @Composable (T) -> Unit) {
+private fun <T> Loader(
+    key: Any,
+    load: suspend () -> T,
+    loading: @Composable () -> Unit = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } },
+    content: @Composable (T) -> Unit,
+) {
     var result by remember(key) { mutableStateOf<Result<T>?>(null) }
     var attempt by remember(key) { mutableIntStateOf(0) }
     LaunchedEffect(key, attempt) {
@@ -295,7 +315,7 @@ private fun <T> Loader(key: Any, load: suspend () -> T, content: @Composable (T)
     }
     val r = result
     when {
-        r == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        r == null -> loading()
         r.isFailure -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Couldn't load this page.", textAlign = TextAlign.Center)
             Text(r.exceptionOrNull()?.message ?: "", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
@@ -409,7 +429,7 @@ private val FILTERS = listOf(
     "Playlists" to YouTube.SearchFilter.FILTER_COMMUNITY_PLAYLIST,
 )
 
-private class Found(val items: List<Item>, val local: List<Song>, val corrected: String?, val autoCorrected: Boolean, val originalParams: String?)
+private class Found(val items: List<Item>, val corrected: String?, val autoCorrected: Boolean, val originalParams: String?)
 
 @Composable
 fun SearchScreen() {
@@ -449,39 +469,47 @@ fun SearchScreen() {
                 items(suggestions) { q -> Text(q, Modifier.fillMaxWidth().clickable { search(q) }.padding(horizontal = 16.dp, vertical = 12.dp)) }
             }
         } else if (submitted.isNotEmpty()) {
+            // The local index holds the Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't. These rows
+            // show as soon as the local lookup is done and keep their place when YouTube's results arrive below them.
+            // The lookup runs off the main thread, once per search, before this search's own results join the index.
+            val local by produceState(emptyList<Song>(), submitted, filter) {
+                value = if (filter == 0) withContext(Dispatchers.IO) { Store.searchLocal(submitted) } else emptyList()
+            }
+            fun LazyListScope.localRows() {
+                if (local.isEmpty()) return
+                item { Header("Seen before") }
+                items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
+                item { Header("YouTube Music") }
+            }
             Loader(listOf(submitted, filter, asTyped, Store.version), {
                 val r = YouTube.search(submitted, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter].second).getOrThrow()
                 val items = r.items
                     .filter { it !is SongItem || !it.isVideoSong || filter != 0 }
                     .mapNotNull { Store.romanizer.item(it) }
-                // The local index holds the Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't. Looked up
-                // here, off the main thread and once per search, not on every recomposition (each keystroke), and before
-                // this search's own results join the index.
-                val local = if (filter == 0) Store.searchLocal(submitted) else emptyList()
-                Store.remember(items.mapNotNull { it.song })
-                Found(items, local, r.correctedQuery, r.autoCorrected, r.originalParams)
-            }) { found ->
-                // YouTube's spelling correction, one line above the results.
-                val corrected = found.corrected
-                // The corrected query gives way to "…", so the action stays readable on one line.
-                if (corrected != null) {
-                    Row(
-                        Modifier.fillMaxWidth().clickable { if (found.autoCorrected) asTyped = found.originalParams else search(corrected) }
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                    ) {
-                        val style = MaterialTheme.typography.bodyMedium
-                        val color = MaterialTheme.colorScheme.primary
-                        val (lead, action) = if (found.autoCorrected) "Showing results for “$corrected”" to " · Search as typed" else "Did you mean “$corrected”" to "?"
-                        Text(lead, Modifier.weight(1f, fill = false), style = style, color = if (found.autoCorrected) Color.Unspecified else color, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(action, style = style, color = color, maxLines = 1)
-                    }
-                }
-                val local = found.local
+                    .also { list -> Store.remember(list.mapNotNull { it.song }) }
+                Found(items, r.correctedQuery, r.autoCorrected, r.originalParams)
+            }, loading = {
                 LazyColumn(Modifier.fillMaxSize()) {
-                    if (local.isNotEmpty()) {
-                        item { Header("Seen before") }
-                        items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
-                        item { Header("YouTube Music") }
+                    localRows()
+                    item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+                }
+            }) { found ->
+                LazyColumn(Modifier.fillMaxSize()) {
+                    localRows()
+                    // YouTube's spelling correction, one line above its results. The corrected query gives way to "…",
+                    // so the action stays readable on one line.
+                    val corrected = found.corrected
+                    if (corrected != null) item {
+                        Row(
+                            Modifier.fillMaxWidth().clickable { if (found.autoCorrected) asTyped = found.originalParams else search(corrected) }
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                        ) {
+                            val style = MaterialTheme.typography.bodyMedium
+                            val color = MaterialTheme.colorScheme.primary
+                            val (lead, action) = if (found.autoCorrected) "Showing results for “$corrected”" to " · Search as typed" else "Did you mean “$corrected”" to "?"
+                            Text(lead, Modifier.weight(1f, fill = false), style = style, color = if (found.autoCorrected) Color.Unspecified else color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(action, style = style, color = color, maxLines = 1)
+                        }
                     }
                     if (found.items.isEmpty()) item { Text("No results for “$submitted”.", Modifier.padding(16.dp)) }
                     items(found.items) { item ->
@@ -530,7 +558,7 @@ fun PageScreen(p: Page) {
         LazyColumn(Modifier.fillMaxSize()) {
             item {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(d.thumb, null, Modifier.size(96.dp).clip(if (p.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
+                    AsyncImage(shownThumb(d.thumb, 96.dp), null, Modifier.size(96.dp).clip(if (p.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
                         Name(d.title, Store.listMode, MaterialTheme.typography.titleLarge)

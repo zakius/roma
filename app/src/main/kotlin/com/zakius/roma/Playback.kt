@@ -182,13 +182,19 @@ object Playback {
     // The next song's stream URL and first bytes are fetched while this one plays, so Next (from the app or the
     // notification) and the automatic transition start it from the cache. Media3's own preloading isn't used: it
     // keeps the next song's download open, and the cache can't serve or store those bytes meanwhile.
+    // Its lyrics and large art too, so they are there the moment it starts: only the one next song, once per song,
+    // and both are kept (lyrics cache, Coil's disk cache) for when it plays. Wasted only if it's skipped.
     private fun prefetchNext() {
         val i = player.nextMediaItemIndex
         if (i == C.INDEX_UNSET) return
-        val id = (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song?.id ?: return
-        if (id == prefetched) return
-        prefetched = id
-        scope.launch(Dispatchers.IO) { runCatching { precache(id) } }
+        val next = (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song ?: return
+        if (next.id == prefetched) return
+        prefetched = next.id
+        next.thumb?.let { coil3.SingletonImageLoader.get(appContext).enqueue(coil3.request.ImageRequest.Builder(appContext).data(bigThumb(it)).build()) }
+        scope.launch(Dispatchers.IO) {
+            runCatching { precache(next.id) }
+            runCatching { lyricsResult(next) }
+        }
     }
 
     private var prefetched: String? = null
@@ -303,8 +309,9 @@ object Playback {
 
     // Resolves the stream URL and caches the first 32 KB: the container header plus about 1.5 s of audio at YouTube's
     // bitrates, more than the 0.5 s the player needs to start. Waiting for more only delays the switch on slow networks.
+    // The key is the media item's cache key (the video ID): under the roma:// URI the player wouldn't find the bytes
+    // and would download them again.
     private fun precache(id: String) {
-        // The key must be the media items' custom cache key, or the player doesn't find these bytes.
         val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setKey(id).setPosition(0).setLength(32 * 1024L).build()
         androidx.media3.datasource.cache.CacheWriter(cached.createDataSource(), spec, null, null).cache()
     }
@@ -565,25 +572,29 @@ object Playback {
 
     private var lyricsJob: Job? = null
 
+    /** Blocking: the cached lyrics, else every provider asked and the answer cached. */
+    private fun lyricsResult(s: Song): LyricsResult {
+        val file = File(appContext.cacheDir, "lyrics/${s.id}.json")
+        // A cache file from before 0.1.6 holds a bare Lyrics, fails to decode and is searched again.
+        runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull()?.let { return it }
+        val q = LyricsQuery(s.id, s.title.original, s.artistOriginal, s.album?.name?.original, s.durationSec)
+        val providers = Store.lyricsOrder().filter { Store.lyricsEnabled(it) }
+        val search = LyricsProviders.find(q, providers, Store.icu)
+        val r = search.result ?: LyricsResult(Lyrics("", emptyList(), false))
+        // "No lyrics" is kept only when every provider answered; after a failure the next play asks again.
+        if (search.result != null || search.complete) {
+            file.parentFile!!.mkdirs()
+            file.writeText(Store.json.encodeToString(r))
+        }
+        return r
+    }
+
     fun loadLyrics(s: Song) {
         lyricsJob?.cancel()
         if (lyrics?.songId != s.id) lyrics = LyricsState(s.id, null)
         lyricsJob = scope.launch {
             val found = withContext(Dispatchers.IO) {
-                val file = File(appContext.cacheDir, "lyrics/${s.id}.json")
-                // A cache file from before 0.1.6 holds a bare Lyrics, fails to decode and is searched again.
-                val raw = runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull() ?: run {
-                    val q = LyricsQuery(s.id, s.title.original, s.artistOriginal, s.album?.name?.original, s.durationSec)
-                    val providers = Store.lyricsOrder().filter { Store.lyricsEnabled(it) }
-                    val search = LyricsProviders.find(q, providers, Store.icu)
-                    val r = search.result ?: LyricsResult(Lyrics("", emptyList(), false))
-                    // "No lyrics" is kept only when every provider answered; after a failure the next play asks again.
-                    if (search.result != null || search.complete) {
-                        file.parentFile!!.mkdirs()
-                        file.writeText(Store.json.encodeToString(r))
-                    }
-                    r
-                }
+                val raw = lyricsResult(s)
                 val siblings = listOf(s.artistOriginal) + listOfNotNull(s.album?.name?.original)
                 LyricsState(s.id, Store.romanizer.romanizeLyrics(raw.lyrics, siblings, s.id), raw.translations)
             }
