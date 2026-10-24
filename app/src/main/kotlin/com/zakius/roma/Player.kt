@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ThumbUp
@@ -53,9 +52,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.runtime.mutableLongStateOf
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -74,6 +73,8 @@ import roma.core.Override
 fun PlayerScreen() {
     Playback.tick
     var view by rememberSaveable { mutableStateOf("song") }
+    // Back closes the lyrics or queue view first, then leaves the player as usual.
+    androidx.activity.compose.BackHandler(enabled = view != "song") { view = "song" }
     var menuOpen by remember { mutableStateOf(false) }
     val entry = Playback.current()
     val p = Playback.player
@@ -116,16 +117,20 @@ fun PlayerScreen() {
             }
             Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != Player.REPEAT_MODE_OFF) { Playback.cycleRepeat() }
         }
-        // Extra distance so a tap meant for shuffle can't land on Never.
         Spacer(Modifier.height(28.dp))
+        // More (song menu, where Ban lives) sits at the outer edge with two empty slots after it; Like at the other
+        // edge, under the thumb. Left-handed mode mirrors the row. Slots never move otherwise.
         Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
-            Slot(rememberVectorPainter(Icons.Default.Close), "Never", entry != null, label = "Never") { Playback.never() }
-            Spacer(Modifier.weight(1f)) // deliberately empty: no icon, no label, not tappable
-            Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics") { view = if (view == "lyrics") "song" else "lyrics" }
-            Slot(rememberVectorPainter(Icons.Default.List), "Queue", entry != null, view == "queue", label = "Queue") { view = if (view == "queue") "song" else "queue" }
-            Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true }
             val liked = entry?.song?.id in Playback.liked
-            Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), if (liked) "Unlike" else "Like", entry != null && Store.signedIn, liked, label = "Like") { Playback.toggleLike() }
+            val slots: List<@Composable RowScope.() -> Unit> = listOf(
+                { Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true } },
+                { Spacer(Modifier.weight(1f)) }, // deliberately empty: no icon, no label, not tappable
+                { Spacer(Modifier.weight(1f)) },
+                { Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics") { view = if (view == "lyrics") "song" else "lyrics" } },
+                { Slot(rememberVectorPainter(Icons.Default.List), "Queue", entry != null, view == "queue", label = "Queue") { view = if (view == "queue") "song" else "queue" } },
+                { Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), if (liked) "Unlike" else "Like", entry != null && Store.signedIn, liked, label = "Like") { Playback.toggleLike() } },
+            )
+            (if (Store.bool("ui.leftHanded", false)) slots.reversed() else slots).forEach { it() }
         }
     }
     if (menuOpen && entry != null) SongMenu(entry.song, queueIndex = null) { menuOpen = false }
@@ -201,7 +206,6 @@ private fun SongView() {
 }
 
 // YouTube thumbnails carry their size in the URL; ask for a larger one for the player.
-private fun bigThumb(url: String) = url.replace(Regex("=w\\d+-h\\d+"), "=w544-h544")
 
 @Composable
 private fun QueueView() {
@@ -246,14 +250,15 @@ private fun LyricsView(lines: List<Line>, synced: Boolean, songId: String?) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = state) {
         itemsIndexed(lines) { i, line ->
             val active = i == current
-            val alpha = if (!synced || active) 1f else 0.55f
+            val alpha = if (!synced || active) 1f else 0.45f
             Column(
                 Modifier.fillMaxWidth().alpha(alpha)
                     .pointerInput(line) { detectTapGestures(onTap = { if (synced) Playback.player.seekTo(line.startMs) }) }
                     .padding(vertical = 8.dp),
             ) {
                 val wordIndex = if (active) line.words.indexOfLast { it.startMs <= pos } else -1
-                val big = MaterialTheme.typography.titleLarge.copy(fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+                // Same weight on every line: bolding the active line widened it and re-wrapped long lines mid-song.
+                val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK)
                 if (showOriginal && line.text.isNotBlank()) {
                     WordsText(line.words.map { it.text }, line.text, wordIndex, big, onTap = { if (synced) Playback.player.seekTo(line.startMs) }) { w -> fixWord = w }
                 }
@@ -297,7 +302,7 @@ private fun WordsText(words: List<String>, whole: String, current: Int, style: a
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     Text(
         text,
-        style = style,
+        style = style.copy(lineBreak = LYRIC_BREAK),
         onTextLayout = { layout = it },
         modifier = if (onLongPressWord == null) Modifier else Modifier.pointerInput(text) {
             detectTapGestures(
@@ -347,3 +352,7 @@ val LyricsIcon: ImageVector by lazy {
         )
     }.build()
 }
+
+// Balanced wrapping evens out the line lengths instead of leaving one word on the last line; Phrase keeps Japanese
+// phrases (bunsetsu) together instead of breaking between any two characters (Android 13+, ignored before).
+private val LYRIC_BREAK = LineBreak(LineBreak.Strategy.Balanced, LineBreak.Strictness.Normal, LineBreak.WordBreak.Phrase)

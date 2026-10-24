@@ -192,7 +192,7 @@ object Playback {
                     .setTitle(s.title.latin)
                     .setArtist(artistLine)
                     .setAlbumTitle(s.album?.name?.latin)
-                    .setArtworkUri(s.thumb?.let { Uri.parse(it) })
+                    .setArtworkUri(s.thumb?.let { Uri.parse(bigThumb(it)) })
                     .build(),
             )
             .build()
@@ -586,3 +586,11 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 }
+
+/**
+ * Lists get small thumbnails (60–120 px); the player and the media notification need a large one.
+ * Google-hosted art takes its size in the URL; YouTube video stills come in fixed sizes, hqdefault (480 px) always exists.
+ */
+fun bigThumb(url: String) = url
+    .replace(Regex("=w\\d+-h\\d+"), "=w544-h544")
+    .replace(Regex("/(default|mqdefault)\\.jpg"), "/hqdefault.jpg")
