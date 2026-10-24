@@ -23,17 +23,17 @@ private fun key(s: Song) = Romanizer.stripMarks(s.title.original).lowercase().re
  */
 fun filterRadio(
     candidates: List<Song>,
-    seed: Song,
+    seed: Song?,
     related: Set<String>,
     already: List<Song>,
     bans: Bans,
     settings: RadioSettings,
 ): List<Song> {
-    val seedArtists = seed.artists.mapNotNull { it.id }.toSet()
+    val seedArtists = seed?.artists.orEmpty().mapNotNull { it.id }.toSet()
     val seen = already.map { it.id }.toMutableSet()
     val seenKeys = already.map(::key).toMutableSet()
     val audioKeys = candidates.filter { !it.video }.map(::key).toSet()
-    val seedIsVersion = VERSIONS.containsMatchIn(seed.title.original)
+    val seedIsVersion = seed != null && VERSIONS.containsMatchIn(seed.title.original)
     val out = ArrayList<Song>()
     var onLeash = 0
     var offLeash = 0
@@ -61,3 +61,7 @@ fun filterRadio(
     }
     return out
 }
+
+/** A page of a mix or another playlist being played: the radio filters apply, the leash doesn't, since there is no seed to drift from. */
+fun filterMix(candidates: List<Song>, already: List<Song>, bans: Bans, settings: RadioSettings): List<Song> =
+    filterRadio(candidates, null, emptySet(), already, bans, RadioSettings("free", settings.preferAudio, settings.hideVersions, settings.skipBanned))
