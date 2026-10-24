@@ -129,8 +129,12 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
 fun shownThumb(url: String?, size: Dp): String? {
     val px = with(LocalDensity.current) { size.roundToPx() }
     if (url == null || "googleusercontent.com/" !in url) return url
-    return url.replace(Regex("=w\\d+-h\\d+"), "=w$px-h$px").replace(Regex("=s\\d+"), "=s$px")
+    return url.replace(SIZE_WH, "=w$px-h$px").replace(SIZE_S, "=s$px")
 }
+
+// Compiled once: shownThumb runs for every row drawn while a list scrolls.
+private val SIZE_WH = Regex("=w\\d+-h\\d+")
+private val SIZE_S = Regex("=s\\d+")
 
 @Composable
 fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: () -> Unit, onClick: () -> Unit) {
@@ -189,7 +193,8 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     val inQueue = queueIndex != null && queueIndex != Playback.player.currentMediaItemIndex
     val liked = s.id in Playback.liked
     val context = LocalContext.current
-    ModalBottomSheet(onDismissRequest = onClose) {
+    // Fully open at once: half open, the bans at the bottom would need a drag first.
+    ModalBottomSheet(onDismissRequest = onClose, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(bottom = 24.dp)) {
             Column(Modifier.padding(horizontal = 24.dp)) {
                 Name(s.title, "both", MaterialTheme.typography.titleMedium)
@@ -215,8 +220,8 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             }
             MenuItem("Remove from queue", inQueue) { Playback.remove(queueIndex!!); onClose() }
             MenuItem("Ban song", true) {
-                Store.ban("song", s.id, s.title.latin)
-                if (Playback.current()?.song?.id == s.id) Playback.never() else Toast.makeText(context, "Banned ${s.title.latin}", Toast.LENGTH_SHORT).show()
+                if (Playback.current()?.song?.id == s.id) Playback.never() // bans it, skips it and offers Undo
+                else { Store.ban("song", s.id, s.title.latin); Toast.makeText(context, "Banned ${s.title.latin}", Toast.LENGTH_SHORT).show() }
                 onClose()
             }
             MenuItem("Ban artist", s.firstArtistId != null) {
@@ -299,7 +304,17 @@ private fun Choice(label: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** Loads something once per key and shows [loading] (a spinner), the error, or the content. */
+// The last results by key, so going back to a page or a tab shows it at once (with its scroll position, see Root)
+// while it loads again behind it. ponytail: 20 entries, enough for a few tabs' back stacks.
+private val loaded = object : LinkedHashMap<Any, Any?>(32, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Any, Any?>) = size > 20
+}
+
+/**
+ * Loads something per key and shows [loading] (a spinner), the error, or the content. A result shown before stays
+ * on screen while the page loads again (when it is opened again, or after [Store.dataVersion] changes), and is
+ * swapped for the new one only when that succeeds, so the list neither blanks nor loses its place.
+ */
 @Composable
 private fun <T> Loader(
     key: Any,
@@ -307,11 +322,14 @@ private fun <T> Loader(
     loading: @Composable () -> Unit = { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } },
     content: @Composable (T) -> Unit,
 ) {
-    var result by remember(key) { mutableStateOf<Result<T>?>(null) }
+    @Suppress("UNCHECKED_CAST")
+    var result by remember(key) { mutableStateOf(if (key in loaded) Result.success(loaded[key] as T) else null) }
     var attempt by remember(key) { mutableIntStateOf(0) }
-    LaunchedEffect(key, attempt) {
-        result = null
-        result = withContext(Dispatchers.IO) { runCatching { load() } }
+    LaunchedEffect(key, attempt, Store.dataVersion) {
+        if (result?.isFailure == true) result = null
+        val r = withContext(Dispatchers.IO) { runCatching { load() } }
+        if (r.isSuccess) loaded[key] = r.getOrNull()
+        if (r.isSuccess || result == null) result = r
     }
     val r = result
     when {
@@ -340,24 +358,32 @@ private const val MIX_PAGES = 10
  * Home: the pinned "Your mixes" row, then YouTube's shelves. The first pages load until the mixes turn up (at most
  * [MIX_PAGES]); after that a page loads when the user nears the end. New shelves only ever go at the bottom.
  */
+// Home's shelves and paging live outside the screen, so going back to Home shows them at once, where they were.
+// Signing in or out and romanization changes start it over (Store.dataVersion).
+private class HomeState(val dataVersion: Int) {
+    var sections by mutableStateOf(listOf<Section>())
+    var mixes by mutableStateOf(Store.mixes)
+    var more by mutableStateOf(true)
+    var failed by mutableStateOf<String?>(null)
+    var attempt by mutableIntStateOf(0)
+    // Where paging stands; kept across Retry so it carries on from the failed page.
+    var cont: String? = null
+    var page = 0
+    val found = ArrayList<Item>()
+    var looking = Store.signedIn
+}
+
+private var home: HomeState? = null
+
 @Composable
 fun HomeScreen() {
-    var sections by remember(Store.version) { mutableStateOf(listOf<Section>()) }
-    var mixes by remember { mutableStateOf(Store.mixes) }
-    var more by remember(Store.version) { mutableStateOf(true) }
-    var failed by remember(Store.version) { mutableStateOf<String?>(null) }
-    var attempt by remember(Store.version) { mutableIntStateOf(0) }
-    // Where paging stands; kept across Retry so it carries on from the failed page.
-    var cont by remember(Store.version) { mutableStateOf<String?>(null) }
-    var page by remember(Store.version) { mutableIntStateOf(0) }
-    val found = remember(Store.version) { ArrayList<Item>() }
-    var looking by remember(Store.version) { mutableStateOf(Store.signedIn) }
+    val h = home?.takeIf { it.dataVersion == Store.dataVersion } ?: HomeState(Store.dataVersion).also { home = it }
     val list = rememberLazyListState()
-    LaunchedEffect(Store.version, attempt) {
-        failed = null
-        while (more) {
-            if (!looking) snapshotFlow { list.layoutInfo.run { (visibleItemsInfo.lastOrNull()?.index ?: 0) >= totalItemsCount - 3 } }.first { it }
-            val from = cont
+    LaunchedEffect(h, h.attempt) {
+        h.failed = null
+        while (h.more) {
+            if (!h.looking) snapshotFlow { list.layoutInfo.run { (visibleItemsInfo.lastOrNull()?.index ?: 0) >= totalItemsCount - 3 } }.first { it }
+            val from = h.cont
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     Store.ensureVisitorData()
@@ -369,35 +395,35 @@ fun HomeScreen() {
                     }
                 }
             }
-            val (next, shelves) = result.getOrElse { failed = it.message ?: it.toString(); return@LaunchedEffect }
-            page++
-            cont = next
-            more = next != null
-            found += personalMixes(shelves.flatMap { it.items })
+            val (next, shelves) = result.getOrElse { h.failed = it.message ?: it.toString(); return@LaunchedEffect }
+            h.page++
+            h.cont = next
+            h.more = next != null
+            h.found += personalMixes(shelves.flatMap { it.items })
             // The mixes live in the pinned row only.
-            sections = sections + shelves.map { Section(it.title, it.items.filterNot { i -> i.kind == "playlist" && isPersonalMix(i.id) }) }.filter { it.items.isNotEmpty() }
-            if (looking && (found.isNotEmpty() || page >= MIX_PAGES || !more)) {
-                looking = false
-                mixes = personalMixes(found)
-                Store.mixes = mixes
+            h.sections = h.sections + shelves.map { Section(it.title, it.items.filterNot { i -> i.kind == "playlist" && isPersonalMix(i.id) }) }.filter { it.items.isNotEmpty() }
+            if (h.looking && (h.found.isNotEmpty() || h.page >= MIX_PAGES || !h.more)) {
+                h.looking = false
+                h.mixes = personalMixes(h.found)
+                Store.mixes = h.mixes
             }
         }
     }
     LazyColumn(Modifier.fillMaxSize(), list) {
-        item(key = "mixes") { MixesRow(mixes) }
-        items(sections) { sec ->
+        item(key = "mixes") { MixesRow(h.mixes) }
+        items(h.sections) { sec ->
             Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
             LazyRow { items(sec.items) { item -> Card(item) { openItem(item) } } }
         }
         item(key = "end") {
-            val f = failed
+            val f = h.failed
             when {
                 f != null -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Couldn't load Home.", textAlign = TextAlign.Center)
                     Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-                    TextButton(onClick = { attempt++ }) { Text("Retry") }
+                    TextButton(onClick = { h.attempt++ }) { Text("Retry") }
                 }
-                more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                h.more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             }
         }
     }
@@ -440,8 +466,8 @@ fun SearchScreen() {
     var asTyped by rememberSaveable { mutableStateOf<String?>(null) }
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val focus = remember { FocusRequester() }
-    var focusedOnce by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) { if (!focusedOnce) { focus.requestFocus(); focusedOnce = true } }
+    // The keyboard comes up for a new search, not when coming back to results.
+    LaunchedEffect(Unit) { if (query.isEmpty()) focus.requestFocus() }
     fun search(q: String) { query = q; submitted = q.trim(); asTyped = null }
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
@@ -456,11 +482,11 @@ fun SearchScreen() {
         Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FILTERS.forEachIndexed { i, (label, _) -> FilterChip(filter == i, { filter = i; asTyped = null }, label = { Text(label) }) }
         }
-        // While the text differs from the last search, YouTube's suggestions take the results' place.
+        // While the text differs from the last search, YouTube's suggestions take the results' place. The ones shown
+        // stay while the next keystroke's load, so typing doesn't flash the old results between them.
         var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
         LaunchedEffect(query) {
-            suggestions = emptyList()
-            if (query.isBlank() || query.trim() == submitted) return@LaunchedEffect
+            if (query.isBlank() || query.trim() == submitted) { suggestions = emptyList(); return@LaunchedEffect }
             delay(250)
             suggestions = withContext(Dispatchers.IO) { YouTube.searchSuggestions(query).getOrNull()?.queries.orEmpty() }
         }
@@ -481,7 +507,7 @@ fun SearchScreen() {
                 items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
                 item { Header("YouTube Music") }
             }
-            Loader(listOf(submitted, filter, asTyped, Store.version), {
+            Loader(listOf(submitted, filter, asTyped), {
                 val r = YouTube.search(submitted, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter].second).getOrThrow()
                 val items = r.items
                     .filter { it !is SongItem || !it.isVideoSong || filter != 0 }
@@ -539,7 +565,7 @@ fun LibraryScreen() {
     val tabs = listOf("Playlists" to "FEmusic_liked_playlists", "Albums" to "FEmusic_liked_albums", "Artists" to "FEmusic_library_corpus_track_artists")
     Column(Modifier.fillMaxSize()) {
         TabRow(tab) { tabs.forEachIndexed { i, (label, _) -> Tab(tab == i, { tab = i }, text = { Text(label) }) } }
-        Loader(tabs[tab].second to Store.version, { loadLibrary(tabs[tab].second) }) { items ->
+        Loader(tabs[tab].second, { loadLibrary(tabs[tab].second) }) { items ->
             if (items.isEmpty()) Centered("Nothing here yet.")
             LazyColumn(Modifier.fillMaxSize()) { items(items) { item -> ItemRow(item) { openItem(item) } } }
         }
@@ -554,7 +580,7 @@ class Detail(val title: roma.core.Text, val subtitle: String, val thumb: String?
 fun PageScreen(p: Page) {
     if (p.kind == "login") return LoginScreen()
     var menuFor by remember { mutableStateOf<Song?>(null) }
-    Loader(p.kind + p.id + Store.version, { loadDetail(p) }) { d ->
+    Loader(p.kind + p.id, { loadDetail(p) }) { d ->
         LazyColumn(Modifier.fillMaxSize()) {
             item {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -735,8 +761,10 @@ fun SettingsScreen() {
         Row1("API key", Store.str("lastfm.key", "").ifBlank { "Not set: create one at last.fm/api/account/create" }) { editing = "lastfm.key" to "Last.fm API key" }
         Row1("Shared secret", if (Store.str("lastfm.secret", "").isBlank()) "Not set" else "Set") { editing = "lastfm.secret" to "Last.fm shared secret" }
         val connected = Store.str("lastfm.session", "").isNotBlank()
+        // A file read: off the main thread, so a switch on this page doesn't wait for it.
+        val waiting by produceState(0, connected, Store.version) { value = withContext(Dispatchers.IO) { if (connected) Playback.scrobbleQueue().load().size else 0 } }
         val ready = Store.str("lastfm.key", "").isNotBlank() && Store.str("lastfm.secret", "").isNotBlank()
-        Row1(if (connected) "Connected: scrobbling" else "Connect", if (connected) "Tap to disconnect · ${Playback.scrobbleQueue().load().size} waiting" else "Opens the browser to allow access", ready || connected) {
+        Row1(if (connected) "Connected: scrobbling" else "Connect", if (connected) "Tap to disconnect · $waiting waiting" else "Opens the browser to allow access", ready || connected) {
             if (connected) Store.set("lastfm.session", null)
             else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LastFm(Store.str("lastfm.key", ""), "").authUrl("roma://lastfm"))))
         }

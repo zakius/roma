@@ -134,16 +134,21 @@ fun Root() {
     }
     Playback.tick // redraw when the player changes, for the Player tab's dimming
     val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null
+    val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Box(Modifier.weight(1f)) {
             val page = stack.lastOrNull()
-            when {
-                page != null -> PageScreen(page)
-                tab == TAB_HOME -> HomeScreen()
-                tab == TAB_SEARCH -> SearchScreen()
-                tab == TAB_LIBRARY -> LibraryScreen()
-                tab == TAB_PLAYER -> PlayerScreen()
-                else -> SettingsScreen()
+            // Each tab and page keeps its saved state (scroll position, search text) while another one is shown, so
+            // going back lands where it was. ponytail: states of closed pages stay until the app ends; small.
+            saved.SaveableStateProvider(if (page != null) "$tab/${stack.size}/${page.kind}/${page.id}" else "$tab") {
+                when {
+                    page != null -> PageScreen(page)
+                    tab == TAB_HOME -> HomeScreen()
+                    tab == TAB_SEARCH -> SearchScreen()
+                    tab == TAB_LIBRARY -> LibraryScreen()
+                    tab == TAB_PLAYER -> PlayerScreen()
+                    else -> SettingsScreen()
+                }
             }
         }
         // Fixed order; Player is dimmed until something is loaded.

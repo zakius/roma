@@ -44,12 +44,18 @@ class App : Application() {
 @Serializable
 class Banned(val kind: String, val id: String, val name: String)
 
-/** Settings and everything the app keeps on disk. Compose reads [version] to redraw after a change. */
+/**
+ * Settings and everything the app keeps on disk. Compose reads [version] to redraw after a change, and [dataVersion]
+ * to load pages again: only signing in or out and romanization changes alter what a page holds. A ban or a display
+ * setting must not send every open page back to the network.
+ */
 object Store {
     lateinit var prefs: SharedPreferences
     lateinit var files: File
     val json = Json { ignoreUnknownKeys = true }
     var version by mutableIntStateOf(0)
+        private set
+    var dataVersion by mutableIntStateOf(0)
         private set
 
     val icu = Icu { id, text -> android.icu.text.Transliterator.getInstance(id).transliterate(text) }
@@ -102,6 +108,7 @@ object Store {
             romanizer.settings = romanizeSettings()
             Playback.romanizationChanged()
         }
+        if (key.startsWith("rom.") || key == "cookie") dataVersion++
         version++
     }
 
@@ -151,6 +158,7 @@ object Store {
         romanizer.overrides = list
         overridesFile.writeText(json.encodeToString(list))
         Playback.romanizationChanged()
+        dataVersion++
         version++
     }
 
