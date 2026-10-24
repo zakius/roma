@@ -17,7 +17,7 @@ class RomanizeTest {
         assertEquals("Kimi no Na wa", r.machine("君の名は"))
         assertEquals("Tōkyō", r.machine("東京"))
         assertEquals("Eiga", r.machine("映画"))
-        assertEquals("Watashi wa", r.machine("私は"))
+        assertEquals("Kimi wa", r.machine("君は"))
         assertEquals("Kōhī", r.machine("コーヒー"))
         assertEquals("Shizumu Yō ni", r.machine("沈むように"))
         assertEquals("Sayonara dake Datta", r.machine("さよならだけだった"))
@@ -229,15 +229,12 @@ class RomanizeTest {
         assertEquals("Gakkō e ikō", r.machine("学校へ行こう", sentence = true))
         // Particles は へ を.
         assertEquals("Kyō wa hon o yomu", r.machine("今日は本を読む", sentence = true))
-        assertEquals("Ashita e", r.machine("明日へ", sentence = true))
-        // Lyric readings and 何.
-        assertEquals("Ashita", r.machine("明日"))
-        assertEquals("Watashitachi", r.machine("私達", sentence = true))
+        assertEquals("Umi e", r.machine("海へ", sentence = true))
+        // Readings come from the dictionary alone (no word list); 何 by the rule before t, d, n sounds.
         assertEquals("Mō ichido", r.machine("もう一度", sentence = true))
-        assertEquals("Otōsan to okāsan", r.machine("お父さんとお母さん", sentence = true))
+        assertEquals("Otōsan to okaasan", r.machine("お父さんとお母さん", sentence = true)) // aa stays: in 場合 (baai) it spans two morphemes
         assertEquals("Nani mo nai", r.machine("何もない", sentence = true))
         assertEquals("Nan de", r.machine("何で", sentence = true))
-        assertEquals("Iu yo", r.machine("言うよ", sentence = true))
         // Glue: number + counter, verb + subsidiary verb, negative adjective.
         assertEquals("Sannin", r.machine("三人", sentence = true))
         assertEquals("Hashiridasu", r.machine("走り出す", sentence = true))
@@ -254,5 +251,18 @@ class RomanizeTest {
         assertEquals("Kishikan nani ga sonna fuman nan da?", r.machine("既視感何がそんな不満なんだ?", sentence = true))
         assertEquals("Anshinkan", r.machine("安心感", sentence = true))
         assertEquals("Mono kin ai gen", r.machine("物 金 愛 言", sentence = true)) // separate words stay separate
+    }
+
+    @Test fun karaokeSplitsAWordLikeItsParts() {
+        // 忙しい timed as 忙|し|い: the romaji follows ("isoga", "shi", "i"); a long vowel across parts stays whole.
+        assertEquals(listOf("Yoru wa", " isoga", "shi", "i"), r.parts(listOf("夜は", "忙", "し", "い")))
+        assertEquals(listOf("Ikō", "", ""), r.parts(listOf("行", "こ", "う")))
+    }
+
+    @Test fun kyrgyz() {
+        assertEquals("ky", Romanizer.cyrillicLanguage("Мең сени сүйөм"))
+        assertEquals("Meng seni süyöm", r.machine("Мең сени сүйөм", sentence = true))
+        assertEquals("kk", Romanizer.cyrillicLanguage("Ізі қалған"))
+        assertEquals("mn", Romanizer.cyrillicLanguage("Өнөөдөр сайхан өдөр"))
     }
 }

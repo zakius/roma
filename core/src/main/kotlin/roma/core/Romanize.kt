@@ -36,13 +36,13 @@ class RomanizeSettings(
 class Override(val scope: String, val id: String, val original: String, val latin: String)
 
 /**
- * [dictionary] supplies SudachiDict's system_small.dic, memory-mapped, little-endian. It is called once, on the first
+ * [dictionary] supplies SudachiDict's system_core.dic, memory-mapped, little-endian. It is called once, on the first
  * Japanese string (or [warmUp]). By default it maps the file named by the system property roma.sudachi (the JVM tests).
  */
 class Romanizer(
     private val icu: Icu,
     var settings: RomanizeSettings = RomanizeSettings(),
-    private val dictionary: () -> ByteBuffer = { MMap.map(System.getProperty("roma.sudachi") ?: error("roma.sudachi: path to system_small.dic")) },
+    private val dictionary: () -> ByteBuffer = { MMap.map(System.getProperty("roma.sudachi") ?: error("roma.sudachi: path to system_core.dic")) },
 ) {
     var overrides: List<Override> = emptyList()
 
@@ -87,9 +87,11 @@ class Romanizer(
             val words = Array(norm.size) { StringBuilder() }
             val starts = norm.runningFold(0) { acc, p -> acc + p.length }
             var pos = 0
-            for ((surface, romaji) in japanese(line, false)) {
+            for ((surface, romaji, reading) in japanese(line, false)) {
                 val i = (starts.indexOfLast { it <= pos }).coerceIn(0, norm.size - 1)
-                words[i].append(romaji)
+                val last = (starts.indexOfLast { it < pos + surface.length }).coerceIn(i, norm.size - 1)
+                val split = if (last > i && reading != null) splitReading(surface, pos, reading, romaji, starts, i..last) else null
+                if (split == null) words[i].append(romaji) else split.forEachIndexed { k, r -> words[i + k].append(r) }
                 pos += surface.length
             }
             words.map { punctuation(it.toString()) }.toMutableList()
@@ -97,6 +99,30 @@ class Romanizer(
         val first = out.indexOfFirst { it.isNotBlank() }
         if (first >= 0) out[first] = capFirst(norm[first], out[first])
         return parts.indices.map { i -> override.firstOrNull { it.original == parts[i].trim() }?.latin ?: out[i] }
+    }
+
+    /**
+     * A word that karaoke times over several parts (忙|し|い) gets its romaji split the same way: kana parts at either
+     * end take their own reading, the kanji in between the rest ("isoga" | "shi" | "i"). Null when the pieces wouldn't
+     * add up to the word's romaji exactly (long vowels across parts, 行|こ|う), so the caller keeps it whole.
+     */
+    private fun splitReading(surface: String, at: Int, reading: String, romaji: String, starts: List<Int>, parts: IntRange): List<String>? {
+        val pieces = parts.map { p -> surface.substring((starts[p] - at).coerceAtLeast(0), (starts[p + 1] - at).coerceAtMost(surface.length)) }
+        val out = MutableList(pieces.size) { "" }
+        var rest = reading
+        var lo = 0
+        var hi = pieces.size - 1
+        while (lo <= hi && pieces[lo].all(::isKana) && rest.startsWith(toKatakana(pieces[lo]))) {
+            out[lo] = kana(toKatakana(pieces[lo])); rest = rest.drop(pieces[lo].length); lo++
+        }
+        while (hi >= lo && pieces[hi].all(::isKana) && rest.endsWith(toKatakana(pieces[hi]))) {
+            out[hi] = kana(toKatakana(pieces[hi])); rest = rest.dropLast(pieces[hi].length); hi--
+        }
+        if (lo <= hi) out[lo] = kana(rest) else if (rest.isNotEmpty()) return null
+        val lead = romaji.takeWhile { it == ' ' }
+        if (out.joinToString("") != romaji.trimStart()) return null
+        out[out.indexOfFirst { it.isNotEmpty() }.coerceAtLeast(0)] = lead + out[out.indexOfFirst { it.isNotEmpty() }.coerceAtLeast(0)]
+        return out
     }
 
     fun isJapanese(s: String, siblings: List<String>): Boolean = when {
@@ -164,36 +190,14 @@ class Romanizer(
 
     private class Token(val surface: String, val reading: String, val pos: List<String>)
 
-    private fun tokens(s: String): List<Token> {
-        val raw = synchronized(tokenizer) {
-            // A morpheme's begin/end index the original text; surface() can be rewritten (君(きみ) keeps its yomigana).
-            tokenizer.tokenize(Tokenizer.SplitMode.C, s).map { Token(s.substring(it.begin(), it.end()), it.readingForm(), it.partOfSpeech()) }
-        }
-        // Lyric readings: a run of whole tokens that spells a key takes the table's reading as one noun.
-        val out = ArrayList<Token>()
-        var i = 0
-        while (i < raw.size) {
-            var j = i
-            var text = ""
-            var hit = -1
-            while (j < raw.size && text.length < LYRIC_KEY_MAX) {
-                text += raw[j++].surface
-                if (text in LYRIC_READINGS) hit = j
-            }
-            if (hit < 0) {
-                out.add(raw[i++])
-                continue
-            }
-            val surface = raw.subList(i, hit).joinToString("") { it.surface }
-            out.add(Token(surface, LYRIC_READINGS.getValue(surface), if (hit - i == 1) raw[i].pos else NOUN))
-            i = hit
-        }
-        return out
+    private fun tokens(s: String): List<Token> = synchronized(tokenizer) {
+        // A morpheme's begin/end index the original text; surface() can be rewritten (君(きみ) keeps its yomigana).
+        tokenizer.tokenize(Tokenizer.SplitMode.C, s).map { Token(s.substring(it.begin(), it.end()), it.readingForm(), it.partOfSpeech()) }
     }
 
     /** (surface, romaji with its leading space) per token. In [title] case every word but a particle is capitalized. */
-    private fun japanese(s: String, title: Boolean): List<Pair<String, String>> {
-        val result = ArrayList<Pair<String, String>>()
+    private fun japanese(s: String, title: Boolean): List<Triple<String, String, String?>> {
+        val result = ArrayList<Triple<String, String, String?>>()
         val tokens = tokens(s)
         var prevWord = false
         var prev: Token? = null
@@ -208,8 +212,9 @@ class Romanizer(
             // through the Chinese path below instead of being left in the output. Joined numbers (三) are OOV too, but
             // keep their reading.
             val unknownHan = hasHan(surface) && t.reading.none(::isKana)
+            val reading = if (japaneseText && !unknownHan) spoken(if (t.reading.none(::isKana)) toKatakana(surface) else t.reading, t, tokens.getOrNull(i + 1)) else null
             var romaji = when {
-                japaneseText && !unknownHan -> kana(spoken(if (t.reading.none(::isKana)) toKatakana(surface) else t.reading, t, tokens.getOrNull(i + 1)))
+                reading != null -> kana(reading)
                 hasNonLatin(surface) -> other(surface, title, cyrillicLanguage(surface))
                 else -> surface
             }
@@ -232,8 +237,7 @@ class Romanizer(
                 t.pos[1] == "接続助詞" && (surface in setOf("て", "で", "ちゃ", "じゃ") || surface == "ば" && afterInflected) ||
                 surface == "って" && prev?.surface == "だ" ||
                 prev?.pos?.get(1) == "数詞" && pos == "名詞" || stray ||
-                t.pos[1] == "準体助詞" && surface == "ん" || // こんなんじゃ "konnan ja", なんだ "nan da"
-                pos == "名詞" && surface in SUFFIX_KANJI && prevPos == "名詞" && hasHan(prev!!.surface) // 既視感 "kishikan"
+                t.pos[1] == "準体助詞" && surface == "ん" // こんなんじゃ "konnan ja", なんだ "nan da"
             // A sentence-final particle can't start a phrase: there it is a misread first syllable. Sudachi reads
             // よふかし (夜更かし) as よ|ふかし, so it joins the next word: "Yofukashi no Uta".
             stray = t.pos[1] == "終助詞" && !prevWord && tokens.getOrNull(i + 1)?.surface?.any(::isKana) == true
@@ -242,7 +246,7 @@ class Romanizer(
             val isWord = romaji.firstOrNull()?.isLetterOrDigit() == true
             val space = prevWord && isWord && !glue
             if (title && japaneseText && isWord && !(prevWord && glue) && !particle) romaji = capitalize(romaji, false)
-            result.add(surface to (if (space) " " else "") + romaji)
+            result.add(Triple(surface, (if (space) " " else "") + romaji, reading))
             prevWord = romaji.lastOrNull()?.isLetterOrDigit() == true
             prev = t
         }
@@ -474,7 +478,7 @@ class Romanizer(
         }
 
         /**
-         * The language of a Cyrillic string, from its distinctive letters: "kk", "uk", "be", "sr", "mk", "bg", "mn" or "ru".
+         * The language of a Cyrillic string, from its distinctive letters: "kk", "ky", "uk", "be", "sr", "mk", "bg", "mn" or "ru".
          * Bulgarian has no letter of its own, only ъ before a consonant (път, България), which Russian never writes
          * now, and no ы э ё. Anything else is Russian, the safe default.
          */
@@ -482,8 +486,11 @@ class Romanizer(
             val t = s.lowercase()
             fun has(letters: String) = t.any { it in letters }
             return when {
-                has("әғқңұһ") -> "kk"
-                has("өү") -> if (has("і")) "kk" else "mn"
+                // Kazakh, Kyrgyz and Mongolian share ө ү; ң is Kazakh and Kyrgyz; ә ғ қ ұ һ are Kazakh only, and so is і
+                // next to ң ө ү (alone it is Ukrainian or Belarusian).
+                has("әғқұһ") || has("і") && has("ңөү") -> "kk"
+                has("ң") -> "ky"
+                has("өү") -> "mn"
                 has("ў") || has("і") && has("ыэё") && !has("иєїґ") -> "be"
                 has("єїґі") -> "uk"
                 has("ѓќѕ") -> "mk"
@@ -497,6 +504,7 @@ class Romanizer(
         private val ALPHABETS = mapOf(
             "ru" to RU,
             "kk" to RU + "әғқңөұүһі",
+            "ky" to RU + "ңөү",
             "mn" to RU + "өү",
             "uk" to "абвгґдеєжзиіїйклмнопрстуфхцчшщьюя",
             "be" to "абвгдеёжзійклмнопрстуўфхцчшыьэюя",
@@ -602,25 +610,9 @@ class Romanizer(
         }
 
         // Auxiliaries (by conjugation type) that stay separate words after a verb: "iku deshō", "kuru rashii".
-        /** One-kanji nouns Sudachi splits off a compound, which read as its suffix: 既視|感, 安心|感, 可能|性. */
-        private const val SUFFIX_KANJI = "感性的化者力観界式系風論率法型"
         private val LOOSE_AUX = setOf("助動詞-デス", "助動詞-ラシイ", "助動詞-ダ")
-        private val NOUN = listOf("名詞", "普通名詞", "一般", "*", "*", "*")
         private const val O_ROW = "オコソトノホモヨロゴゾドボポョォ"
         private const val U_ROW = "ウクスツヌフムユルグズヅブプュゥ"
-
-        /**
-         * Readings Sudachi gets wrong for songs, as kana with ー for a long vowel. A key matches a run of whole tokens.
-         * Sudachi gives the formal or written reading (明日 アス, 私 ワタクシ, 一度 ヒトタビ, 言う ユウ); lyrics sing
-         * the everyday one. Its small dictionary splits the family words (母|さん reads ハハサン) and number + counter
-         * pairs that change sound (一|回 イチカイ). お before 母さん is a prefix and glues, so "okāsan".
-         */
-        private val LYRIC_READINGS = mapOf(
-            "明日" to "アシタ", "私" to "ワタシ", "一度" to "イチド", "一回" to "イッカイ", "一日" to "イチニチ", "一歩" to "イッポ", "言う" to "イウ",
-            "母さん" to "カーサン", "父さん" to "トーサン", "兄さん" to "ニイサン", "姉さん" to "ネーサン",
-            "母ちゃん" to "カーチャン", "父ちゃん" to "トーチャン", "兄ちゃん" to "ニイチャン", "姉ちゃん" to "ネーチャン",
-        )
-        private val LYRIC_KEY_MAX = LYRIC_READINGS.keys.maxOf { it.length }
 
         private fun toKatakana(s: String) = buildString { for (c in s) append(if (c in 'ぁ'..'ゖ') c + 0x60 else c) }
         private fun macron(c: Char) = "āīūēō"["aiueo".indexOf(c)]
@@ -666,6 +658,8 @@ class Romanizer(
         private val ENGLISH = cyr(CYR, "a", "b", "v", "g", "d", "e", "yo", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "kh", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya", "i", "yi", "ye", "g", "w")
         private val ISO9 = cyr(CYR, "a", "b", "v", "g", "d", "e", "ë", "ž", "z", "i", "j", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "h", "c", "č", "š", "ŝ", "ʺ", "y", "ʹ", "è", "û", "â", "ì", "ï", "ê", "g̀", "ŭ")
         private val NATIONAL = mapOf(
+            // Kyrgyz has no official Latin alphabet; this is BGN/PCGN 1979.
+            "ky" to cyr("абвгдеёжзийклмнңоөпрстуүфхцчшщъыьэюя", "a", "b", "v", "g", "d", "e", "yo", "j", "z", "i", "y", "k", "l", "m", "n", "ng", "o", "ö", "p", "r", "s", "t", "u", "ü", "f", "kh", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya"),
             "kk" to cyr("абвгдеёжзийклмнопрстуфхцчшщъыьэюяәғқңөұүһі", "a", "b", "v", "g", "d", "e", "io", "j", "z", "i", "i", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "h", "ts", "tş", "ş", "ştş", "", "y", "", "e", "iu", "ia", "ä", "ğ", "q", "ñ", "ö", "ū", "ü", "h", "ı"),
             "uk" to cyr("абвгґдеєжзиіїйклмнопрстуфхцчшщьюя", "a", "b", "v", "h", "g", "d", "e", "ie", "zh", "z", "y", "i", "i", "i", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "kh", "ts", "ch", "sh", "shch", "", "iu", "ia"),
             // е ё ю я are j or i plus this vowel.

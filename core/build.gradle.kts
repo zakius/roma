@@ -32,26 +32,26 @@ dependencies {
     testImplementation("com.ibm.icu:icu4j:78.1")
 }
 
-// SudachiDict "small", downloaded once into the Gradle cache (115 MB unpacked, too big for git). The app ships it as
+// SudachiDict "core", downloaded once into the Gradle cache (202 MB unpacked, too big for git). The app ships it as
 // an asset; the JVM tests read it from here. To update: change the version and the zip's sha256 (docs/design.md).
 val sudachiVersion = "20261015"
-val sudachiSha256 = "91134373add92680278281b64bd92952faf2a685c8d05db7e727d0f9ffbd09f5"
-val sudachiDir = File(gradle.gradleUserHomeDir, "caches/roma/sudachi-$sudachiVersion")
+val sudachiSha256 = "5cf5cb7f1ea943a988e2fb5d285a9a8b3538861faefa7a2604c2cd18c387f503"
+val sudachiDir = File(gradle.gradleUserHomeDir, "caches/roma/sudachi-core-$sudachiVersion")
 extra["sudachiAssets"] = File(sudachiDir, "assets")
 
 tasks.register("sudachiDict") {
     val assets = File(sudachiDir, "assets")
     outputs.dir(assets)
     doLast {
-        if (File(assets, "system_small.dic").exists()) return@doLast
-        val zip = File(sudachiDir, "small.zip")
+        if (File(assets, "system_core.dic").exists()) return@doLast
+        val zip = File(sudachiDir, "core.zip")
         sudachiDir.mkdirs()
-        URI("https://github.com/WorksApplications/SudachiDict/releases/download/v$sudachiVersion/sudachi-dictionary-$sudachiVersion-small.zip")
+        URI("https://github.com/WorksApplications/SudachiDict/releases/download/v$sudachiVersion/sudachi-dictionary-$sudachiVersion-core.zip")
             .toURL().openStream().use { input -> zip.outputStream().use { input.copyTo(it) } }
         val digest = MessageDigest.getInstance("SHA-256").digest(zip.readBytes()).joinToString("") { "%02x".format(it) }
         check(digest == sudachiSha256) { "SudachiDict zip: sha256 $digest, expected $sudachiSha256" }
         project.copy {
-            from(zipTree(zip)) { include("*/system_small.dic", "*/LEGAL"); eachFile { path = if (name == "LEGAL") "sudachi-LEGAL.txt" else name } }
+            from(zipTree(zip)) { include("*/system_core.dic", "*/LEGAL"); eachFile { path = if (name == "LEGAL") "sudachi-LEGAL.txt" else name } }
             into(assets)
             includeEmptyDirs = false
         }
@@ -62,12 +62,12 @@ tasks.register("sudachiDict") {
 tasks.test {
     useJUnitPlatform()
     dependsOn("sudachiDict")
-    systemProperty("roma.sudachi", File(sudachiDir, "assets/system_small.dic").path)
+    systemProperty("roma.sudachi", File(sudachiDir, "assets/system_core.dic").path)
 }
 
 tasks.register<JavaExec>("networkCheck") {
     classpath = sourceSets["test"].runtimeClasspath
     dependsOn("sudachiDict")
-    systemProperty("roma.sudachi", File(sudachiDir, "assets/system_small.dic").path)
+    systemProperty("roma.sudachi", File(sudachiDir, "assets/system_core.dic").path)
     mainClass = (project.findProperty("main") as String?) ?: "roma.core.NetworkCheckKt"
 }

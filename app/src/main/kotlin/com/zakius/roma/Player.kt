@@ -51,6 +51,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.runtime.mutableLongStateOf
 import kotlinx.coroutines.delay
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.TextLayoutResult
@@ -247,10 +249,21 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     }
     val lines = shown.lines
     val synced = shown.synced
-    // Playback.tick fires every 500 ms, too coarse for word timing: poll the position every 50 ms while lyrics show.
-    var pos by remember { mutableLongStateOf(Playback.player.currentPosition) }
-    LaunchedEffect(Unit) { while (true) { pos = Playback.player.currentPosition; delay(50) } }
-    val current = if (synced) lines.indexOfLast { it.startMs <= pos } else -1
+    // The current line and word follow the position once per display frame, at the screen's refresh rate. The
+    // states change only when the line or word does, so a frame without a change costs a position read and two
+    // searches, not a redraw. While paused, the loop checks every 200 ms instead.
+    var current by remember(lines) { mutableIntStateOf(-1) }
+    var currentWord by remember(lines) { mutableIntStateOf(-1) }
+    LaunchedEffect(lines, synced) {
+        if (!synced) return@LaunchedEffect
+        while (true) {
+            if (Playback.player.isPlaying) withFrameNanos { } else delay(200)
+            val pos = Playback.player.currentPosition
+            val line = lines.indexOfLast { it.startMs <= pos }
+            current = line
+            currentWord = lines.getOrNull(line)?.words?.indexOfLast { it.startMs <= pos } ?: -1
+        }
+    }
     val state = rememberLazyListState()
     val showOriginal = Store.bool("lyrics.layer.original", true)
     val showLatin = Store.bool("lyrics.layer.latin", true)
@@ -265,7 +278,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                     .pointerInput(line) { detectTapGestures(onTap = { if (synced) Playback.player.seekTo(line.startMs) }) }
                     .padding(vertical = 8.dp),
             ) {
-                val wordIndex = if (active) line.words.indexOfLast { it.startMs <= pos } else -1
+                val wordIndex = if (active) currentWord else -1
                 // Same weight on every line: bolding the active line widened it and re-wrapped long lines mid-song.
                 val big = MaterialTheme.typography.titleLarge.copy(lineBreak = LYRIC_BREAK)
                 if (showOriginal && line.text.isNotBlank()) {

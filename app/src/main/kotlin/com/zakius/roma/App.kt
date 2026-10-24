@@ -55,12 +55,19 @@ object Store {
     val icu = Icu { id, text -> android.icu.text.Transliterator.getInstance(id).transliterate(text) }
     private lateinit var assets: AssetManager
 
-    // The dictionary is an uncompressed asset (noCompress "dic"), so it is mapped in place from the APK: no copy,
-    // and its 115 MB stay out of the heap.
+    // The dictionary ships compressed (about 80 MB of the APK instead of 202 MB), so the first start unpacks it once to
+    // filesDir; from then on it is memory-mapped from there and stays out of the heap. The file name carries the APK's
+    // asset size, so a new dictionary version replaces the old file.
     val romanizer = Romanizer(icu) {
-        assets.openFd("system_small.dic").use { fd ->
-            FileInputStream(fd.fileDescriptor).channel.use { it.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.length) }
-        }.order(ByteOrder.LITTLE_ENDIAN)
+        val size = assets.open("system_core.dic").use { it.available().toLong() }
+        val file = File(files, "sudachi-core-$size.dic")
+        if (file.length() != size) {
+            files.listFiles { f -> f.name.startsWith("sudachi-") }?.forEach { it.delete() }
+            val tmp = File(files, "sudachi.tmp")
+            assets.open("system_core.dic").use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 16) } }
+            tmp.renameTo(file)
+        }
+        FileInputStream(file).channel.use { it.map(FileChannel.MapMode.READ_ONLY, 0, file.length()) }.order(ByteOrder.LITTLE_ENDIAN)
     }
 
     fun init(c: Context) {

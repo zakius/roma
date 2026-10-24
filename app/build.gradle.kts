@@ -16,8 +16,10 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.1.7"
+        versionCode = 10
+        versionName = "0.1.9"
+        // Phones are arm64; x86_64 is for the emulator. Only androidx's tiny path library is native.
+        ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
     }
 
     buildTypes {
@@ -36,10 +38,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     buildFeatures { compose = true; buildConfig = true }
-    // Stored uncompressed, so Sudachi memory-maps the dictionary straight from the APK.
-    androidResources { noCompress += "dic" }
+    // Only the app's languages: libraries bring strings for about 80 locales.
+    androidResources { localeFilters += setOf("en", "pl") }
     sourceSets["main"].assets.srcDir(project(":core").extra["sudachiAssets"] as File)
-    packaging { resources { excludes += setOf("META-INF/*.md", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module") } }
+    packaging {
+        resources { excludes += setOf("META-INF/*.md", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "kotlin/**", "DebugProbesKt.bin", "META-INF/*.version") }
+        // Native libraries compressed in the APK and unpacked at install (extractNativeLibs), as in tennessine.
+        jniLibs { useLegacyPackaging = true }
+    }
 }
 
 tasks.named("preBuild") { dependsOn(":core:sudachiDict") }
