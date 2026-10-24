@@ -116,7 +116,7 @@ object Playback {
         val source = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(resolving)
         cached = source
         player = ExoPlayer.Builder(c)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(source))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(source).setLoadErrorHandlingPolicy(WaitForNetwork))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -132,6 +132,7 @@ object Playback {
         // seen before, so the first tap doesn't pay for it.
         scope.launch(Dispatchers.IO) { Store.anySong()?.let { s -> runCatching { streamUrl(s.id) } } }
         restore()
+        watchNetwork()
         player.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {
                 tick++
@@ -590,10 +591,53 @@ object Playback {
     /** Runs [f] once the saved queue is back: at once if it already is. */
     fun afterRestore(f: () -> Unit) = if (restoring) restoreWaiters.add(f).let { } else f()
 
-    fun togglePlay() {
-        if (player.playbackState == Player.STATE_ENDED) player.seekTo(0, 0)
-        if (player.playbackState == Player.STATE_IDLE) player.prepare()
-        if (player.isPlaying) player.pause() else player.play()
+    // Pause while buffering (waiting for the network) pauses; Play prepares an idle player and restarts an ended one.
+    fun togglePlay() = androidx.media3.common.util.Util.handlePlayPauseButtonAction(player)
+
+    // ---- Network drops ----
+
+    /** A validated network is up. Changes come from the system's callback, never from polling. */
+    var online by mutableStateOf(true)
+        private set
+
+    /** Playing, but stuck until the network is back: the player shows a quiet note instead of an error. */
+    val waitingForNetwork get() = !online && player.playWhenReady && player.playbackState == Player.STATE_BUFFERING
+
+    private fun watchNetwork() {
+        val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java)
+        cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(n: android.net.Network, caps: android.net.NetworkCapabilities) {
+                val up = caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                main.post {
+                    // Radio that couldn't load while offline loads now.
+                    if (up && !online && player.isPlaying) topUpRadio()
+                    online = up
+                }
+            }
+
+            override fun onLost(n: android.net.Network) { main.post { online = false } }
+        }, main)
+    }
+
+    /**
+     * Without a connection the player keeps playing what it has, then waits, retrying every 2 s for up to 10 min
+     * (an attempt with no network fails at once and costs nothing), and goes on by itself once a retry succeeds. Other
+     * errors keep Media3's usual 3 retries. ponytail: fixed 2 s; a nudge from the network callback would save up to 2 s.
+     */
+    private object WaitForNetwork : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
+        override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long = when {
+            noConnection(info.exception) -> if (info.errorCount <= 300) 2_000 else C.TIME_UNSET
+            info.errorCount > DEFAULT_MIN_LOADABLE_RETRY_COUNT -> C.TIME_UNSET
+            else -> super.getRetryDelayMsFor(info)
+        }
+
+        // The error reaches the player only once retrying gives up (above), not after a fixed count.
+        override fun getMinimumLoadableRetryCount(dataType: Int) = Int.MAX_VALUE
+
+        private fun noConnection(e: Throwable): Boolean = generateSequence(e) { it.cause }.any {
+            it is java.net.UnknownHostException || it is java.net.ConnectException || it is java.net.SocketTimeoutException ||
+                it is java.net.NoRouteToHostException || it is java.net.SocketException || it.message == Streams.NO_CONNECTION
+        }
     }
 
     fun cycleRepeat() {

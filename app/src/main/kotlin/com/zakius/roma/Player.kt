@@ -119,7 +119,9 @@ fun PlayerScreen() {
         Row(Modifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically) {
             Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_shuffle_on), "Shuffle", entry != null, Playback.shuffled) { Playback.toggleShuffle() }
             Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_previous), "Previous", entry != null) { Playback.previous() }
-            Slot(painterResource(if (p.isPlaying) androidx.media3.ui.R.drawable.exo_icon_pause else androidx.media3.ui.R.drawable.exo_icon_play), if (p.isPlaying) "Pause" else "Play", entry != null, iconSize = 48) { Playback.togglePlay() }
+            // Shows what the user asked for: Pause while a song buffers or waits for the network, too.
+            val showPlay = androidx.media3.common.util.Util.shouldShowPlayButton(p)
+            Slot(painterResource(if (showPlay) androidx.media3.ui.R.drawable.exo_icon_play else androidx.media3.ui.R.drawable.exo_icon_pause), if (showPlay) "Play" else "Pause", entry != null, iconSize = 48) { Playback.togglePlay() }
             Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_next), "Next", p.hasNextMediaItem()) { Playback.next() }
             val repeatIcon = when (p.repeatMode) {
                 Player.REPEAT_MODE_ONE -> androidx.media3.ui.R.drawable.exo_icon_repeat_one
@@ -217,6 +219,10 @@ private fun SongView() {
         Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true)
         Spacer(Modifier.height(4.dp))
         Name(roma.core.Text(s.artistOriginal, s.artistLatin), Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true)
+        if (Playback.waitingForNetwork) {
+            Spacer(Modifier.height(8.dp))
+            Text("Waiting for network…", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        }
         Playback.error?.let {
             Spacer(Modifier.height(8.dp))
             Text("Can't play this song: $it", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)

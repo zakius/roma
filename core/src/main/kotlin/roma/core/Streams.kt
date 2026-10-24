@@ -52,7 +52,7 @@ object Streams {
      */
     private val refused = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
     private const val REFUSED_MS = 30_000L
-    private const val NO_CONNECTION = "No connection to YouTube."
+    const val NO_CONNECTION = "No connection to YouTube."
 
     @Synchronized
     private fun start() {
