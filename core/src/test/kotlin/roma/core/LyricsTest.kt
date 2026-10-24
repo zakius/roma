@@ -42,6 +42,13 @@ class LyricsTest {
         assertEquals("Kimi no koe", l.lines[0].latin)
     }
 
+    @Test fun cyrillicLineOverridesSong() {
+        // The song is Ukrainian (і), but ы can't be Ukrainian: that line is read as Russian.
+        val r = Romanizer(jvmIcu)
+        val l = r.romanizeLyrics(Lyrics("t", parseLrc("[00:01.00]Добрий вечір\n[00:02.00]Мы были вместе\n[00:03.00]Добрий день"), true), listOf("Artist"), "x")
+        assertEquals(listOf("Dobryi vechir", "My byli vmeste", "Dobryi den"), l.lines.map { it.latin })
+    }
+
     @Test fun japaneseDecidedPerSong() {
         // A kanji-only line in a song whose other lines have kana is Japanese, even with a Chinese default.
         val r = Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh"))

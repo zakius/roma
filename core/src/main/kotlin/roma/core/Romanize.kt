@@ -426,6 +426,31 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
             }
         }
 
+        private const val RU = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+        private val ALPHABETS = mapOf(
+            "ru" to RU,
+            "kk" to RU + "әғқңөұүһі",
+            "mn" to RU + "өү",
+            "uk" to "абвгґдеєжзиіїйклмнопрстуфхцчшщьюя",
+            "be" to "абвгдеёжзійклмнопрстуўфхцчшыьэюя",
+            "bg" to "абвгдежзийклмнопрстуфхцчшщъьюя",
+            "sr" to "абвгдђежзијклљмнњопрстћуфхцчџш",
+            "mk" to "абвгдѓежзѕијклљмнњопрстќуфхцчџш",
+        )
+
+        /** True when every Cyrillic letter of s belongs to the language's alphabet. */
+        fun cyrillicFits(language: String, s: String): Boolean {
+            val alphabet = ALPHABETS[language] ?: return true
+            return s.lowercase().none { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.CYRILLIC && it !in alphabet }
+        }
+
+        /**
+         * A lyric line's language: the song's, unless the line has a letter that language lacks (a Russian line with ы
+         * in a Ukrainian song); then the line's own. Kazakh contains every Russian letter, so Russian lines in a Kazakh
+         * song stay Kazakh: the outputs differ little and a correction covers the rest.
+         */
+        fun cyrillicLanguageOfLine(line: String, song: String) = if (cyrillicFits(song, line)) song else cyrillicLanguage(line)
+
         private fun hasCyrillic(s: String) = s.codePoints().anyMatch { Character.UnicodeScript.of(it) == Character.UnicodeScript.CYRILLIC }
 
         private val CYRILLIC_NAMES by lazy { (0x400..0x45F).associateBy { Character.getName(it) } }

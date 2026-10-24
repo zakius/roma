@@ -71,7 +71,8 @@ object LyricsProviders {
 
 /**
  * Lines in sentence case. The language is decided once per song: kana in any line makes every line Japanese,
- * and the Cyrillic language comes from the whole lyrics, so a line without Kazakh letters in a Kazakh song is Kazakh.
+ * and the Cyrillic language comes from the whole lyrics, so a line without Kazakh letters in a Kazakh song is Kazakh;
+ * a line with a letter the song's language lacks uses its own (see Romanizer.cyrillicLanguageOfLine).
  */
 fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String): Lyrics {
     val sib = siblings + l.lines.map { it.text }.filter { it.any(Romanizer::isKana) }.take(1)
@@ -79,8 +80,9 @@ fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String):
     return Lyrics(
         l.source,
         l.lines.map { line ->
-            val wordLatin = if (line.words.isEmpty()) emptyList() else parts(line.words.map { it.text }, sib, songId, cyr)
-            val latin = if (line.words.isEmpty()) parts(listOf(line.text), sib, songId, cyr).single() else wordLatin.joinToString("").trim()
+            val lang = Romanizer.cyrillicLanguageOfLine(line.text, cyr)
+            val wordLatin = if (line.words.isEmpty()) emptyList() else parts(line.words.map { it.text }, sib, songId, lang)
+            val latin = if (line.words.isEmpty()) parts(listOf(line.text), sib, songId, lang).single() else wordLatin.joinToString("").trim()
             Line(line.startMs, line.text, line.words, line.translation, latin, wordLatin)
         },
         l.synced,
