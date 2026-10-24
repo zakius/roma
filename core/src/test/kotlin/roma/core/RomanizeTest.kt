@@ -203,4 +203,14 @@ class RomanizeTest {
         // Short queries must match exactly, so the list isn't flooded.
         assertFalse(matches(Song("l", Text("Live", "Live"), emptyList()), "love"))
     }
+
+    @Test fun japaneseFromChineseSources() {
+        // 一 typed for ー after katakana; a real 一 before a kanji stays; an unknown simplified kanji isn't left as is.
+        assertEquals("Me o ubatte burū raito", r.machine("目を奪ってブル一ライト", sentence = true))
+        assertEquals("Me o ubatte burū raito", r.machine("目を奪ってブルーライト", sentence = true))
+        assertEquals("カード一枚", Romanizer.longVowelMarks("カード一枚"))
+        assertFalse(Romanizer.hasNonLatin(r.machine("作词 : R-指定")))
+        assertEquals("Terashitette moonlight", r.machine("照らしてってmoonlight", sentence = true))
+        assertEquals("Burū raito", r.parts(listOf("ブル", "一", "ライト")).joinToString("").trim())
+    }
 }

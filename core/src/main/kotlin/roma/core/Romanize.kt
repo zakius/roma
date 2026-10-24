@@ -61,8 +61,11 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
      * [cyrLang] is the Cyrillic language decided for the whole song; by default it is read from this line.
      */
     fun parts(parts: List<String>, siblings: List<String> = emptyList(), songId: String? = null, cyrLang: String? = null): List<String> {
-        val norm = parts.map(::normalize)
-        val line = norm.joinToString("")
+        // Karaoke splits ブル|一|ライト into separate parts, so the long-vowel fix runs again across the joined line
+        // (it replaces one character with one, so the parts keep their lengths).
+        val joined = longVowelMarks(parts.map(::normalize).joinToString(""))
+        val norm = parts.map(::normalize).runningFold(0) { at, p -> at + p.length }.zipWithNext { a, b -> joined.substring(a, b) }
+        val line = joined
         val override = overrides.filter { it.scope == "song" && it.id == songId }
         val out: MutableList<String> = if (!isJapanese(line, siblings)) {
             val lang = cyrLang ?: cyrillicLanguage(line)
@@ -150,8 +153,11 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
         for (t in tokenizer.tokenize(s)) {
             val surface = t.surface
             val japaneseText = surface.any(::isKana) || hasHan(surface)
+            // A kanji Kuromoji doesn't know (a simplified Chinese 词 in a credit line) has no reading: it goes through
+            // the Chinese path below instead of being left in the output.
+            val unknownHan = t.reading == "*" && hasHan(surface)
             var romaji = when {
-                japaneseText -> {
+                japaneseText && !unknownHan -> {
                     val reading = if (t.reading == "*") toKatakana(surface) else t.reading
                     kana(spoken(reading, t.pronunciation))
                 }
@@ -171,7 +177,8 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
             val subsidiary = t.partOfSpeechLevel2 == "非自立" && t.partOfSpeechLevel1 == "動詞"
             val glue = aux || t.partOfSpeechLevel2 == "接尾" ||
                 subsidiary && prevSurface != "て" && prevSurface != "で" ||
-                (t.partOfSpeechLevel2 == "接続助詞" && (surface == "て" || surface == "で"))
+                (t.partOfSpeechLevel2 == "接続助詞" && (surface == "て" || surface == "で")) ||
+                surface == "って" && (prevSurface == "て" || prevSurface == "で") // 照らしてって: "terashitette"
             val isWord = romaji.firstOrNull()?.isLetterOrDigit() == true
             val space = prevWord && isWord && !glue
             if (title && japaneseText && isWord && !(prevWord && glue) && t.partOfSpeechLevel1 != "助詞") romaji = capitalize(romaji, false)
@@ -472,7 +479,15 @@ class Romanizer(private val icu: Icu, var settings: RomanizeSettings = RomanizeS
          */
         fun normalize(s: String) = Regex("[\\uFF00-\\uFFEF]+").replace(s.replace(Regex("(?<=\\S)（"), " （").replace(Regex("）(?=[^\\s)）])"), "） ")) {
             Normalizer.normalize(it.value, Normalizer.Form.NFKC)
-        }
+        }.let(::longVowelMarks)
+
+        /**
+         * Lyrics typed on Chinese keyboards often write the katakana long-vowel mark ー as the kanji 一 or a dash:
+         * ブル一ライト. After katakana, and not before a kanji (カード一枚 is "one card"), those mean ー.
+         */
+        fun longVowelMarks(s: String) = s
+            .replace(Regex("(?<=[ァ-ヺ])[一—―－‐](?=[ァ-ヺ]|[^\\p{IsHan}]|$)"), "ー")
+            .replace(Regex("(?<=[ァ-ヺ])-(?=[ァ-ヺ])"), "ー")
 
         /** "スピカ - Spica" → "Spica": the Latin form a title carries after " - ", " / " or in parentheses. */
         fun ownLatin(s: String): String? {
