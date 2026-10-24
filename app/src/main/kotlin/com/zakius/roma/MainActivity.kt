@@ -72,7 +72,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 0)
+        // Asking again when it's granted still opens the system's permission activity over ours at every start.
+        val notify = android.Manifest.permission.POST_NOTIFICATIONS
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(notify) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(notify), 0)
         handleLastFm(intent)
         setContent { Theme { Root() } }
     }

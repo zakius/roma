@@ -82,7 +82,7 @@ object Store {
         YouTube.useLoginForBrowse = true
         prefs.getString("visitorData", null)?.let { YouTube.visitorData = it }
         prefs.getString("dataSyncId", null)?.let { YouTube.dataSyncId = it }
-        index.addAll(runCatching { json.decodeFromString<List<Song>>(File(files, "index.json").readText()) }.getOrDefault(emptyList()))
+        indexThread.execute { index.addAll(runCatching { json.decodeFromString<List<Song>>(File(files, "index.json").readText()) }.getOrDefault(emptyList())) }
     }
 
     // Reading version subscribes the calling composable, so it redraws when set() changes a setting.
@@ -208,22 +208,35 @@ object Store {
 
     // ---- Local index: every song that entered the app, searchable by its Latin form ----
 
+    // The index is read, changed and saved only on its own thread, so a tap never waits for it: with 5000 songs, loading
+    // took about 100 ms of app start and each save about 15 ms. Saves that queue up behind each other are written once.
     private val index = ArrayList<Song>()
-    fun anySong(): Song? = index.lastOrNull()
+    private val indexThread = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var saveQueued = false
+
+    /** Blocking: call it off the main thread. */
+    fun anySong(): Song? = indexThread.submit<Song?> { index.lastOrNull() }.get()
 
     fun remember(songs: List<Song>) {
         if (songs.isEmpty()) return
-        val ids = songs.map { it.id }.toSet()
-        synchronized(index) {
+        indexThread.execute {
+            val ids = songs.map { it.id }.toSet()
             index.removeAll { it.id in ids }
             index.addAll(0, songs)
             while (index.size > 5000) index.removeAt(index.size - 1)
-            File(files, "index.json").writeText(json.encodeToString(index.toList()))
+            if (!saveQueued) {
+                saveQueued = true
+                indexThread.execute {
+                    saveQueued = false
+                    File(files, "index.json").writeText(json.encodeToString(index.toList()))
+                }
+            }
         }
     }
 
-    // The stored Latin forms date from when each song was seen; romanize the hits again so they follow today's rules.
-    fun searchLocal(q: String): List<Song> = synchronized(index) {
+    /** Blocking: call it off the main thread. The stored Latin forms date from when each song was seen; the hits are
+     *  romanized again so they follow today's rules. */
+    fun searchLocal(q: String): List<Song> = indexThread.submit<List<Song>> {
         index.mapNotNull { s -> matchDistance(s, q)?.let { s to it } }.sortedBy { it.second }.take(20).map { it.first }
-    }.map { romanizer.again(it) }
+    }.get().map { romanizer.again(it) }
 }
