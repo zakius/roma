@@ -1,6 +1,7 @@
 package roma.core
 
 import com.metrolist.innertube.YouTube
+import com.metrolist.innertubex.models.YouTubeClient.Companion.WEB
 import com.metrolist.innertubex.models.YouTubeClient.Companion.WEB_REMIX
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
@@ -44,6 +45,7 @@ object Streams {
             e.fetchPage()
             e.audioStreams.filter { it.content.isNotEmpty() }.ifEmpty { null }
         } catch (_: Exception) {
+            visitor = null // perhaps refused; the next fast path asks for fresh visitor data
             null
         } finally {
             lean.set(false)
@@ -66,16 +68,30 @@ object Streams {
 private val lean = ThreadLocal.withInitial { false }
 
 /**
+ * The VISIONOS client's visitor data from its last real visitor_id answer, and when it came. NewPipe asks for new
+ * visitor data before every player request; the fast path reuses it for an hour, which saves a round trip per song.
+ */
+@Volatile private var visitor: Pair<String, Long>? = null
+private const val VISITOR_MS = 3600_000L
+private val visitorJson = Regex(""""visitorData":"([^"]+)"""")
+
+/**
  * The fast path's local answers. NewPipe 0.26.5 takes its streams from the VISIONOS client, which also checks
  * playability. It asks the ANDROID client too (its streams need a PoToken we don't send, so they go unused) and
  * the WEB client for metadata and `next`. A minimal answer leaves those fields blank; NewPipe rejects a JSON
  * answer shorter than 50 characters.
  */
 private fun stub(request: Request): String? {
+    // NewPipe reads the WEB client's version from sw.js before building a WEB request (and when that fails, from a
+    // 255 KB search page); the WEB requests are answered here anyway, so InnerTubeX's WEB version does.
+    if (request.url().startsWith("https://www.youtube.com/sw.js")) return """"INNERTUBE_CONTEXT_CLIENT_VERSION":"${WEB.clientVersion}""""
     val body = request.dataToSend()?.let { String(it) } ?: return null
     val client = Regex(""""clientName":"(\w+)"""").find(body)?.groupValues?.get(1)
     val videoId = Regex(""""videoId":"([\w-]+)"""").find(body)?.groupValues?.get(1)
+    val v = visitor
     return when {
+        client == "VISIONOS" && request.url().contains("/visitor_id") && v != null && System.currentTimeMillis() - v.second < VISITOR_MS ->
+            """{"responseContext": {"visitorData": "${v.first}"}}"""
         client == "WEB" -> """{"responseContext": {}, "roma": "WEB metadata and next are not used"}"""
         client == "ANDROID" && request.url().contains("/visitor_id") -> """{"responseContext": {"visitorData": "roma-skipped-android-client"}}"""
         client == "ANDROID" && videoId != null ->
@@ -96,7 +112,11 @@ private class OkHttpDownloader(private val http: OkHttpClient) : Downloader() {
         }
         http.newCall(builder.build()).execute().use { r ->
             if (r.code == 429) throw ReCaptchaException("reCaptcha challenge requested", request.url())
-            return Response(r.code, r.message, r.headers.toMultimap(), r.body.string(), r.request.url.toString())
+            val text = r.body.string()
+            if (r.isSuccessful && request.url().contains("/visitor_id") && request.dataToSend()?.let { String(it) }?.contains(""""clientName":"VISIONOS"""") == true) {
+                visitorJson.find(text)?.let { visitor = it.groupValues[1] to System.currentTimeMillis() }
+            }
+            return Response(r.code, r.message, r.headers.toMultimap(), text, r.request.url.toString())
         }
     }
 }
