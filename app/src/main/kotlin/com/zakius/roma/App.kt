@@ -11,6 +11,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import roma.core.Bans
 import roma.core.Icu
+import roma.core.Item
 import roma.core.LyricsProvider
 import roma.core.LyricsProviders
 import roma.core.Override
@@ -49,6 +50,9 @@ object Store {
         romanizer.settings = romanizeSettings()
         romanizer.overrides = loadOverrides()
         YouTube.cookie = prefs.getString("cookie", null)
+        // InnerTubeX sends the account cookies on browse and next calls (home, radio) only with this on; without it
+        // Home is the anonymous one and never has the personal mixes. Metrolist turns it on too.
+        YouTube.useLoginForBrowse = true
         prefs.getString("visitorData", null)?.let { YouTube.visitorData = it }
         prefs.getString("dataSyncId", null)?.let { YouTube.dataSyncId = it }
         index.addAll(runCatching { json.decodeFromString<List<Song>>(File(files, "index.json").readText()) }.getOrDefault(emptyList()))
@@ -73,6 +77,19 @@ object Store {
     }
 
     val signedIn get() = YouTube.cookie?.contains("SAPISID") == true
+
+    /** Signed out, continuation pages come back empty unless every request carries the same visitor data. */
+    suspend fun ensureVisitorData() {
+        if (YouTube.visitorData != null) return
+        val v = YouTube.visitorData().getOrNull() ?: return
+        YouTube.visitorData = v
+        prefs.edit().putString("visitorData", v).apply() // not set(): that bumps version and reloads every page
+    }
+
+    /** The pinned row's last known mixes, so it isn't empty while Home loads. Null before the first lookup. */
+    var mixes: List<Item>?
+        get() = prefs.getString("home.mixes", null)?.let { runCatching { json.decodeFromString<List<Item>>(it) }.getOrNull() }
+        set(v) = prefs.edit().putString("home.mixes", json.encodeToString(v)).apply()
 
     // ---- Romanization ----
 
