@@ -54,6 +54,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import roma.core.LastFm
+import coil3.toBitmap
+import coil3.request.allowHardware
 
 /** A page opened from a list: an album, playlist or artist, or the sign-in page. */
 class Page(val kind: String, val id: String)
@@ -137,12 +139,51 @@ class MainActivity : ComponentActivity() {
 fun Theme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
     val c = LocalContext.current
-    val scheme = when {
+    var scheme = when {
         Build.VERSION.SDK_INT >= 31 -> if (dark) dynamicDarkColorScheme(c) else dynamicLightColorScheme(c)
         dark -> darkColorScheme()
         else -> lightColorScheme()
     }
+    // Options, both off by default. True black: OLED pixels that are off draw no power. Artwork colours: the accent
+    // follows the playing song's art (one 24 px decode per song).
+    if (dark && Store.bool("ui.trueBlack", false)) {
+        val black = androidx.compose.ui.graphics.Color.Black
+        scheme = scheme.copy(background = black, surface = black, surfaceContainer = black, surfaceContainerLowest = black)
+    }
+    if (Store.bool("ui.artColors", false)) {
+        Playback.tick
+        val thumb = Playback.shown()?.thumb
+        var seed by androidx.compose.runtime.remember { mutableStateOf<Int?>(null) }
+        androidx.compose.runtime.LaunchedEffect(thumb) { seed = withContext(Dispatchers.IO) { thumb?.let { artColor(c, it) } } }
+        seed?.let { scheme = accentScheme(scheme, it, dark) }
+    }
     MaterialTheme(colorScheme = scheme) { Surface(Modifier.fillMaxSize(), content = content) }
+}
+
+/** The art's most colourful average: pixels weighted by saturation, so a grey background doesn't wash it out. */
+private suspend fun artColor(c: android.content.Context, thumb: String): Int? {
+    val request = coil3.request.ImageRequest.Builder(c).data(bigThumb(thumb)).size(24).allowHardware(false).build() // pixels are read below
+    val bitmap = (coil3.SingletonImageLoader.get(c).execute(request) as? coil3.request.SuccessResult)?.image?.toBitmap() ?: return null
+    var r = 0.0; var g = 0.0; var b = 0.0; var w = 0.0
+    val hsl = FloatArray(3)
+    for (x in 0 until bitmap.width) for (y in 0 until bitmap.height) {
+        val px = bitmap.getPixel(x, y)
+        androidx.core.graphics.ColorUtils.colorToHSL(px, hsl)
+        val weight = (hsl[1] * (1 - kotlin.math.abs(hsl[2] * 2 - 1))).toDouble() // saturated and not near black or white
+        r += android.graphics.Color.red(px) * weight; g += android.graphics.Color.green(px) * weight; b += android.graphics.Color.blue(px) * weight; w += weight
+    }
+    if (w < bitmap.width * bitmap.height * 0.05) return null // a grey picture: keep the usual colours
+    return android.graphics.Color.rgb((r / w).toInt(), (g / w).toInt(), (b / w).toInt())
+}
+
+/** The scheme's accents in the art's hue, at the lightness the theme needs for contrast. */
+private fun accentScheme(s: androidx.compose.material3.ColorScheme, seed: Int, dark: Boolean): androidx.compose.material3.ColorScheme {
+    val hsl = FloatArray(3)
+    androidx.core.graphics.ColorUtils.colorToHSL(seed, hsl)
+    fun tone(sat: Float, light: Float) = androidx.compose.ui.graphics.Color(androidx.core.graphics.ColorUtils.HSLToColor(floatArrayOf(hsl[0], sat, light)))
+    val sat = hsl[1].coerceIn(0.35f, 0.8f)
+    return if (dark) s.copy(primary = tone(sat, 0.75f), onPrimary = tone(sat, 0.15f), secondaryContainer = tone(sat * 0.6f, 0.25f), onSecondaryContainer = tone(sat, 0.9f), inversePrimary = tone(sat, 0.4f))
+    else s.copy(primary = tone(sat, 0.38f), onPrimary = tone(sat, 0.98f), secondaryContainer = tone(sat * 0.6f, 0.88f), onSecondaryContainer = tone(sat, 0.15f), inversePrimary = tone(sat, 0.8f))
 }
 
 @Composable

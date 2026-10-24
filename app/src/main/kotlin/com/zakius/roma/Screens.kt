@@ -859,6 +859,8 @@ fun SettingsScreen() {
         Options("Lists", "display.list", "both", MODES)
         Options("Player", "display.player", "both", MODES)
         Switch1("Left-handed player controls", "ui.leftHanded", false)
+        Switch1("True black in dark mode (saves power on OLED screens)", "ui.trueBlack", false)
+        Switch1("Accent colour from the song's artwork", "ui.artColors", false)
 
         Header("Romanization")
         Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true)
