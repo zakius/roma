@@ -31,12 +31,6 @@ import kotlin.concurrent.thread
 class App : Application() {
     override fun onCreate() {
         super.onCreate()
-        roma.core.NetLog.mark("app.onCreate")
-        coil3.SingletonImageLoader.setSafe { c ->
-            coil3.ImageLoader.Builder(c).components {
-                add(coil3.network.okhttp.OkHttpNetworkFetcherFactory(callFactory = { okhttp3.OkHttpClient.Builder().eventListenerFactory(roma.core.NetLog.factory("coil")).build() }))
-            }.build()
-        }
         Store.init(this)
         Playback.init(this)
         thread(name = "sudachi") {

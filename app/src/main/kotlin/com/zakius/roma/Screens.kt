@@ -357,7 +357,6 @@ fun HomeScreen() {
         while (more) {
             if (!looking) snapshotFlow { list.layoutInfo.run { (visibleItemsInfo.lastOrNull()?.index ?: 0) >= totalItemsCount - 3 } }.first { it }
             val from = cont
-            roma.core.NetLog.mark("home.start $page")
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     Store.ensureVisitorData()
@@ -370,7 +369,6 @@ fun HomeScreen() {
                 }
             }
             val (next, shelves) = result.getOrElse { failed = it.message ?: it.toString(); return@LaunchedEffect }
-            roma.core.NetLog.mark("home.end $page")
             page++
             cont = next
             more = next != null
@@ -480,13 +478,11 @@ fun SearchScreen() {
                 item { Header("YouTube Music") }
             }
             Loader(listOf(submitted, filter, asTyped, Store.version), {
-                roma.core.NetLog.mark("search.start")
                 val r = YouTube.search(submitted, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter].second).getOrThrow()
                 val items = r.items
                     .filter { it !is SongItem || !it.isVideoSong || filter != 0 }
                     .mapNotNull { Store.romanizer.item(it) }
                     .also { list -> Store.remember(list.mapNotNull { it.song }) }
-                roma.core.NetLog.mark("search.end")
                 Found(items, r.correctedQuery, r.autoCorrected, r.originalParams)
             }, loading = {
                 LazyColumn(Modifier.fillMaxSize()) {

@@ -347,7 +347,7 @@ fun withTranslation(lines: List<Line>, translationLrc: String?): List<Line> {
 
 // ---- Providers ----
 
-private val http = OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).eventListenerFactory(NetLog.factory("lyrics")).build()
+private val http = OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
 
 /** Throws on an HTTP error, so a provider that couldn't answer isn't taken for one that has no lyrics. */
 private fun get(url: String, vararg headers: Pair<String, String>): String = call(Request.Builder().url(url), headers)

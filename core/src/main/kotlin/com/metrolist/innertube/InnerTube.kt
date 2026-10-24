@@ -162,7 +162,6 @@ class InnerTube(
             engine {
                 config {
                     connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
-                    eventListenerFactory(roma.core.NetLog.factory("innertube"))
                     connectTimeout(30, TimeUnit.SECONDS)
                     readTimeout(60, TimeUnit.SECONDS)
                     writeTimeout(60, TimeUnit.SECONDS)

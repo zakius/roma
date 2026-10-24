@@ -99,7 +99,7 @@ object Playback {
     fun init(c: Context) {
         appContext = c.applicationContext
         val cache = SimpleCache(File(c.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(1L shl 30), StandaloneDatabaseProvider(c))
-        val http = OkHttpDataSource.Factory(OkHttpClient.Builder().eventListenerFactory(roma.core.NetLog.factory("media3")).build())
+        val http = OkHttpDataSource.Factory(OkHttpClient())
         // Media items carry roma://<videoId>; the stream URL is looked up only when bytes are needed and not cached.
         val resolving = ResolvingDataSource.Factory(http) { spec ->
             if (spec.uri.scheme != "roma") spec else spec.withUri(Uri.parse(streamUrl(spec.uri.host!!)))
@@ -118,11 +118,6 @@ object Playback {
         // Media3 prepares the next song in the queue in the background (its first 5 s), so an automatic transition
         // or a skip from the notification finds it ready.
         player.preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
-        player.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
-            override fun onAudioPositionAdvancing(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, playoutStartSystemTimeMs: Long) {
-                println("ROMALAT MARK playout wallStart=$playoutStartSystemTimeMs up=${System.nanoTime() / 1_000_000} wall=${System.currentTimeMillis()}")
-            }
-        })
         liked = runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet())
         syncLikes()
         // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
@@ -256,7 +251,6 @@ object Playback {
 
     private fun play(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
         if (songs.isEmpty()) return
-        roma.core.NetLog.mark("tap.play ${songs[start].id}")
         Store.remember(songs)
         val song = songs[start]
         pendingJob?.cancel()
@@ -266,14 +260,12 @@ object Playback {
                 withTimeoutOrNull(8_000) { runCatching { precache(song.id) } } // on failure the player's own error handling takes over
             }
             pending = null
-            roma.core.NetLog.mark("precached ${song.id}")
             switchTo(songs, start, mix, mixNext)
         }
     }
 
     /** Next, Previous and queue taps: the current song keeps playing until the target's first bytes are cached. */
     fun skipTo(index: Int) {
-        roma.core.NetLog.mark("tap.skip $index")
         val song = (player.getMediaItemAt(index).localConfiguration?.tag as? Entry)?.song ?: return
         pendingJob?.cancel()
         pending = song

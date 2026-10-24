@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
 class AudioSource(val url: String, val mimeType: String, val bitrate: Int)
 
 object Streams {
-    private val http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).eventListenerFactory(NetLog.factory("newpipe")).build()
+    private val http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
     private var started = false
 
     @Synchronized
@@ -37,7 +37,6 @@ object Streams {
      */
     fun audio(videoId: String, full: Boolean = false): AudioSource {
         start()
-        NetLog.mark("audio.start $videoId")
         val url = "https://music.youtube.com/watch?v=$videoId"
         val streams = (if (full) null else try {
             lean.set(true)
@@ -54,7 +53,6 @@ object Streams {
         val best = streams
             .sortedWith(compareBy<AudioStream>({ it.audioTrackType != null && it.audioTrackType?.name != "ORIGINAL" }, { -it.averageBitrate }))
             .firstOrNull() ?: error("No audio stream for $videoId")
-        NetLog.mark("audio.end $videoId")
         return AudioSource(best.content, best.format?.mimeType ?: "audio/*", best.averageBitrate)
     }
 
