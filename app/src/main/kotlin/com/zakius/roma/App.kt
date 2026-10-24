@@ -58,8 +58,10 @@ object Store {
         index.addAll(runCatching { json.decodeFromString<List<Song>>(File(files, "index.json").readText()) }.getOrDefault(emptyList()))
     }
 
-    fun str(key: String, def: String) = prefs.getString(key, def) ?: def
-    fun bool(key: String, def: Boolean) = prefs.getBoolean(key, def)
+    // Reading version subscribes the calling composable, so it redraws when set() changes a setting.
+    // SharedPreferences alone isn't observable, and skipped composables (Switch1, Options) never saw the change.
+    fun str(key: String, def: String): String { version; return prefs.getString(key, def) ?: def }
+    fun bool(key: String, def: Boolean): Boolean { version; return prefs.getBoolean(key, def) }
 
     fun set(key: String, value: Any?) {
         prefs.edit().apply {
