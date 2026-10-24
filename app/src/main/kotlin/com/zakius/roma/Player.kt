@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ThumbUp
@@ -116,16 +115,20 @@ fun PlayerScreen() {
             }
             Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != Player.REPEAT_MODE_OFF) { Playback.cycleRepeat() }
         }
-        // Extra distance so a tap meant for shuffle can't land on Never.
         Spacer(Modifier.height(28.dp))
+        // More (song menu, where Ban lives) sits at the outer edge with two empty slots after it; Like at the other
+        // edge, under the thumb. Left-handed mode mirrors the row. Slots never move otherwise.
         Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
-            Slot(rememberVectorPainter(Icons.Default.Close), "Never", entry != null, label = "Never") { Playback.never() }
-            Spacer(Modifier.weight(1f)) // deliberately empty: no icon, no label, not tappable
-            Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics") { view = if (view == "lyrics") "song" else "lyrics" }
-            Slot(rememberVectorPainter(Icons.Default.List), "Queue", entry != null, view == "queue", label = "Queue") { view = if (view == "queue") "song" else "queue" }
-            Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true }
             val liked = entry?.song?.id in Playback.liked
-            Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), if (liked) "Unlike" else "Like", entry != null && Store.signedIn, liked, label = "Like") { Playback.toggleLike() }
+            val slots: List<@Composable RowScope.() -> Unit> = listOf(
+                { Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true } },
+                { Spacer(Modifier.weight(1f)) }, // deliberately empty: no icon, no label, not tappable
+                { Spacer(Modifier.weight(1f)) },
+                { Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics") { view = if (view == "lyrics") "song" else "lyrics" } },
+                { Slot(rememberVectorPainter(Icons.Default.List), "Queue", entry != null, view == "queue", label = "Queue") { view = if (view == "queue") "song" else "queue" } },
+                { Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), if (liked) "Unlike" else "Like", entry != null && Store.signedIn, liked, label = "Like") { Playback.toggleLike() } },
+            )
+            (if (Store.bool("ui.leftHanded", false)) slots.reversed() else slots).forEach { it() }
         }
     }
     if (menuOpen && entry != null) SongMenu(entry.song, queueIndex = null) { menuOpen = false }

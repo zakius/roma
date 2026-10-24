@@ -613,6 +613,7 @@ fun SettingsScreen() {
         Header("Display")
         Options("Lists", "display.list", "both", MODES)
         Options("Player", "display.player", "both", MODES)
+        Switch1("Left-handed player controls", "ui.leftHanded", false)
 
         Header("Romanization")
         Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true)

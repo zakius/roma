@@ -80,16 +80,17 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 ```
 [ seek bar ]
 [ shuffle ] [ prev ] [ PLAY/PAUSE ] [ next ] [ repeat ]
-[ Never ] [ (empty, no label) ] [ Lyrics ] [ Queue ] [ More ] [ Like ]
+[ More ] [ (empty) ] [ (empty) ] [ Lyrics ] [ Queue ] [ Like ]
 ```
 
-- The action row has 6 equal slots, each at least 48 dp. Slot 2 is deliberately empty: no icon, no label, not tappable. Its purpose is distance from Never.
-- Leave extra vertical space between the playback row and the action row, so a tap meant for shuffle can't hit Never.
-- Never bans the song. It shows a "Banned · Undo" bar for about 5 s. To ban the artist, use More.
+- The action row has 6 equal slots, each at least 48 dp. Slots 2 and 3 are deliberately empty: no icon, no label, not tappable. They keep More (which holds Ban) away from the other buttons.
+- Left-handed mode (setting) mirrors the action row: Like on the left, More on the right. Nothing else moves.
+- Leave extra vertical space between the playback row and the action row.
+- The Never button was removed (user, 2026-10-24). Ban song / Ban artist live in More; banning the playing song skips it and shows a "Banned · Undo" bar for about 5 s.
 - Lyrics and Queue are toggles that swap the upper area. The selected one is highlighted. Lyrics is dimmed when no provider has lyrics.
 - Like is always the rightmost slot.
 - No mini player. The bottom nav has a Player tab to get back to the player.
-- Notification / lock screen (MediaSession): prev, play/pause, next, Like as a custom action. Never is not there (the system places those buttons, so its gap can't be guaranteed). Title = Latin form; artist line = artist + original title.
+- Notification / lock screen (MediaSession): prev, play/pause, next, Like as a custom action. No ban button there. Title = Latin form; artist line = artist + original title.
 - The ⋯ menu on a song has the same items in the same order everywhere.
 - Bottom nav: Home, Search, Library, Player, Settings, in a fixed order. Player is dimmed when nothing is loaded.
 
