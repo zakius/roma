@@ -22,10 +22,10 @@ fun main() = runBlocking {
     check(n > 1000)
 
     // The fallback alone (as when YouTube refuses NewPipe's client): the same song through InnerTubeX, read at the
-    // start and past 1 MB, where a stream that needs a PoToken is cut off. Then the age-restricted case, for its reason.
-    Streams.skipNewPipe = true
+    // start and past 1 MB, where a stream that needed a PoToken would be cut off. The JVM has no PoToken minter (it
+    // needs a WebView), so this exercises InnerTubeX's token-free clients only.
     val t0 = System.currentTimeMillis()
-    val fb = Streams.audio(song.id)
+    val fb = InnerTubeXStreams.audio(song.id)
     println("fallback: ${fb.mimeType} ${fb.bitrate} bps in ${System.currentTimeMillis() - t0} ms")
     for (range in listOf("0-65535", "1500000-1565535")) {
         val f = URI(fb.url).toURL().openConnection() as HttpURLConnection
@@ -34,8 +34,14 @@ fun main() = runBlocking {
         println("fallback stream $range: HTTP ${f.responseCode}, read $got bytes")
         check(got > 1000)
     }
-    println("fallback, age-restricted x8VYWazR5mE: " + runCatching { Streams.audio("x8VYWazR5mE").mimeType }.getOrElse { "refused: ${it.message}" })
-    Streams.skipNewPipe = false
+    // Age-restricted: refused signed out. With ROMA_COOKIE set (a signed-in music.youtube.com cookie, never commit
+    // or log it) InnerTubeX retries with the account; without a PoToken only token-free clients can answer.
+    val cookie = System.getenv("ROMA_COOKIE")?.takeIf { it.isNotBlank() }
+    if (cookie != null) YouTube.cookie = cookie
+    val age = runCatching { InnerTubeXStreams.audio("x8VYWazR5mE") }
+    println("fallback, age-restricted x8VYWazR5mE, " + (if (cookie != null) "signed in: " else "signed out: ") +
+        age.fold({ "${it.mimeType} ${it.bitrate} bps" }, { "refused: ${it.message}" }))
+    YouTube.cookie = null
 
     // Lyrics providers, each on its own, with the song's original metadata, then the rule that picks one.
     for (query in listOf("YOASOBI 夜に駆ける", "米津玄師 Lemon", "The Weeknd Blinding Lights", "周杰倫 晴天")) {

@@ -35,8 +35,11 @@ object Streams {
     private val http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
     private var started = false
 
-    /** Skips both NewPipe paths, so only the InnerTubeX fallback runs. For testing the fallback; off in releases. */
-    @Volatile var skipNewPipe = false
+    /**
+     * Testing only, off in releases: acts as if YouTube refused the VISIONOS client, as it does for some songs on some
+     * networks. Both NewPipe paths are skipped (they use VISIONOS) and InnerTubeX doesn't ask it either.
+     */
+    @Volatile var refuseVisionOs = false
 
     /** The path that last found a stream for each song, tried first next time. In memory only. */
     private val worked = java.util.concurrent.ConcurrentHashMap<String, Path>()
@@ -71,12 +74,12 @@ object Streams {
         val failures = mutableListOf<Exception>()
         for (path in order.distinct()) {
             if (path == Path.FAST && full) continue
-            if (path != Path.INNERTUBEX && skipNewPipe) continue
+            if (path != Path.INNERTUBEX && refuseVisionOs) continue
             try {
                 val a = when (path) {
                     Path.FAST -> fast(videoId)
                     Path.FULL -> best(videoId, StreamInfo.getInfo(ServiceList.YouTube, watchUrl(videoId)).audioStreams)
-                    Path.INNERTUBEX -> InnerTubeXStreams.audio(videoId)
+                    Path.INNERTUBEX -> InnerTubeXStreams.audio(videoId, if (refuseVisionOs) setOf("VISIONOS") else emptySet())
                 }
                 worked[videoId] = path
                 return a
@@ -203,14 +206,16 @@ private class OkHttpDownloader(private val http: OkHttpClient) : Downloader() {
  * The fallback: InnerTubeX's extractor, as Metrolist uses it. It rolls over its own client list (VISIONOS 0.1 with
  * visitor data from a watch page, the embedded web player, others) and solves signatures with QuackJS and the
  * cipher hints from [CIPHER_CONFIG]. Account cookies ([com.metrolist.innertube.YouTube.cookie]) go with clients
- * that accept them. Without a PoToken provider it only picks clients that need no PoToken: the music web client
- * (WEB_REMIX) answers, but its stream stops after about 1 MB without one.
+ * that accept them; signed in, it retries age-restricted songs with an authenticated watch page. Clients that need
+ * a PoToken (the music web client WEB_REMIX, the only one that plays age-restricted songs for an account without
+ * Premium) are used only with a [tokenProvider]: without a token their streams stop after about 1 MB.
  */
 object InnerTubeXStreams {
     private const val CIPHER_CONFIG = "https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/player_configs.json"
 
     /** Hands PoTokens to the clients that need one (a WebView BotGuard generator in the app); none by default. */
     @Volatile var tokenProvider: TokenProvider? = null
+        set(value) { field = value; bundle = null }
 
     private class Bundle(val generation: Long, val extractor: InnerTubeExtractor)
     @Volatile private var bundle: Bundle? = null
@@ -238,10 +243,11 @@ object InnerTubeXStreams {
     }
 
     /** Blocking. Throws [StreamResolveException] with a plain reason ("This track is age-restricted.") on refusal. */
-    fun audio(videoId: String): AudioSource = runBlocking {
+    fun audio(videoId: String, excludedClients: Set<String> = emptySet()): AudioSource = runBlocking {
         val hints = ContentHints().withStreamCapabilities(false, false, true) // direct URLs only: no HLS, no SABR
-        val s = extractor().extract(videoId, hints, emptySet(), AudioQuality.HIGH, generateClientPlaybackNonce())
+        val s = extractor().extract(videoId, hints, excludedClients, AudioQuality.HIGH, generateClientPlaybackNonce())
             ?: throw StreamResolveException(StreamResolveException.Reason.NO_PLAYABLE_STREAM, "No playable stream found for this track.", null, null)
+        println("roma streams: $videoId via InnerTubeX ${s.profileId ?: s.clientName}") // which client, for logcat; no tokens
         s.loudnessDb?.let { Streams.putLoudness(videoId, it.toFloat()) }
         AudioSource(s.audioUrl, s.mimeType ?: "audio/*", s.bitrate ?: 0)
     }
