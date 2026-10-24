@@ -54,6 +54,8 @@ import roma.core.Translation
 import roma.core.Scrobble
 import roma.core.ScrobbleQueue
 import roma.core.Song
+import roma.core.InnerTubeXStreams
+import roma.core.StreamException
 import roma.core.Streams
 import roma.core.again
 import roma.core.filterMix
@@ -102,6 +104,8 @@ object Playback {
 
     fun init(c: Context) {
         appContext = c.applicationContext
+        Streams.refuseVisionOs = BuildConfig.REFUSE_VISIONOS
+        InnerTubeXStreams.tokenProvider = PoTokens(c)
         val cache = SimpleCache(File(c.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(1L shl 30), StandaloneDatabaseProvider(c))
         val http = OkHttpDataSource.Factory(OkHttpClient())
         // Media items carry roma://<videoId>; the stream URL is looked up only when bytes are needed and not cached.
@@ -166,7 +170,9 @@ object Playback {
                     player.play()
                     return
                 }
-                error = e.cause?.message ?: e.errorCodeName
+                // A failed lookup carries its reason in plain words; Media3 may wrap it in its own exceptions.
+                error = generateSequence<Throwable>(e) { it.cause }.firstNotNullOfOrNull { it as? StreamException }?.message
+                    ?: e.cause?.message ?: e.errorCodeName
             }
         })
         scope.launch {

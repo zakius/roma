@@ -16,8 +16,11 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.1.19"
+        versionCode = 21
+        versionName = "0.1.20"
+        // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
+        // so songs play through InnerTubeX's other clients. Never set for a release.
+        buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
     }
 
     // One APK for both: phones are arm64, the emulator x86_64. The only native code is androidx's tiny path library
