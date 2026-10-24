@@ -10,6 +10,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -139,7 +142,7 @@ private val SIZE_S = Regex("=s\\d+")
 @Composable
 fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: () -> Unit, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
+        Modifier.fillMaxWidth().lookUpOnPress(s).clickable(onClick = onClick).padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(shownThumb(s.thumb, 48.dp), null, Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
@@ -156,7 +159,7 @@ fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: 
 
 @Composable
 fun ItemRow(item: Item, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().lookUpOnPress(item.playable).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         AsyncImage(shownThumb(item.thumb, 56.dp), null, Modifier.size(56.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(4.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -168,7 +171,7 @@ fun ItemRow(item: Item, onClick: () -> Unit) {
 
 @Composable
 private fun Card(item: Item, onClick: () -> Unit) {
-    Column(Modifier.width(140.dp).clickable(onClick = onClick).padding(6.dp)) {
+    Column(Modifier.width(140.dp).lookUpOnPress(item.playable).clickable(onClick = onClick).padding(6.dp)) {
         AsyncImage(shownThumb(item.thumb, 128.dp), null, Modifier.size(128.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
         Spacer(Modifier.height(4.dp))
         Name(item.title, Store.listMode, MaterialTheme.typography.bodyMedium)
@@ -176,11 +179,19 @@ private fun Card(item: Item, onClick: () -> Unit) {
     }
 }
 
-/** What tapping a card or row does: a song plays (radio follows), anything else opens its page. */
+/** The song a tap on this card or row plays; null when the tap opens a page. */
+private val Item.playable get() = song?.takeIf { kind == "song" }
+
+/** Starts the song's stream lookup when a finger lands on its row, so it is under way before the tap is recognized. */
+private fun Modifier.lookUpOnPress(s: Song?) = if (s == null) this else pointerInput(s.id) {
+    awaitEachGesture { awaitFirstDown(requireUnconsumed = false); Playback.touched(s) }
+}
+
 /** A song plays alone and YouTube's autoplay follows; anything else opens its page. */
 fun openItem(item: Item) {
-    if (item.kind == "song" && item.song != null) {
-        Playback.play(listOf(item.song!!))
+    val s = item.playable
+    if (s != null) {
+        Playback.play(listOf(s))
         Nav.tab = TAB_PLAYER
     } else Nav.open(Page(item.kind, item.id))
 }

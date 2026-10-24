@@ -1,9 +1,6 @@
 package roma.core
 
-import com.metrolist.innertube.YouTube
 import com.metrolist.innertubex.models.YouTubeClient.Companion.WEB
-import com.metrolist.innertubex.models.YouTubeClient.Companion.WEB_REMIX
-import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.schabi.newpipe.extractor.NewPipe
@@ -56,11 +53,15 @@ object Streams {
         return AudioSource(best.content, best.format?.mimeType ?: "audio/*", best.averageBitrate)
     }
 
-    /** YouTube's loudness of the track against its reference level, in dB; positive means louder. Best effort, blocking. */
-    fun loudness(videoId: String): Float? = runBlocking {
-        YouTube.player(videoId, client = WEB_REMIX).getOrNull()?.playerConfig?.audioConfig?.loudnessDb?.toFloat()
-    }
+    /**
+     * YouTube's loudness of the track against its reference level, in dB; positive means louder. Read from the player
+     * response of the last [audio] lookup of this video, so it costs no request of its own; null if it had none.
+     */
+    fun loudness(videoId: String): Float? = loudnessDb[videoId]
 }
+
+private val loudnessDb = java.util.concurrent.ConcurrentHashMap<String, Float>()
+private val loudnessJson = Regex(""""loudnessDb":(-?[\d.]+)""")
 
 /** Set while [Streams.audio] takes its fast path, on that thread. */
 private val lean = ThreadLocal.withInitial { false }
@@ -111,6 +112,11 @@ private class OkHttpDownloader(private val http: OkHttpClient) : Downloader() {
         http.newCall(builder.build()).execute().use { r ->
             if (r.code == 429) throw ReCaptchaException("reCaptcha challenge requested", request.url())
             val text = r.body.string()
+            if (r.isSuccessful && request.url().contains("/player")) {
+                val id = request.dataToSend()?.let { Regex(""""videoId":"([\w-]+)""").find(String(it)) }?.groupValues?.get(1)
+                val db = loudnessJson.find(text)?.groupValues?.get(1)?.toFloatOrNull()
+                if (id != null && db != null) loudnessDb[id] = db
+            }
             if (r.isSuccessful && request.url().contains("/visitor_id") && request.dataToSend()?.let { String(it) }?.contains(""""clientName":"VISIONOS"""") == true) {
                 visitorJson.find(text)?.let { visitor = it.groupValues[1] to System.currentTimeMillis() }
             }

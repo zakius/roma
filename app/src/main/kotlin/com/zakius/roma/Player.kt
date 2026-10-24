@@ -67,6 +67,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
+import androidx.compose.ui.platform.LocalContext
 import coil3.compose.AsyncImage
 import roma.core.Line
 import roma.core.Lyrics
@@ -204,7 +205,13 @@ private fun SongView() {
     Playback.tick
     val s = Playback.shown() ?: return Centered("Nothing playing")
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        AsyncImage(s.thumb?.let(::bigThumb), null, Modifier.weight(1f, fill = false).aspectRatio(1f).clip(RoundedCornerShape(8.dp)))
+        // Until the large art arrives, the list's thumbnail of this song (row or card size) stands in, if it's in memory.
+        val context = LocalContext.current
+        val small = listOf(shownThumb(s.thumb, 48.dp), shownThumb(s.thumb, 56.dp), shownThumb(s.thumb, 128.dp))
+        val memory = coil3.SingletonImageLoader.get(context).memoryCache
+        val placeholder = small.firstOrNull { it != null && memory?.get(coil3.memory.MemoryCache.Key(it)) != null }
+        val art = coil3.request.ImageRequest.Builder(context).data(s.thumb?.let(::bigThumb)).placeholderMemoryCacheKey(placeholder).build()
+        AsyncImage(art, null, Modifier.weight(1f, fill = false).aspectRatio(1f).clip(RoundedCornerShape(8.dp)))
         Spacer(Modifier.height(16.dp))
         Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true)
         Spacer(Modifier.height(4.dp))
