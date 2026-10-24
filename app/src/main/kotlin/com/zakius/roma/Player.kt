@@ -114,9 +114,9 @@ fun PlayerScreen() {
         SeekBar()
         Row(Modifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically) {
             Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_shuffle_on), "Shuffle", entry != null, Playback.shuffled) { Playback.toggleShuffle() }
-            Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_previous), "Previous", entry != null) { p.seekToPrevious() }
+            Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_previous), "Previous", entry != null) { Playback.previous() }
             Slot(painterResource(if (p.isPlaying) androidx.media3.ui.R.drawable.exo_icon_pause else androidx.media3.ui.R.drawable.exo_icon_play), if (p.isPlaying) "Pause" else "Play", entry != null, iconSize = 48) { Playback.togglePlay() }
-            Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_next), "Next", p.hasNextMediaItem()) { p.seekToNextMediaItem() }
+            Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_next), "Next", p.hasNextMediaItem()) { Playback.next() }
             val repeatIcon = when (p.repeatMode) {
                 Player.REPEAT_MODE_ONE -> androidx.media3.ui.R.drawable.exo_icon_repeat_one
                 Player.REPEAT_MODE_ALL -> androidx.media3.ui.R.drawable.exo_icon_repeat_all
@@ -234,7 +234,7 @@ private fun QueueView() {
                 Text(header, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             } else {
                 val e = all[i]
-                SongRow(e.song, highlight = i == cur, extra = e.song.reason, onMenu = { menuFor = i }) { Playback.player.seekTo(i, 0) }
+                SongRow(e.song, highlight = i == cur, extra = e.song.reason, onMenu = { menuFor = i }) { Playback.skipTo(i) }
             }
         }
     }

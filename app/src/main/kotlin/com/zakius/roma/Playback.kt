@@ -112,8 +112,12 @@ object Playback {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays.
+            // (The next song's preloading is set right after build, below.)
             .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 50_000, 500, 2_000).build())
             .build()
+        // Media3 prepares the next song in the queue in the background (its first 5 s), so an automatic transition
+        // or a skip from the notification finds it ready.
+        player.preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
         liked = runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet())
         syncLikes()
         // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
@@ -122,6 +126,7 @@ object Playback {
         player.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {
                 tick++
+                if (p.isPlaying) startSideWork()
             }
 
             override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
@@ -133,9 +138,11 @@ object Playback {
                 }
                 applyLoudness(e.song.id)
                 startedTrack()
-                loadLyrics(e.song)
-                topUpRadio()
-                prefetchNext()
+                sideWorkFor = e.song.id
+                // Everything else waits until the song is audible (startSideWork), so the stream has the network to
+                // itself; if it never starts (error, paused right away), it runs after 4 s anyway.
+                val id = e.song.id
+                main.postDelayed({ if (sideWorkFor == id) startSideWork() }, 4_000)
             }
 
             override fun onPlayerError(e: PlaybackException) {
@@ -242,7 +249,6 @@ object Playback {
         val song = songs[start]
         pendingJob?.cancel()
         pending = song
-        loadLyrics(song)
         pendingJob = scope.launch {
             withContext(Dispatchers.IO) {
                 withTimeoutOrNull(8_000) { runCatching { precache(song.id) } } // on failure the player's own error handling takes over
@@ -250,6 +256,39 @@ object Playback {
             pending = null
             switchTo(songs, start, mix, mixNext)
         }
+    }
+
+    /** Next, Previous and queue taps: the current song keeps playing until the target's first bytes are cached. */
+    fun skipTo(index: Int) {
+        val song = (player.getMediaItemAt(index).localConfiguration?.tag as? Entry)?.song ?: return
+        pendingJob?.cancel()
+        pending = song
+        pendingJob = scope.launch {
+            withContext(Dispatchers.IO) { withTimeoutOrNull(8_000) { runCatching { precache(song.id) } } }
+            pending = null
+            if (index < player.mediaItemCount) player.seekTo(index, 0)
+        }
+    }
+
+    fun next() {
+        if (player.hasNextMediaItem()) skipTo(player.nextMediaItemIndex)
+    }
+
+    /** Like the system's: past 3 s, back to the start of this song; earlier, the song before. */
+    fun previous() {
+        if (player.currentPosition > 3_000 || !player.hasPreviousMediaItem()) player.seekTo(0) else skipTo(player.previousMediaItemIndex)
+    }
+
+    // The song whose lyrics, radio top-up and next-song prefetch still wait for playback to start.
+    private var sideWorkFor: String? = null
+
+    private fun startSideWork() {
+        val e = current() ?: return
+        if (sideWorkFor != e.song.id) return
+        sideWorkFor = null
+        loadLyrics(e.song)
+        topUpRadio()
+        prefetchNext()
     }
 
     // Resolves the stream URL and caches the first 256 KB, the part playback starts from.
