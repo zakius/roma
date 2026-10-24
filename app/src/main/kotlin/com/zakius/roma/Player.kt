@@ -63,6 +63,9 @@ import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
 import coil3.compose.AsyncImage
 import roma.core.Line
+import roma.core.Lyrics
+import roma.core.attachTranslation
+import roma.core.pickTranslation
 import roma.core.Override
 
 /**
@@ -78,14 +81,15 @@ fun PlayerScreen() {
     var menuOpen by remember { mutableStateOf(false) }
     val entry = Playback.current()
     val p = Playback.player
-    val lyrics = Playback.lyrics?.takeIf { it.songId == entry?.song?.id }?.lyrics
+    val lyricsState = Playback.lyrics?.takeIf { it.songId == entry?.song?.id }
+    val lyrics = lyricsState?.lyrics
     val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty()
     if (view == "lyrics" && !hasLyrics && lyrics != null) view = "song"
 
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (view) {
-                "lyrics" -> if (lyrics != null) LyricsView(lyrics.lines, lyrics.synced, entry?.song?.id) else Centered("Looking for lyrics…")
+                "lyrics" -> if (lyricsState != null && lyrics != null) LyricsView(lyricsState, lyrics, entry?.song?.id) else Centered("Looking for lyrics…")
                 "queue" -> QueueView()
                 else -> SongView()
             }
@@ -234,7 +238,15 @@ private fun QueueView() {
 }
 
 @Composable
-private fun LyricsView(lines: List<Line>, synced: Boolean, songId: String?) {
+private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
+    // KuGou and NetEase translate into Chinese: attach a translation layer only in the chosen language.
+    val showTranslation = Store.bool("lyrics.layer.translation", true)
+    val wantedLang = Store.str("lyrics.translationLang", "device")
+    val shown = remember(found, showTranslation, wantedLang) {
+        attachTranslation(bare, if (showTranslation) pickTranslation(bare, found.translations, Store::translationWanted) else null)
+    }
+    val lines = shown.lines
+    val synced = shown.synced
     // Playback.tick fires every 500 ms, too coarse for word timing: poll the position every 50 ms while lyrics show.
     var pos by remember { mutableLongStateOf(Playback.player.currentPosition) }
     LaunchedEffect(Unit) { while (true) { pos = Playback.player.currentPosition; delay(50) } }
@@ -242,9 +254,6 @@ private fun LyricsView(lines: List<Line>, synced: Boolean, songId: String?) {
     val state = rememberLazyListState()
     val showOriginal = Store.bool("lyrics.layer.original", true)
     val showLatin = Store.bool("lyrics.layer.latin", true)
-    // KuGou and NetEase translate into Chinese: show a translation only in the chosen language.
-    val translationLang = remember(lines) { roma.core.translationLanguage(roma.core.Lyrics("", lines, synced)) }
-    val showTranslation = Store.bool("lyrics.layer.translation", true) && Store.translationWanted(translationLang)
     var fixWord by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = state) {
@@ -266,9 +275,17 @@ private fun LyricsView(lines: List<Line>, synced: Boolean, songId: String?) {
                     WordsText(line.wordLatin, line.latin, wordIndex, MaterialTheme.typography.bodyLarge, onLongPressWord = null)
                 }
                 val translation = line.translation
-                if (showTranslation && !translation.isNullOrBlank()) {
+                if (!translation.isNullOrBlank()) {
                     Text(translation, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+        }
+        item {
+            val small = MaterialTheme.typography.labelSmall
+            val c = MaterialTheme.colorScheme.onSurfaceVariant
+            Column(Modifier.padding(top = 16.dp, bottom = 24.dp)) {
+                Text("Lyrics: ${shown.source}", style = small, color = c)
+                shown.translationSource?.let { Text("Translation: $it", style = small, color = c) }
             }
         }
     }

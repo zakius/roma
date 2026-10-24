@@ -676,7 +676,7 @@ fun SettingsScreen() {
                 Switch(Store.lyricsEnabled(p), { Store.set("lyrics.on.${p.id}", it) }, Modifier.padding(end = 16.dp))
             }
         }
-        Text("Word timing wins over line timing, line timing over plain text; within each, the order above decides.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+        Text("All are asked at once. YouTube Music's text is the reference: word timing that matches it wins, then its own timed lyrics, then matching line timing, then its plain text. The order above only matters when YouTube Music has no lyrics.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
         Row1("Search lyrics again for this song", "After changing the providers") { Playback.refetchLyrics() }
         Switch1("Show original", "lyrics.layer.original", true)
         Switch1("Show romanization", "lyrics.layer.latin", true)

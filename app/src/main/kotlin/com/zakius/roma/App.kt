@@ -42,7 +42,8 @@ object Store {
     var version by mutableIntStateOf(0)
         private set
 
-    val romanizer = Romanizer(Icu { id, text -> android.icu.text.Transliterator.getInstance(id).transliterate(text) })
+    val icu = Icu { id, text -> android.icu.text.Transliterator.getInstance(id).transliterate(text) }
+    val romanizer = Romanizer(icu)
 
     fun init(c: Context) {
         prefs = c.getSharedPreferences("roma", Context.MODE_PRIVATE)

@@ -46,6 +46,8 @@ import roma.core.LastFm
 import roma.core.Lyrics
 import roma.core.LyricsProviders
 import roma.core.LyricsQuery
+import roma.core.LyricsResult
+import roma.core.Translation
 import roma.core.Scrobble
 import roma.core.ScrobbleQueue
 import roma.core.Song
@@ -62,8 +64,11 @@ import kotlin.math.pow
 /** A queue entry. Section is "queued" (pinned: radio never moves or removes it) or "radio". */
 class Entry(val song: Song, val section: String)
 
-/** Lyrics for the current song: null while loading, [Lyrics] with no lines when no provider had any. */
-class LyricsState(val songId: String, val lyrics: Lyrics?)
+/**
+ * Lyrics for the current song: null while loading, [Lyrics] with no lines when no provider had any. The translation
+ * layers are attached at display time, so changing the translation language needs no new search.
+ */
+class LyricsState(val songId: String, val lyrics: Lyrics?, val translations: List<Translation> = emptyList())
 
 /** The one player. The service wraps it in a media session; the UI calls it directly (same process, main thread). */
 object Playback {
@@ -465,18 +470,23 @@ object Playback {
         lyricsJob = scope.launch {
             val found = withContext(Dispatchers.IO) {
                 val file = File(appContext.cacheDir, "lyrics/${s.id}.json")
-                val raw = runCatching { Store.json.decodeFromString<Lyrics>(file.readText()) }.getOrNull() ?: run {
+                // A cache file from before 0.1.6 holds a bare Lyrics, fails to decode and is searched again.
+                val raw = runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull() ?: run {
                     val q = LyricsQuery(s.id, s.title.original, s.artistOriginal, s.album?.name?.original, s.durationSec)
                     val providers = Store.lyricsOrder().filter { Store.lyricsEnabled(it) }
-                    val l = LyricsProviders.find(q, providers) ?: Lyrics("", emptyList(), false)
-                    file.parentFile!!.mkdirs()
-                    file.writeText(Store.json.encodeToString(l))
-                    l
+                    val search = LyricsProviders.find(q, providers, Store.icu)
+                    val r = search.result ?: LyricsResult(Lyrics("", emptyList(), false))
+                    // "No lyrics" is kept only when every provider answered; after a failure the next play asks again.
+                    if (search.result != null || search.complete) {
+                        file.parentFile!!.mkdirs()
+                        file.writeText(Store.json.encodeToString(r))
+                    }
+                    r
                 }
                 val siblings = listOf(s.artistOriginal) + listOfNotNull(s.album?.name?.original)
-                Store.romanizer.romanizeLyrics(raw, siblings, s.id)
+                LyricsState(s.id, Store.romanizer.romanizeLyrics(raw.lyrics, siblings, s.id), raw.translations)
             }
-            lyrics = LyricsState(s.id, found)
+            lyrics = found
         }
     }
 
