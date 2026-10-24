@@ -152,7 +152,7 @@ fun PlayerScreen() {
     // The bottom block, top to bottom: seek bar, action row, playback row (nearest the thumb; the nav bar is under it).
     // Fixed heights and slots; a wide screen only puts it beside the upper area.
     val controls: @Composable (Modifier) -> Unit = { modifier ->
-        Column(modifier) {
+        FixedRowsFont { Column(modifier) {
             SeekBar { seekPreview = it }
             // More (song menu, where Ban lives) sits at the outer edge with two empty slots after it; Like at the other
             // edge, under the thumb. Left-handed mode mirrors the row. Slots never move otherwise.
@@ -190,7 +190,7 @@ fun PlayerScreen() {
                 val repeatState = when (p.repeatMode) { Player.REPEAT_MODE_ONE -> "this song"; Player.REPEAT_MODE_ALL -> "all"; else -> "off" }
                 Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != Player.REPEAT_MODE_OFF, iconSize = 26, state = repeatState) { Playback.cycleRepeat() }
             }
-        }
+        } }
     }
 
     // Landscape (a phone on its side, the MatePad): the song, lyrics or queue on the left, the same bottom block on the

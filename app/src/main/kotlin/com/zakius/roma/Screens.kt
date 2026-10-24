@@ -615,8 +615,9 @@ fun SearchScreen() {
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { search(query) }),
         )
-        // Fixed order; videos are left out on purpose.
-        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Fixed order; videos are left out on purpose. With a large system font they wrap onto a second line, in the
+        // same order, instead of squeezing the last one into a column of letters.
+        androidx.compose.foundation.layout.FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FILTERS.forEachIndexed { i, (label, _) -> FilterChip(filter == i, { filter = i; asTyped = null }, label = { Text(label) }) }
         }
         // While the text differs from the last search, YouTube's suggestions take the results' place. The ones shown

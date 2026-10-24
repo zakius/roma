@@ -174,6 +174,12 @@ fun Root() {
         }
         // Fixed order, Player in the middle; Player is dimmed until something is loaded. Compact (48 dp): icon and a small
         // label, no pill, so the player's controls get the height.
+        FixedRowsFont { NavBar(tab, loaded) }
+    }
+}
+
+@Composable
+private fun NavBar(tab: Int, loaded: Boolean) {
         androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.surfaceContainer)) {
             NavItem("Home", Icons.Default.Home, tab == TAB_HOME, true) { Nav.tab = TAB_HOME; Nav.stacks[TAB_HOME].clear() }
             NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true) { Nav.tab = TAB_SEARCH; Nav.stacks[TAB_SEARCH].clear() }
@@ -181,7 +187,17 @@ fun Root() {
             NavItem("Library", Icons.Default.List, tab == TAB_LIBRARY, true) { Nav.tab = TAB_LIBRARY; Nav.stacks[TAB_LIBRARY].clear() }
             NavItem("Settings", Icons.Default.Settings, tab == TAB_SETTINGS, true) { Nav.tab = TAB_SETTINGS; Nav.stacks[TAB_SETTINGS].clear() }
         }
-    }
+}
+
+/**
+ * The fixed-height rows (player controls, nav bar) follow the system font size only up to 1.3×: larger, their labels
+ * and times would be cut off, and the rows can't grow without moving the controls. Everything else scales fully.
+ */
+@Composable
+fun FixedRowsFont(content: @Composable () -> Unit) {
+    val d = androidx.compose.ui.platform.LocalDensity.current
+    if (d.fontScale <= 1.3f) return content()
+    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density, 1.3f), content = content)
 }
 
 @Composable
