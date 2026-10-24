@@ -201,7 +201,6 @@ private fun SongView() {
 }
 
 // YouTube thumbnails carry their size in the URL; ask for a larger one for the player.
-private fun bigThumb(url: String) = url.replace(Regex("=w\\d+-h\\d+"), "=w544-h544")
 
 @Composable
 private fun QueueView() {
