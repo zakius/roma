@@ -133,6 +133,7 @@ object Playback {
         scope.launch(Dispatchers.IO) { Store.anySong()?.let { s -> runCatching { streamUrl(s.id) } } }
         restore()
         watchNetwork()
+        watchHeadphones()
         player.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {
                 tick++
@@ -593,6 +594,40 @@ object Playback {
 
     // Pause while buffering (waiting for the network) pauses; Play prepares an idle player and restarts an ended one.
     fun togglePlay() = androidx.media3.common.util.Util.handlePlayPauseButtonAction(player)
+
+    // ---- Headphones ----
+
+    // When the headphones went away and paused the song (Media3's "becoming noisy"); 0 otherwise.
+    private var unpluggedAt = 0L
+
+    /**
+     * Opt-in: headphones, Bluetooth earbuds or a car that come back within an hour of pausing the song by going away
+     * resume it. Only that pause counts: a song the user paused stays paused. The system calls back on device
+     * changes; nothing polls.
+     */
+    private fun watchHeadphones() {
+        player.addListener(object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                unpluggedAt = if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY) android.os.SystemClock.elapsedRealtime() else 0L
+            }
+        })
+        val audio = appContext.getSystemService(android.media.AudioManager::class.java)
+        audio.registerAudioDeviceCallback(object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(added: Array<android.media.AudioDeviceInfo>) {
+                if (unpluggedAt == 0L || !Store.bool("play.resumeOnHeadphones", false)) return
+                if (android.os.SystemClock.elapsedRealtime() - unpluggedAt > 3600_000) return
+                if (added.none { it.isSink && it.type in HEADPHONES }) return
+                unpluggedAt = 0L
+                player.play()
+            }
+        }, main)
+    }
+
+    private val HEADPHONES = setOf(
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+        26 /* TYPE_BLE_HEADSET */, 27 /* TYPE_BLE_SPEAKER */, 23 /* TYPE_HEARING_AID */,
+    )
 
     // ---- Network drops ----
 
