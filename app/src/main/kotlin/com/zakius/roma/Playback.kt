@@ -136,7 +136,7 @@ object Playback {
         watchNetwork()
         watchHeadphones()
         scope.launch(Dispatchers.IO) {
-            Streams.keepIn(File(c.filesDir, "streams.txt"))
+            Streams.keepIn(File(c.cacheDir, "streams.txt"))
             // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
             // seen before, so the first tap doesn't pay for it.
             Store.anySong()?.let { s -> runCatching { streamUrl(s.id) } }
@@ -897,7 +897,7 @@ object Playback {
         }
     }
 
-    private val likedFile get() = java.io.File(appContext.filesDir, "liked.json")
+    private val likedFile get() = java.io.File(appContext.cacheDir, "liked.json")
 
     private var romanizeJob: Job? = null
 

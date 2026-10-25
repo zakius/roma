@@ -243,3 +243,9 @@ Decisions taken while building v1, where the spec left room or turned out differ
   - `./gradlew :core:test`: romanization, lyrics parsers (LRC, enhanced LRC, KRC, YRC), radio filters, personal mix identification and order, scrobble rule, Last.fm signature.
   - `./gradlew :core:networkCheck`: live check that innertube search, NewPipe stream resolution, the InnerTubeX stream fallback and each lyrics provider still work, and which rule picks the lyrics for 4 songs (Japanese, English, Chinese).
   - `:core:test` also covers the lyrics rules, the similarity threshold, translation alignment and the parallel search's caching decision.
+
+## Storage and backups (2026-10-25)
+
+- User storage (filesDir, prefs) holds only what the user would lose: settings, the YouTube and Last.fm sign-ins, corrections, the queue and position, unsent scrobbles.
+- Anything that can be fetched or rebuilt again sits in the cache, so Android may clear it: the unpacked dictionary (unpacked again on the next start), audio, art, lyrics, pages, the mixes row, the local search index, synced likes, stream notes. Android counts a file as cache by its group, which a renamed file keeps, so data moved out of filesDir is copied, not renamed.
+- Backups: no cloud backup at all, sign-ins included. A transfer to a new phone over Android 12+'s device-to-device path (cable or direct Wi-Fi) takes user storage, so the sign-ins carry over. Android 8–11 backs up nothing (its one backup path also serves the cloud). Rules: res/xml/data_extraction_rules.xml, backup_rules.xml. Vendor clone tools (e.g. Huawei Phone Clone) may not follow these rules.

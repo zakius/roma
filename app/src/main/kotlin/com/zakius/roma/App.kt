@@ -54,7 +54,10 @@ class Banned(val kind: String, val id: String, val name: String)
  */
 object Store {
     lateinit var prefs: SharedPreferences
+    /** Data the user would lose: settings, sign-ins, corrections, the queue, unsent scrobbles. */
     lateinit var files: File
+    /** Everything that can be fetched or rebuilt again, so Android may clear it: dictionary, index, likes, pages, streams. */
+    lateinit var cache: File
     private lateinit var pages: File
     val json = Json { ignoreUnknownKeys = true }
     var version by mutableIntStateOf(0)
@@ -66,14 +69,14 @@ object Store {
     private lateinit var assets: AssetManager
 
     // The dictionary ships compressed (about 80 MB of the APK instead of 202 MB), so the first start unpacks it once to
-    // filesDir; from then on it is memory-mapped from there and stays out of the heap. The file name carries the APK's
+    // the cache; from then on it is memory-mapped from there and stays out of the heap. The file name carries the APK's
     // asset size, so a new dictionary version replaces the old file.
     val romanizer = Romanizer(icu) {
         val size = assets.open("system_core.dic").use { it.available().toLong() }
-        val file = File(files, "sudachi-core-$size.dic")
+        val file = File(cache, "sudachi-core-$size.dic")
         if (file.length() != size) {
-            files.listFiles { f -> f.name.startsWith("sudachi-") }?.forEach { it.delete() }
-            val tmp = File(files, "sudachi.tmp")
+            cache.listFiles { f -> f.name.startsWith("sudachi-") }?.forEach { it.delete() }
+            val tmp = File(cache, "sudachi.tmp")
             assets.open("system_core.dic").use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 16) } }
             tmp.renameTo(file)
         }
@@ -84,7 +87,13 @@ object Store {
         prefs = c.getSharedPreferences("roma", Context.MODE_PRIVATE)
         assets = c.assets
         files = c.filesDir
+        cache = c.cacheDir
         pages = File(c.cacheDir, "pages")
+        // Up to 0.1.26 these sat in filesDir and the mixes in prefs. Copied, not renamed: a renamed file keeps its
+        // group, and Android counts a file as cache by its group. The dictionary is just unpacked again.
+        files.listFiles { f -> f.name.startsWith("sudachi") }?.forEach { it.delete() }
+        for (n in listOf("index.json", "liked.json", "streams.txt")) File(files, n).takeIf { it.exists() }?.let { runCatching { it.copyTo(File(cache, n), true) }; it.delete() }
+        prefs.edit().remove("home.mixes").apply()
         romanizer.settings = romanizeSettings()
         romanizer.overrides = loadOverrides()
         YouTube.cookie = prefs.getString("cookie", null)
@@ -93,7 +102,7 @@ object Store {
         YouTube.useLoginForBrowse = true
         prefs.getString("visitorData", null)?.let { YouTube.visitorData = it }
         prefs.getString("dataSyncId", null)?.let { YouTube.dataSyncId = it }
-        indexThread.execute { index.addAll(runCatching { json.decodeFromString<List<Song>>(File(files, "index.json").readText()) }.getOrDefault(emptyList())) }
+        indexThread.execute { index.addAll(runCatching { json.decodeFromString<List<Song>>(File(cache, "index.json").readText()) }.getOrDefault(emptyList())) }
     }
 
     // Reading version subscribes the calling composable, so it redraws when set() changes a setting.
@@ -131,8 +140,8 @@ object Store {
 
     /** The pinned row's last known mixes, so it isn't empty while Home loads. Null before the first lookup. */
     var mixes: List<Item>?
-        get() = prefs.getString("home.mixes", null)?.let { runCatching { json.decodeFromString<List<Item>>(it) }.getOrNull() }
-        set(v) = prefs.edit().putString("home.mixes", json.encodeToString(v)).apply()
+        get() = runCatching { json.decodeFromString<List<Item>>(File(cache, "mixes.json").readText()) }.getOrNull()
+        set(v) { runCatching { File(cache, "mixes.json").writeText(json.encodeToString(v)) } }
 
     // ---- Pages on disk: the last copy of Home, the library tabs and pages, shown at once on the next start ----
 
@@ -296,7 +305,7 @@ object Store {
                 saveQueued = true
                 indexThread.execute {
                     saveQueued = false
-                    File(files, "index.json").writeText(json.encodeToString(index.toList()))
+                    File(cache, "index.json").writeText(json.encodeToString(index.toList()))
                 }
             }
         }
