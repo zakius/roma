@@ -635,6 +635,8 @@ fun SearchScreen() {
             val local by produceState(emptyList<Song>(), submitted, filter) {
                 value = if (filter == 0) withContext(Dispatchers.IO) { Store.searchLocal(submitted) } else emptyList()
             }
+            // The top row is the likely tap: the first "Seen before" song at once, YouTube's top song when it comes.
+            LaunchedEffect(local) { Playback.prepare(local.take(1)) }
             fun LazyListScope.localRows() {
                 if (local.isEmpty()) return
                 item { Header("Seen before") }
@@ -654,6 +656,7 @@ fun SearchScreen() {
                     item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
                 }
             }) { found ->
+                LaunchedEffect(found) { Playback.prepare((local.take(1) + listOfNotNull(found.items.firstOrNull()?.playable)).distinctBy { it.id }) }
                 LazyColumn(Modifier.fillMaxSize()) {
                     localRows()
                     // YouTube's spelling correction, one line above its results. The corrected query gives way to "…",
@@ -719,6 +722,8 @@ fun PageScreen(p: Page) {
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val list = rememberLazyListState()
     Loader("${p.kind}:${p.id}", { partial -> loadDetail(p, partial) }, list, ::detailRows, Detail.serializer()) { d ->
+        // Play and the first row are the likely taps.
+        LaunchedEffect(d.songs.firstOrNull()?.id) { Playback.prepare(d.songs.take(1)) }
         LazyColumn(Modifier.fillMaxSize(), list) {
             item {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -743,7 +748,7 @@ fun PageScreen(p: Page) {
 
 /** Generated playlists (mixes, editorial RD… lists) page on as they play; anything else plays what the page holds. */
 private fun playList(p: Page, songs: List<Song>) =
-    if (p.kind == "playlist" && p.id.removePrefix("VL").startsWith("RD")) Playback.playMix(p.id) else Playback.play(songs)
+    if (p.kind == "playlist" && p.id.removePrefix("VL").startsWith("RD")) Playback.playMix(p.id, songs) else Playback.play(songs)
 
 /** What each LazyColumn item of a page shows, in order: see [Loader]. */
 private fun detailRows(d: Detail): List<Any?> =
@@ -898,6 +903,8 @@ fun SettingsScreen() {
         Switch1("Skip banned songs and artists", "radio.skipBanned", true)
         Switch1("Stop when the queue ends", "queue.stopAtEnd", false)
         Switch1("Even out loudness", "play.normalize", true)
+        Switch1("Get likely songs ready on mobile data and in Battery Saver", "prepare.always", false)
+        Text("roma looks up the song you are likely to tap next (a page's first song, Search's top result, the queue's next songs) and loads its first second, so it starts at once. About 45 KB each, at most 3 MB an hour. Off: only on Wi-Fi and outside Battery Saver.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
 
         Header("Banned")
         val banned = Store.banned

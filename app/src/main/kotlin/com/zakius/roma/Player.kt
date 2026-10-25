@@ -232,6 +232,8 @@ private fun QueueView() {
     val all = Playback.entries()
     val cur = Playback.player.currentMediaItemIndex
     var menuFor by remember { mutableStateOf<Int?>(null) }
+    // The next songs are the likely taps here.
+    LaunchedEffect(Unit) { Playback.prepare(all.drop(cur + 1).map { it.song }) }
     val rows = ArrayList<Pair<String?, Int>>() // header or entry index
     if (cur in all.indices) { rows.add("Now" to -1); rows.add(null to cur) }
     val queued = (cur + 1 until all.size).filter { all[it].section == "queued" }

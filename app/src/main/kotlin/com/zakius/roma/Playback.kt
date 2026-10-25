@@ -127,9 +127,16 @@ object Playback {
             PlaybackService.instance?.updateLikeButton()
             syncLikes()
         }
-        // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
-        // seen before, so the first tap doesn't pay for it.
-        scope.launch(Dispatchers.IO) { Store.anySong()?.let { s -> runCatching { streamUrl(s.id) } } }
+        scope.launch(Dispatchers.IO) {
+            Streams.keepIn(File(c.filesDir, "streams.txt"))
+            // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
+            // seen before, so the first tap doesn't pay for it.
+            Store.anySong()?.let { s -> runCatching { streamUrl(s.id) } }
+            // A song needed the InnerTubeX fallback in the last week: warm that path too (its player script, cipher
+            // config and the PoToken WebView, a few seconds cold), within the same limits as the guesses below.
+            if (thrifty()) return@launch
+            Streams.recentFallback()?.let { id -> runCatching { streamUrl(id) } }
+        }
         player.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {
                 tick++
@@ -337,6 +344,40 @@ object Playback {
         if (speculative?.isActive != true) speculative = precacheAsync(s.id)
     }
 
+    // ---- Guesses: songs the user is likely to pick next, prepared as a tap would (stream URL + first 32 KB) ----
+
+    private var guessJob: Job? = null
+    private val guessTimes = ArrayDeque<Long>()
+
+    /**
+     * Prepares the first [GUESS_SONGS] of [songs], one after another: an opened page's first song, Search's top
+     * result, the queue's next songs. A new call replaces what is left of the last one. Each costs about 45 KB
+     * (nothing for a song already cached), at most [GUESSES_PER_HOUR] an hour (under 3 MB). Never while the current
+     * song is still loading, and only on an unmetered network outside Battery Saver unless the user allows it.
+     */
+    fun prepare(songs: List<Song>) {
+        guessJob?.cancel()
+        guessJob = scope.launch {
+            for (s in songs.take(GUESS_SONGS)) {
+                val now = System.currentTimeMillis()
+                while (guessTimes.isNotEmpty() && now - guessTimes.first() > 3600_000) guessTimes.removeFirst()
+                if (guessTimes.size >= GUESSES_PER_HOUR || pending != null || player.playbackState == Player.STATE_BUFFERING || thrifty()) return@launch
+                guessTimes.addLast(now)
+                precacheAsync(s.id).await()
+            }
+        }
+    }
+
+    /** Mobile data or Battery Saver, and the user hasn't allowed guesses there. */
+    private fun thrifty(): Boolean {
+        if (Store.bool("prepare.always", false)) return false
+        val metered = appContext.getSystemService(android.net.ConnectivityManager::class.java).isActiveNetworkMetered
+        return metered || appContext.getSystemService(android.os.PowerManager::class.java).isPowerSaveMode
+    }
+
+    private const val GUESS_SONGS = 3
+    private const val GUESSES_PER_HOUR = 60
+
     private fun switchTo(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
         mixId = mix
         mixContinuation = mixNext
@@ -434,7 +475,9 @@ object Playback {
      * Plays a personal mix or another generated playlist (RD…) as a playlist: its songs go into "You queued", not radio,
      * and its next page loads when the queue runs low. The radio filters apply; the leash doesn't.
      */
-    fun playMix(id: String) {
+    fun playMix(id: String, loaded: List<Song>? = null) {
+        // From its page: the songs are there already (every distinct one, see loadDetail), so it starts at once.
+        if (loaded != null) return play(filterMix(loaded, emptyList(), Store.bans(), Store.radioSettings()), 0, id.removePrefix("VL"), null)
         scope.launch {
             val page = withContext(Dispatchers.IO) { YouTube.playlist(id.removePrefix("VL")).getOrNull() }
             if (page == null) { error = "Couldn't load this playlist."; return@launch }
