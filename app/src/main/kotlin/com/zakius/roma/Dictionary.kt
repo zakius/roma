@@ -114,13 +114,24 @@ object Dictionary {
         }
     }
 
+    /** "install" or "update": roma asks first ([DictionaryPrompt]) before Android's own prompts. Null: nothing to ask. */
+    var offer by mutableStateOf<String?>(null)
+        private set
+
     /**
      * Japanese is romanized but the dictionary is missing or older than this roma needs (after an update of roma):
-     * the install starts by itself, once per run; a refusal or failure leaves it to Settings.
+     * roma offers it, once per run. Not now, a refusal or a failure leaves it to Settings.
      */
     fun ensure(c: Context) {
         installed = runCatching { verify(c) }.isSuccess
-        if (!installed && status == null && Store.bool("setup.done", false) && "ja" !in Store.readScripts) install(c)
+        if (installed || status != null || offer != null || !Store.bool("setup.done", false) || "ja" in Store.readScripts) return
+        val present = runCatching { c.packageManager.getPackageInfo(BuildConfig.DICT_PACKAGE, 0) }.isSuccess
+        offer = if (present) "update" else "install"
+    }
+
+    fun answer(c: Context, yes: Boolean) {
+        offer = null
+        if (yes) install(c) else status = "Not installed: kanji stay as written. Tap to install (${DOWNLOAD})"
     }
 
     /** Back from the "install unknown apps" switch: on, the install goes on; off counts as declining. */

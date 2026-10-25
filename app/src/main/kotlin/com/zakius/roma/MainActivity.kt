@@ -204,6 +204,7 @@ fun Root() {
         if (stack.isNotEmpty()) stack.removeAt(stack.size - 1) else if (tab == TAB_PLAYER) Nav.leavePlayer() else Nav.tab = TAB_HOME
     }
     if (!Store.bool("setup.done", false)) return Box(Modifier.fillMaxSize().safeDrawingPadding()) { SetupScreen() }
+    DictionaryPrompt()
     Playback.tick // redraw when the player changes, for the Player tab's dimming
     val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null || Playback.restoring
     androidx.compose.runtime.LaunchedEffect(tab, Nav.playerView) {

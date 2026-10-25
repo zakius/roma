@@ -1030,6 +1030,25 @@ fun SettingsScreen() {
     editing?.let { (key, title) -> TextInputDialog(title, Store.str(key, ""), { editing = null }) { Store.set(key, it.trim()) } }
 }
 
+/** roma's own question before Android's install prompts, when the dictionary is missing or out of date. */
+@Composable
+fun DictionaryPrompt() {
+    val offer = Dictionary.offer ?: return
+    AlertDialog(
+        onDismissRequest = { Dictionary.answer(Store.context, false) },
+        title = { Text(if (offer == "update") "Update the Japanese dictionary?" else "Install the Japanese dictionary?") },
+        text = {
+            Text(
+                (if (offer == "update") "This version of roma needs a newer Japanese dictionary. " else "roma needs it to romanize kanji. ") +
+                    "It's a separate app (${Dictionary.DOWNLOAD}). Android will ask you to confirm the installation.\n\n" +
+                    "Until then, Japanese gets kana-only romanization and kanji stay as written. You can install it later in Settings."
+            )
+        },
+        confirmButton = { TextButton(onClick = { Dictionary.answer(Store.context, true) }) { Text(if (offer == "update") "Update" else "Install") } },
+        dismissButton = { TextButton(onClick = { Dictionary.answer(Store.context, false) }) { Text("Not now") } },
+    )
+}
+
 /**
  * First start: which scripts to romanize. Japanese needs the dictionary app, fetched once if picked; the others need
  * nothing. Unpicked scripts go into "scripts you read" and show as written. Shown until Continue.
