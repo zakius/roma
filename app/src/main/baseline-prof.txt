@@ -7,6 +7,8 @@ HSPLroma/core/**->**(**)**
 Lroma/core/**;
 HSPLcom/metrolist/innertube/**->**(**)**
 Lcom/metrolist/innertube/**;
+HSPLcom/metrolist/innertubex/**->**(**)**
+Lcom/metrolist/innertubex/**;
 HSPLio/ktor/**->**(**)**
 Lio/ktor/**;
 HSPLkotlinx/serialization/**->**(**)**

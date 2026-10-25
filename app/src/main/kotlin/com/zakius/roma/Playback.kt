@@ -127,18 +127,18 @@ object Playback {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .setLoadControl(AheadLoadControl(load))
             .build()
-        scope.launch {
+        Startup.later { scope.launch {
             liked = withContext(Dispatchers.IO) { runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet()) }
             PlaybackService.instance?.updateLikeButton()
             // The copy on disk serves meanwhile: the whole Likes playlist, page by page, would share the connection
             // with Home's first request.
             delay(5_000)
             syncLikes()
-        }
-        restore()
+        } }
+        Startup.later { restore() }
         watchNetwork()
         watchHeadphones()
-        scope.launch(Dispatchers.IO) {
+        Startup.later { scope.launch(Dispatchers.IO) {
             Streams.keepIn(File(c.cacheDir, "streams.txt"))
             // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Do it now so the first
             // tap doesn't pay for it, on the song Play would resume: its URL is then known too (kept 5 hours).
@@ -150,7 +150,7 @@ object Playback {
             if (thrifty()) return@launch
             delay(10_000)
             Streams.recentFallback()?.let { id -> runCatching { streamUrl(id) } }
-        }
+        } }
         player.addListener(object : Player.Listener {
             override fun onEvents(p: Player, events: Player.Events) {
                 tick++
@@ -1090,6 +1090,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onCreate() {
+        Startup.go() // started without a screen (a headset's Play, the system's resume): nothing waits for a frame
         super.onCreate()
         instance = this
         session = MediaSession.Builder(this, Playback.player)

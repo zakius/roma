@@ -54,7 +54,14 @@ class Romanizer(
     var settings: RomanizeSettings = RomanizeSettings(),
     private val dictionary: () -> ByteBuffer = { MMap.map(System.getProperty("roma.sudachi") ?: error("roma.sudachi: path to system_core.dic")) },
 ) {
+    @Volatile private var loading: java.util.concurrent.Future<List<Override>>? = null
+    /** The user's corrections. Reading waits for [loadOverrides]' file read if it hasn't finished. */
     var overrides: List<Override> = emptyList()
+        get() { loading?.let { field = it.get(); loading = null }; return field }
+        set(value) { loading = null; field = value }
+
+    /** Takes the corrections from a read running elsewhere, so start-up doesn't wait for the file. */
+    fun loadOverrides(read: java.util.concurrent.Future<List<Override>>) { loading = read }
 
     /**
      * Romanizes s, honouring overrides. Siblings are the other fields of the same item (artist, album, title).

@@ -77,7 +77,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -271,7 +271,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
 private fun MenuItem(label: String, enabled: Boolean, onClick: () -> Unit) {
     Text(
         label,
-        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).alpha(if (enabled) 1f else 0.35f).padding(horizontal = 24.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).dim(if (enabled) 1f else 0.35f).padding(horizontal = 24.dp, vertical = 14.dp),
         style = MaterialTheme.typography.bodyLarge,
     )
 }
@@ -460,6 +460,12 @@ private fun <T : Any> Loader(
     }
 }
 
+/**
+ * Dimmed by multiplying each drawing's alpha, not by drawing into an offscreen layer first as Modifier.alpha does: the
+ * GPU then doesn't switch buffers for every dimmed control. Fine where the content's own parts don't overlap.
+ */
+fun Modifier.dim(alpha: Float) = graphicsLayer { this.alpha = alpha; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha }
+
 @Composable
 private fun Header(text: String) {
     Text(text, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleMedium)
@@ -486,7 +492,10 @@ private const val MIX_PAGES = 10
 object Home {
     var sections by mutableStateOf(listOf<Section>())
         private set
-    var mixes by mutableStateOf(Store.mixes)
+    // Read from disk with the shelves, off the main thread; until then the row keeps its place, empty.
+    var mixes by mutableStateOf<List<Item>?>(null)
+        private set
+    var mixesRead by mutableStateOf(false)
         private set
     var more by mutableStateOf(true)
         private set
@@ -515,8 +524,8 @@ object Home {
         val stale = System.currentTimeMillis() - fetchedAt > 30 * 60_000 || dataVersion != Store.dataVersion
         if (job != null && failed == null && !stale) return
         dataVersion = Store.dataVersion
-        if (account != YouTube.cookie) {
-            account = YouTube.cookie
+        if (account != Store.cookie) {
+            account = Store.cookie
             if (job != null) {
                 sections = emptyList()
                 mixes = Store.mixes
@@ -540,7 +549,8 @@ object Home {
 
     private suspend fun load() = coroutineScope {
         if (sections.isEmpty()) launch {
-            val disk = withContext(Dispatchers.IO) { Store.readPage("home", ListSerializer(Section.serializer())) }
+            val (saved, disk) = withContext(Dispatchers.IO) { Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())) }
+            if (!mixesRead) { if (mixes == null) mixes = saved; mixesRead = true }
             if (sections.isEmpty() && disk != null) sections = disk
         }
         // Waiting contents go in as their shelf leaves the screen. This runs only when the list scrolls.
@@ -615,7 +625,7 @@ object Home {
 fun HomeScreen() {
     LaunchedEffect(Store.dataVersion) { Home.start() }
     LazyColumn(Modifier.fillMaxSize(), Home.list) {
-        item(key = "mixes") { MixesRow(Home.mixes) }
+        item(key = "mixes") { MixesRow(Home.mixes, Home.mixesRead) }
         items(Home.sections) { sec ->
             Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
             LazyRow { items(sec.items) { item -> Card(item) { openItem(item) } } }
@@ -636,14 +646,15 @@ fun HomeScreen() {
 
 /** Always first on Home and never gone: signed out or with no mixes it holds a dimmed hint instead. */
 @Composable
-private fun MixesRow(mixes: List<Item>?) {
+private fun MixesRow(mixes: List<Item>?, read: Boolean) {
     Text("Your mixes", Modifier.padding(start = 16.dp, top = 16.dp), style = MaterialTheme.typography.titleMedium)
     @Composable
-    fun Hint(text: String) = Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).alpha(0.5f), style = MaterialTheme.typography.bodyMedium)
+    fun Hint(text: String) = Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).dim(0.5f), style = MaterialTheme.typography.bodyMedium)
     if (!Store.signedIn) return Hint("Sign in to see your mixes")
     // Signed in, the row keeps a card's height while it loads or is empty, so the shelves below never jump.
     Box(Modifier.height(212.dp)) {
         when {
+            mixes == null && !read -> {}
             mixes == null -> Hint("Looking for your mixes…")
             mixes.isEmpty() -> Hint("No mixes yet")
             else -> LazyRow { items(mixes) { m -> Card(m) { Playback.playMix(m.id); Nav.tab = TAB_PLAYER } } }
@@ -1025,6 +1036,12 @@ fun SettingsScreen() {
             else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LastFm(Store.str("lastfm.key", ""), "").authUrl("roma://lastfm"))))
         }
 
+        Header("Start-up")
+        // ms after the process started (this run), and after the tap for the starts Android recorded.
+        Text(Startup.marks.distinctBy { it.first }.joinToString(" · ") { "${it.first} ${it.second}" }, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+        val recorded = remember { Startup.recorded(context) }
+        recorded.forEach { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 2.dp), style = MaterialTheme.typography.bodySmall) }
+
         Text("roma ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
     }
     editing?.let { (key, title) -> TextInputDialog(title, Store.str(key, ""), { editing = null }) { Store.set(key, it.trim()) } }
@@ -1092,7 +1109,7 @@ private fun move(order: List<roma.core.LyricsProvider>, i: Int, by: Int) {
 
 @Composable
 private fun Row1(title: String, subtitle: String, enabled: Boolean = true, onClick: () -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).alpha(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 10.dp)) {
+    Column(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).dim(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 10.dp)) {
         Text(title)
         Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -1101,7 +1118,7 @@ private fun Row1(title: String, subtitle: String, enabled: Boolean = true, onCli
 @Composable
 private fun Switch1(title: String, key: String, def: Boolean, enabled: Boolean = true, subtitle: String? = null) {
     val on = Store.bool(key, def)
-    Row(Modifier.fillMaxWidth().clickable(enabled) { Store.set(key, !on) }.alpha(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clickable(enabled) { Store.set(key, !on) }.dim(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title)
             if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1176,7 +1193,7 @@ fun androidx.compose.foundation.layout.BoxScope.FastScroll(list: LazyListState) 
                     scope.launch { list.scrollToItem((f * (total - visible)).toInt()) }
                 }
             }
-            .alpha(alpha),
+            .dim(alpha),
     ) {
         Box(
             Modifier.align(Alignment.TopEnd).padding(end = 4.dp)

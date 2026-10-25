@@ -1,6 +1,8 @@
 package com.zakius.roma
 
 import android.app.Application
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.serviceLoaderEnabled
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
@@ -29,16 +31,95 @@ import kotlin.concurrent.thread
 
 class App : Application() {
     override fun onCreate() {
+        Startup.mark("app")
+        Startup.warmGpu() // first: the render thread sets up the GPU while the rest of start-up runs
         super.onCreate()
+        coil3.SingletonImageLoader.setSafe { c ->
+            // The network fetcher named here instead of found by a ServiceLoader scan of the APK on the first image.
+            coil3.ImageLoader.Builder(c).serviceLoaderEnabled(false).components { add(OkHttpNetworkFetcherFactory()) }.build()
+        }
         Store.init(this)
         Dictionary.init(this)
         Playback.init(this)
-        thread(name = "sudachi") {
-            // Below the UI threads, so unpacking and loading the dictionary doesn't slow the first frame.
-            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-            val t0 = System.nanoTime()
-            Store.romanizer.warmUp()
-            android.util.Log.i("roma", "Sudachi dictionary ready in ${(System.nanoTime() - t0) / 1_000_000} ms")
+        Startup.mark("app ready")
+        Startup.later {
+            thread(name = "sudachi") {
+                // Below the UI threads, so loading the dictionary doesn't slow them.
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+                val t0 = System.nanoTime()
+                Store.romanizer.warmUp()
+                android.util.Log.i("roma", "Sudachi dictionary ready in ${(System.nanoTime() - t0) / 1_000_000} ms")
+            }
+            thread(name = "images") { coil3.SingletonImageLoader.get(this) } // built before the first picture needs it
+        }
+    }
+}
+
+/**
+ * When this run's start-up steps happened, for Settings → Start-up: the time from tapping the icon to roma's first frame
+ * can't be measured on the user's phone otherwise. Android 15+ also records the steps before roma's code runs.
+ */
+object Startup {
+    private val t0 = android.os.Process.getStartUptimeMillis()
+    val marks = ArrayList<Pair<String, Long>>() // step, ms after the process started; main thread only
+
+    fun mark(step: String) { marks += step to android.os.SystemClock.uptimeMillis() - t0 }
+
+    private var started = false
+    private val later = ArrayList<() -> Unit>()
+
+    /** Runs [f] once roma's first frame is drawn (or now, if it was): work that frame doesn't need waits until then,
+     *  so it doesn't compete with it for the CPU or the main thread. Main thread only. */
+    fun later(f: () -> Unit) { if (started) f() else later += f }
+
+    /** The first frame is drawn, or the media service started without a screen: the deferred work runs now. */
+    fun go() {
+        if (started) return
+        started = true
+        later.forEach { it() }
+        later.clear()
+    }
+
+    // ponytail: GPU set-up overlap, one 1×1 frame; the renderer is dropped after the first real frame.
+    private var gpu: Pair<android.graphics.HardwareRenderer, android.media.ImageReader>? = null
+
+    /**
+     * Has the render thread set up the GPU (driver, context, shader cache) while roma starts, by drawing one pixel
+     * off screen. All renderers in a process share that thread and its GPU context, so the first real frame doesn't
+     * wait for the set-up; otherwise it starts only when the activity launches.
+     */
+    fun warmGpu() {
+        if (android.os.Build.VERSION.SDK_INT < 29) return
+        thread(name = "gpu") { // syncAndDraw waits for the render thread
+            val reader = android.media.ImageReader.newInstance(1, 1, android.graphics.PixelFormat.RGBA_8888, 1, android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
+            val node = android.graphics.RenderNode("warm").apply { setPosition(0, 0, 1, 1); beginRecording().drawColor(0); endRecording() }
+            val r = android.graphics.HardwareRenderer().apply { setContentRoot(node); setSurface(reader.surface) }
+            r.createRenderRequest().syncAndDraw()
+            synchronized(this) { if (gpuDone) { r.destroy(); reader.close() } else gpu = r to reader }
+        }
+    }
+
+    private var gpuDone = false
+
+    @Synchronized
+    fun dropGpu() { gpuDone = true; gpu?.let { (r, reader) -> r.destroy(); reader.close() }; gpu = null }
+
+    /** One line per recent start that Android recorded (API 35+): its kind and its steps, in ms after the tap. */
+    fun recorded(c: Context): List<String> {
+        if (android.os.Build.VERSION.SDK_INT < 35) return emptyList()
+        val names = mapOf(
+            android.app.ApplicationStartInfo.START_TIMESTAMP_FORK to "process",
+            android.app.ApplicationStartInfo.START_TIMESTAMP_BIND_APPLICATION to "bind",
+            android.app.ApplicationStartInfo.START_TIMESTAMP_APPLICATION_ONCREATE to "app",
+            android.app.ApplicationStartInfo.START_TIMESTAMP_FIRST_FRAME to "first frame",
+            android.app.ApplicationStartInfo.START_TIMESTAMP_SURFACEFLINGER_COMPOSITION_COMPLETE to "on screen",
+        )
+        val kinds = mapOf(android.app.ApplicationStartInfo.START_TYPE_COLD to "cold", android.app.ApplicationStartInfo.START_TYPE_WARM to "warm", android.app.ApplicationStartInfo.START_TYPE_HOT to "hot")
+        return c.getSystemService(android.app.ActivityManager::class.java).getHistoricalProcessStartReasons(5).map { info ->
+            val ts = info.startupTimestamps // ns, elapsed realtime
+            val launch = ts[android.app.ApplicationStartInfo.START_TIMESTAMP_LAUNCH] ?: ts.values.minOrNull() ?: 0L
+            val steps = names.mapNotNull { (k, n) -> ts[k]?.let { "$n ${(it - launch) / 1_000_000}" } }
+            "${kinds[info.startType] ?: "?"}: " + steps.joinToString(" · ")
         }
     }
 }
@@ -96,18 +177,22 @@ object Store {
         pages = File(c.cacheDir, "pages")
         // Up to 0.1.26 these sat in filesDir and the mixes in prefs. Copied, not renamed: a renamed file keeps its
         // group, and Android counts a file as cache by its group. The dictionary unpacked by 0.1.27 and earlier goes.
-        listOf(files, cache).flatMap { it.listFiles().orEmpty().toList() }.filter { it.name.startsWith("sudachi") }.forEach { it.delete() }
-        for (n in listOf("index.json", "liked.json", "streams.txt")) File(files, n).takeIf { it.exists() }?.let { runCatching { it.copyTo(File(cache, n), true) }; it.delete() }
-        prefs.edit().remove("home.mixes").apply()
+        // Off the main thread, before the index and the liked songs are read from the cache folder.
+        indexThread.execute {
+            listOf(files, cache).flatMap { it.listFiles().orEmpty().toList() }.filter { it.name.startsWith("sudachi") }.forEach { it.delete() }
+            for (n in listOf("index.json", "liked.json", "streams.txt")) File(files, n).takeIf { it.exists() }?.let { runCatching { it.copyTo(File(cache, n), true) }; it.delete() }
+            prefs.edit().remove("home.mixes").apply()
+        }
         romanizer.settings = romanizeSettings()
-        romanizer.overrides = loadOverrides()
-        YouTube.cookie = prefs.getString("cookie", null)
+        romanizer.loadOverrides(indexThread.submit<List<Override>> { loadOverrides() })
+        cookie = prefs.getString("cookie", null)
+        YouTube.cookie = cookie
         // InnerTubeX sends the account cookies on browse and next calls (home, radio) only with this on; without it
         // Home is the anonymous one and never has the personal mixes. Metrolist turns it on too.
         YouTube.useLoginForBrowse = true
         prefs.getString("visitorData", null)?.let { YouTube.visitorData = it }
         prefs.getString("dataSyncId", null)?.let { YouTube.dataSyncId = it }
-        indexThread.execute { index.addAll(runCatching { json.decodeFromString<List<Song>>(File(cache, "index.json").readText()) }.getOrDefault(emptyList())) }
+        Startup.later { indexThread.execute { index.addAll(runCatching { json.decodeFromString<List<Song>>(File(cache, "index.json").readText()) }.getOrDefault(emptyList())) } }
     }
 
     // Reading version subscribes the calling composable, so it redraws when set() changes a setting.
@@ -131,12 +216,16 @@ object Store {
             Playback.romanizationChanged() // the notification's title follows
             romanizer.retryDictionary() // Japanese read as written doesn't load the dictionary; romanized again, it does
         }
+        if (key == "cookie") cookie = value as String?
         if (key.startsWith("rom.") || key == "cookie") dataChanged()
         version++
         if (key == "play.ahead" && value == true && Playback.player.isPlaying) Playback.downloadAhead()
     }
 
-    val signedIn get() = YouTube.cookie?.contains("SAPISID") == true
+    /** The account's cookie, as saved. YouTube's own copy isn't read on the main thread: that would build its client. */
+    @Volatile var cookie: String? = null
+        private set
+    val signedIn get() = cookie?.contains("SAPISID") == true
 
     /** Signed out, continuation pages come back empty unless every request carries the same visitor data. */
     suspend fun ensureVisitorData() {

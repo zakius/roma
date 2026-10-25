@@ -42,7 +42,11 @@ object Dictionary {
     private var confirm: Intent? = null
 
     fun init(app: Context) {
-        installed = runCatching { verify(app) }.isSuccess
+        // Two package manager calls, off the main thread; only the UI reads the result.
+        kotlin.concurrent.thread(name = "dictionary") {
+            val ok = runCatching { verify(app) }.isSuccess
+            android.os.Handler(android.os.Looper.getMainLooper()).post { installed = ok }
+        }
         ContextCompat.registerReceiver(app, object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) = finished(c, i)
         }, IntentFilter(ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)

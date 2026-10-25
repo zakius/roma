@@ -97,7 +97,10 @@ class MainActivity : ComponentActivity() {
     private var controller: ListenableFuture<MediaController>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        Startup.mark("screen")
         super.onCreate(savedInstanceState)
+        // The splash goes the moment roma's first frame is ready, instead of after Android's fade-out (about 130 ms).
+        if (Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { it.remove() }
         enableEdgeToEdge()
         // Back on Home leaves roma in the background instead of closing it, as Android 12+ does: the next start then
         // finds the activity and its UI still there.
@@ -115,6 +118,18 @@ class MainActivity : ComponentActivity() {
         handleLastFm(intent)
         Home.start() // before the first frame, so Home's request and its disk copy are on their way
         setContent { Theme { Root() } }
+        Startup.mark("composed")
+        val decor = window.decorView
+        decor.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
+            override fun onDraw() {
+                Startup.mark("first frame")
+                decor.post { // not from inside onDraw
+                    decor.viewTreeObserver.removeOnDrawListener(this)
+                    Startup.dropGpu()
+                    Startup.go()
+                }
+            }
+        })
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -122,21 +137,26 @@ class MainActivity : ComponentActivity() {
         handleLastFm(intent)
     }
 
-    // Binding a controller starts the service, which then shows the media notification while playing.
+    // Binding a controller starts the service, which then shows the media notification while playing. After the first
+    // frame: bound from onStart, the service and its media session were created before roma's first frame.
     override fun onStart() {
         super.onStart()
         Home.start() // back in the foreground: a Home older than 30 minutes loads again behind the shown one
-        controller = MediaController.Builder(this, SessionToken(this, ComponentName(this, PlaybackService::class.java))).buildAsync()
+        window.decorView.post {
+            if (controller == null && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
+                controller = MediaController.Builder(this, SessionToken(this, ComponentName(this, PlaybackService::class.java))).buildAsync()
+        }
     }
 
     override fun onResume() {
         super.onResume()
         Dictionary.resumed(this)
-        Dictionary.ensure(this)
+        window.decorView.post { Dictionary.ensure(this) } // package manager calls, and maybe a dialog: after the first frame
     }
 
     override fun onStop() {
         controller?.let { MediaController.releaseFuture(it) }
+        controller = null
         super.onStop()
     }
 
@@ -275,7 +295,7 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, i
     androidx.compose.foundation.layout.Column(
         Modifier.weight(1f).fillMaxHeight()
             .selectable(selected = selected, enabled = enabled, role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick)
-            .alpha(if (enabled) 1f else 0.35f),
+            .dim(if (enabled) 1f else 0.35f),
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
     ) {

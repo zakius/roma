@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -66,7 +65,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -214,20 +212,15 @@ fun PlayerScreen() {
 
 /**
  * Behind the lyrics: the song's art, blurred and faint, fading into the background at the top and bottom edges so the
- * first and last lines read as well as the rest. Android 12+ blurs the big art already in memory; older versions
- * have no blur, so a 16 px copy stretched to the full size stands in for it.
+ * first and last lines read as well as the rest. The blur is a 16 px copy stretched to the full size: at 20 % it
+ * reads the same as a real blur, without blurring a full-screen layer on the GPU every frame.
  */
 @Composable
 private fun LyricsBackdrop(thumb: String?) {
     if (thumb == null) return
     val context = LocalContext.current
-    val blur = android.os.Build.VERSION.SDK_INT >= 31
-    val request = coil3.request.ImageRequest.Builder(context).data(bigThumb(thumb)).apply { if (!blur) size(16) }.build()
-    AsyncImage(
-        request, null,
-        Modifier.fillMaxSize().then(if (blur) Modifier.blur(32.dp) else Modifier).alpha(0.2f),
-        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-    )
+    val request = coil3.request.ImageRequest.Builder(context).data(bigThumb(thumb)).size(16).build()
+    AsyncImage(request, null, Modifier.fillMaxSize(), alpha = 0.2f, contentScale = androidx.compose.ui.layout.ContentScale.Crop)
     val bg = MaterialTheme.colorScheme.surface
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to bg, 0.15f to Color.Transparent, 0.85f to Color.Transparent, 1f to bg)))
 }
@@ -288,11 +281,11 @@ private fun RowScope.Slot(
     Box(
         Modifier.weight(1f).widthIn(min = 48.dp).fillMaxHeight()
             .padding(horizontal = 2.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (selected && label != null) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+            // A rounded background only when selected, not a rounded clip on every slot: one GPU program less.
+            .then(if (selected && label != null) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp)) else Modifier)
             .combinedClickable(enabled = enabled, onClickLabel = description, role = Role.Button, onLongClick = onLongClick, onLongClickLabel = longClickLabel, onClick = onClick)
             .semantics { if (state != null) stateDescription = state }
-            .alpha(if (enabled) 1f else 0.3f),
+            .dim(if (enabled) 1f else 0.3f),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -564,7 +557,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
             val active = i == current
             val alpha = if (!synced || active) 1f else 0.45f
             Column(
-                Modifier.fillMaxWidth().alpha(alpha)
+                Modifier.fillMaxWidth().dim(alpha)
                     .pointerInput(line) { detectTapGestures(onTap = { if (synced) Playback.player.seekTo(line.startMs) }) }
                     .padding(vertical = 8.dp),
             ) {

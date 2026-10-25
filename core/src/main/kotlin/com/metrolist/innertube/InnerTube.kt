@@ -47,8 +47,29 @@ class InnerTube(
 ) {
     private var configuredProxy: Proxy? = null
     private var configuredProxyAuth: String? = null
-    private var httpClient = client ?: createClient()
-    private var innerTubeX = InnerTubeX(httpClient)
+    // Built on first use, not here: Ktor, OkHttp and InnerTubeX take tens of ms to set up, and roma sets the session
+    // on the main thread at start. Settings made before then wait in [pending] and are applied when it's built.
+    private val givenClient = client
+    @Volatile private var built: InnerTubeX? = null
+    private var builtClient: HttpClient? = null
+    private val pending = ArrayList<(InnerTubeX) -> Unit>()
+    private var innerTubeX: InnerTubeX
+        get() = built ?: build()
+        set(value) { built = value }
+    private var httpClient: HttpClient
+        get() { innerTubeX; return builtClient!! }
+        set(value) { builtClient = value }
+
+    @Synchronized
+    private fun build(): InnerTubeX {
+        built?.let { return it }
+        val c = givenClient ?: createClient()
+        builtClient = c
+        return InnerTubeX(c).also { x -> pending.forEach { it(x) }; pending.clear(); built = x }
+    }
+
+    @Synchronized
+    private fun configure(f: (InnerTubeX) -> Unit) { built?.let(f) ?: pending.add(f) }
     private var transportGeneration = 0L
 
     class ExtractionTransport internal constructor(
@@ -60,31 +81,31 @@ class InnerTube(
     var locale: YouTubeLocale
         get() = innerTubeX.locale
         set(value) {
-            innerTubeX.locale = value
+            configure { it.locale = value }
         }
 
     var visitorData: String?
         get() = innerTubeX.visitorData
         set(value) {
-            innerTubeX.visitorData = value
+            configure { it.visitorData = value }
         }
 
     var dataSyncId: String?
         get() = innerTubeX.dataSyncId
         set(value) {
-            innerTubeX.dataSyncId = value
+            configure { it.dataSyncId = value }
         }
 
     var authUser: String
         get() = innerTubeX.authUser
         set(value) {
-            innerTubeX.authUser = value
+            configure { it.authUser = value }
         }
 
     var cookie: String?
         get() = innerTubeX.cookie
         set(value) {
-            innerTubeX.cookie = value
+            configure { it.cookie = value }
         }
 
     var proxy: Proxy?
@@ -106,11 +127,12 @@ class InnerTube(
     var useLoginForBrowse: Boolean
         get() = innerTubeX.useLoginForBrowse
         set(value) {
-            innerTubeX.useLoginForBrowse = value
+            configure { it.useLoginForBrowse = value }
         }
 
     @Synchronized
     private fun recreateTransport() {
+        if (built == null) return // the first build reads the proxy
         val session = innerTubeX.sessionSnapshot()
         innerTubeX.close()
         httpClient.close()
