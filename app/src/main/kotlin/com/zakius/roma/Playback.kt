@@ -168,10 +168,11 @@ object Playback {
                     // to Last.fm, and the radio top-up and next-song prefetch wait until play is pressed.
                     resetPlayCount()
                     sideWorkFor = e.song.id
-                    loadLyrics(e.song)
+                    loadLyrics(e.song, network = false)
                     return
                 }
                 startedTrack()
+                loadLyrics(e.song, network = false) // cached lyrics show at once; the providers wait for the audio
                 sideWorkFor = e.song.id
                 // Everything else waits until the song is audible (startSideWork), so the stream has the network to
                 // itself; if it never starts (error, paused right away), it runs after 4 s anyway.
@@ -231,7 +232,7 @@ object Playback {
         next.thumb?.let { coil3.SingletonImageLoader.get(appContext).enqueue(coil3.request.ImageRequest.Builder(appContext).data(bigThumb(it)).build()) }
         scope.launch {
             precacheAsync(next.id).await()
-            withContext(Dispatchers.IO) { runCatching { lyricsResult(next) } }
+            withContext(Dispatchers.IO) { runCatching { if (romanizedLyrics(next) == null && romanizedOnDisk(next) == null) romanize(next, lyricsResult(next)) } }
         }
     }
 
@@ -312,6 +313,7 @@ object Playback {
         pendingJob?.cancel()
         pending = song
         pendingIndex = -1
+        loadLyrics(song, network = false)
         pendingJob = scope.launch {
             withTimeoutOrNull(8_000) { precacheAsync(song.id).await() } // on failure the player's own error handling takes over
             pending = null
@@ -325,6 +327,7 @@ object Playback {
         pendingJob?.cancel()
         pending = song
         pendingIndex = index
+        loadLyrics(song, network = false)
         pendingJob = scope.launch {
             withTimeoutOrNull(8_000) { precacheAsync(song.id).await() }
             pending = null
@@ -903,6 +906,8 @@ object Playback {
      * off the main thread (a 1,000-song queue takes a while) and swapped in with one queue change, not one per song.
      */
     fun romanizationChanged() {
+        Store.bumpRomanizationVersion()
+        forgetRomanizedLyrics()
         romanizeJob?.cancel()
         romanizeJob = scope.launch {
             val before = entries()
@@ -921,10 +926,14 @@ object Playback {
     private var lyricsJob: Job? = null
 
     /** Blocking: the cached lyrics, else every provider asked and the answer cached. */
-    private fun lyricsResult(s: Song): LyricsResult {
+    private fun lyricsResult(s: Song): LyricsResult = lyricsResult(s, network = true)!!
+
+    /** The song's lyrics from the disk cache, or (with [network]) from the providers. Null: not cached, no network asked. */
+    private fun lyricsResult(s: Song, network: Boolean): LyricsResult? {
         val file = File(appContext.cacheDir, "lyrics/${s.id}.json")
         // A cache file from before 0.1.6 holds a bare Lyrics, fails to decode and is searched again.
         runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull()?.let { return it }
+        if (!network) return null
         val q = LyricsQuery(s.id, s.title.original, s.artistOriginal, s.album?.name?.original, s.durationSec)
         val providers = Store.lyricsOrder().filter { Store.lyricsEnabled(it) }
         val search = LyricsProviders.find(q, providers, Store.icu)
@@ -937,23 +946,56 @@ object Playback {
         return r
     }
 
-    fun loadLyrics(s: Song) {
+    /**
+     * Shows the song's lyrics. Already romanized lyrics come from memory or disk at once; cached raw lyrics are
+     * romanized and kept; only a song with nothing cached asks the providers, and only with [network] (callers pass
+     * false until the song is audible, so the stream has the network to itself).
+     */
+    fun loadLyrics(s: Song, network: Boolean = true) {
+        romanizedLyrics(s)?.let { lyricsJob?.cancel(); lyrics = it; return }
         lyricsJob?.cancel()
         if (lyrics?.songId != s.id) lyrics = LyricsState(s.id, null)
         lyricsJob = scope.launch {
-            val found = withContext(Dispatchers.IO) {
-                val raw = lyricsResult(s)
-                val siblings = listOf(s.artistOriginal) + listOfNotNull(s.album?.name?.original)
-                LyricsState(s.id, Store.romanizer.romanizeLyrics(raw.lyrics, siblings, s.id), raw.translations)
-            }
-            lyrics = found
+            val found = withContext(Dispatchers.IO) { romanizedOnDisk(s) ?: romanize(s, lyricsResult(s, network) ?: return@withContext null) }
+            if (found != null) lyrics = found
         }
+    }
+
+    // Romanized lyrics, kept so that opening lyrics again (or after a restart) skips Sudachi: in memory for the last
+    // 40 songs, and on disk next to the raw copy. The key carries the romanization version, which changes with the
+    // settings and corrections, so stale romanizations are never shown (and their files are deleted then).
+    private val romanizedCache = object : LinkedHashMap<String, LyricsState>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, LyricsState>) = size > 40
+    }
+    private fun romanizedKey(id: String) = "$id@${Store.romanizationVersion}"
+    private fun romanizedFile(id: String) = File(appContext.cacheDir, "lyrics/$id.r${Store.romanizationVersion}.json")
+
+    private fun romanizedLyrics(s: Song): LyricsState? = synchronized(romanizedCache) { romanizedCache[romanizedKey(s.id)] }
+
+    private fun romanizedOnDisk(s: Song): LyricsState? {
+        val r = runCatching { Store.json.decodeFromString<LyricsResult>(romanizedFile(s.id).readText()) }.getOrNull() ?: return null
+        return LyricsState(s.id, r.lyrics, r.translations).also { synchronized(romanizedCache) { romanizedCache[romanizedKey(s.id)] = it } }
+    }
+
+    private fun romanize(s: Song, raw: LyricsResult): LyricsState {
+        val siblings = listOf(s.artistOriginal) + listOfNotNull(s.album?.name?.original)
+        val done = Store.romanizer.romanizeLyrics(raw.lyrics, siblings, s.id)
+        runCatching { romanizedFile(s.id).writeText(Store.json.encodeToString(LyricsResult(done, raw.translations, raw.rule))) }
+        return LyricsState(s.id, done, raw.translations).also { synchronized(romanizedCache) { romanizedCache[romanizedKey(s.id)] = it } }
+    }
+
+    /** After a romanization change: the kept romanizations no longer apply. */
+    fun forgetRomanizedLyrics() {
+        synchronized(romanizedCache) { romanizedCache.clear() }
+        scope.launch(Dispatchers.IO) { File(appContext.cacheDir, "lyrics").listFiles { f -> f.name.contains(".r") }?.forEach { it.delete() } }
     }
 
     /** Drops the cached lyrics and asks the providers again, e.g. after changing their order. */
     fun refetchLyrics() {
         val s = current()?.song ?: return
         File(appContext.cacheDir, "lyrics/${s.id}.json").delete()
+        romanizedFile(s.id).delete()
+        synchronized(romanizedCache) { romanizedCache.remove(romanizedKey(s.id)) }
         lyrics = null
         loadLyrics(s)
     }

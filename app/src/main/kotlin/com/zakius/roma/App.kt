@@ -158,6 +158,10 @@ object Store {
 
     // ---- Romanization ----
 
+    /** Changes with every romanization setting or correction change; it keys the kept romanized lyrics. */
+    val romanizationVersion get() = prefs.getInt("rom.cacheVersion", 0)
+    fun bumpRomanizationVersion() = prefs.edit().putInt("rom.cacheVersion", romanizationVersion + 1).apply()
+
     private fun romanizeSettings() = RomanizeSettings(
         japaneseMacrons = bool("rom.macrons", true),
         chineseTones = bool("rom.tones", true),
