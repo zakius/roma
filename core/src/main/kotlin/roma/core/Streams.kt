@@ -23,6 +23,7 @@ import org.schabi.newpipe.extractor.downloader.Response
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.StreamInfo
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /** A playable audio URL for one video. */
@@ -41,7 +42,7 @@ object Streams {
      */
     @Volatile var refuseVisionOs = false
 
-    /** The path that last found a stream for each song, tried first next time. In memory only. */
+    /** The path that last found a stream for each song, tried first next time. InnerTubeX ones are kept, see [keepIn]. */
     private val worked = java.util.concurrent.ConcurrentHashMap<String, Path>()
 
     private enum class Path { FAST, FULL, INNERTUBEX }
@@ -81,7 +82,10 @@ object Streams {
                     Path.FULL -> best(videoId, StreamInfo.getInfo(ServiceList.YouTube, watchUrl(videoId)).audioStreams)
                     Path.INNERTUBEX -> InnerTubeXStreams.audio(videoId, if (refuseVisionOs) setOf("VISIONOS") else emptySet())
                 }
-                worked[videoId] = path
+                val before = worked.put(videoId, path)
+                if (before != path && (path == Path.INNERTUBEX || before == Path.INNERTUBEX)) {
+                    note(videoId, if (path == Path.INNERTUBEX) "X ${System.currentTimeMillis()}" else "N")
+                }
                 return a
             } catch (e: Exception) {
                 if (path == Path.FAST) visitor = null // perhaps refused; the next fast path asks for fresh visitor data
@@ -134,7 +138,56 @@ object Streams {
      */
     fun loudness(videoId: String): Float? = loudnessDb[videoId]
 
-    internal fun putLoudness(videoId: String, db: Float) { loudnessDb[videoId] = db }
+    internal fun putLoudness(videoId: String, db: Float) {
+        if (loudnessDb.put(videoId, db) != db) note(videoId, "L $db")
+    }
+
+    private var file: File? = null
+
+    /**
+     * Keeps two facts per song across starts, one line per change in [f]: its loudness, and that only InnerTubeX found
+     * its stream. A song played to the end replays from the cache without a lookup, so without the first it would play
+     * at full loudness after a restart; without the second, the next start would first wait for the NewPipe paths
+     * YouTube refused (a second or more). An InnerTubeX mark lasts [FALLBACK_DAYS] days, so a song YouTube serves
+     * again gets the fast path back. Blocking: reads the file (at most about 150 KB) and compacts it.
+     */
+    fun keepIn(f: File) {
+        val loud = LinkedHashMap<String, Float>()
+        val fallback = HashMap<String, Long>()
+        val lines = runCatching { f.readLines() }.getOrDefault(emptyList())
+        for (line in lines) {
+            val p = line.split(' ')
+            when (p.getOrNull(1)) {
+                "L" -> p.getOrNull(2)?.toFloatOrNull()?.let { loud.remove(p[0]); loud[p[0]] = it }
+                "X" -> p.getOrNull(2)?.toLongOrNull()?.let { fallback[p[0]] = it }
+                "N" -> fallback.remove(p[0])
+            }
+        }
+        val since = System.currentTimeMillis() - FALLBACK_DAYS * 86_400_000L
+        fallback.values.removeAll { it < since }
+        val keep = loud.entries.toList().takeLast(5000)
+        for ((id, db) in keep) loudnessDb.putIfAbsent(id, db)
+        for ((id, at) in fallback) { worked.putIfAbsent(id, Path.INNERTUBEX); fallbackAt[id] = at }
+        if (lines.size > keep.size + fallback.size + 500) {
+            val tmp = File(f.path + ".tmp")
+            tmp.writeText(keep.joinToString("") { (id, db) -> "$id L $db\n" } + fallback.entries.joinToString("") { (id, at) -> "$id X $at\n" })
+            tmp.renameTo(f)
+        }
+        file = f
+    }
+
+    private val fallbackAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private const val FALLBACK_DAYS = 7
+
+    /** A song that only InnerTubeX could play in the last [FALLBACK_DAYS] days, the latest; null if none. */
+    fun recentFallback(): String? = fallbackAt.entries.maxByOrNull { it.value }?.key
+
+    private fun note(videoId: String, what: String) {
+        if (what.startsWith("X")) fallbackAt[videoId] = System.currentTimeMillis()
+        if (what == "N") fallbackAt.remove(videoId)
+        val f = file ?: return
+        synchronized(this) { runCatching { f.appendText("$videoId $what\n") } }
+    }
 }
 
 private val loudnessDb = java.util.concurrent.ConcurrentHashMap<String, Float>()
@@ -192,7 +245,7 @@ private class OkHttpDownloader(private val http: OkHttpClient) : Downloader() {
             if (r.isSuccessful && request.url().contains("/player")) {
                 val id = request.dataToSend()?.let { Regex(""""videoId":"([\w-]+)""").find(String(it)) }?.groupValues?.get(1)
                 val db = loudnessJson.find(text)?.groupValues?.get(1)?.toFloatOrNull()
-                if (id != null && db != null) loudnessDb[id] = db
+                if (id != null && db != null) Streams.putLoudness(id, db)
             }
             if (r.isSuccessful && request.url().contains("/visitor_id") && request.dataToSend()?.let { String(it) }?.contains(""""clientName":"VISIONOS"""") == true) {
                 visitorJson.find(text)?.let { visitor = it.groupValues[1] to System.currentTimeMillis() }
