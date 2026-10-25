@@ -473,8 +473,8 @@ class Section(val title: roma.core.Text, val items: List<Item>)
 private const val MIX_PAGES = 10
 
 /**
- * Home: the pinned "Your mixes" row, then YouTube's shelves. The first pages load until the mixes turn up (at most
- * [MIX_PAGES]); after that a page loads when the user nears the end.
+ * Home: the pinned "Your mixes" row, then YouTube's shelves. Signed in, the first [MIX_PAGES] pages load at once
+ * to collect the mixes; after that a page loads when the user nears the end.
  *
  * The state lives here rather than in the screen, so going back to Home shows it at once, where it was, and the
  * first page starts loading before the screen is drawn ([start] runs in MainActivity.onCreate). The last Home is
@@ -569,13 +569,16 @@ object Home {
             page++
             cont = next
             more = next != null
-            found += personalMixes(shelves.flatMap { it.items })
+            val before = found.size
+            found += personalMixes(shelves.flatMap { it.items }).filter { m -> found.none { it.id.removePrefix("VL") == m.id.removePrefix("VL") } }
             // The mixes live in the pinned row only.
             val add = shelves.map { Section(it.title, it.items.filterNot { i -> i.kind == "playlist" && isPersonalMix(i.id) }) }.filter { it.items.isNotEmpty() }
             fresh += add
             Store.writePage("home", fresh.toList(), ListSerializer(Section.serializer()))
             merge(add)
-            if (looking && (found.isNotEmpty() || page >= MIX_PAGES || !more)) {
+            // The mixes are spread over several pages (the numbered ones often come after the Supermix), so the
+            // row waits for the first MIX_PAGES pages; mixes on pages after those still join it.
+            if (looking && (page >= MIX_PAGES || !more) || !looking && found.size > before) {
                 looking = false
                 val m = personalMixes(found)
                 Store.mixes = m
