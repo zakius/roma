@@ -16,8 +16,8 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 24
-        versionName = "0.1.23"
+        versionCode = 25
+        versionName = "0.1.24"
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.
         buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
