@@ -115,6 +115,11 @@ class MainActivity : ComponentActivity() {
         controller = MediaController.Builder(this, SessionToken(this, ComponentName(this, PlaybackService::class.java))).buildAsync()
     }
 
+    override fun onResume() {
+        super.onResume()
+        Dictionary.resumed(this)
+    }
+
     override fun onStop() {
         controller?.let { MediaController.releaseFuture(it) }
         super.onStop()
@@ -197,6 +202,7 @@ fun Root() {
         // Picking a song jumps to the player, so leaving it returns to the list it was picked from.
         if (stack.isNotEmpty()) stack.removeAt(stack.size - 1) else if (tab == TAB_PLAYER) Nav.leavePlayer() else Nav.tab = TAB_HOME
     }
+    if (!Store.bool("setup.done", false)) return Box(Modifier.fillMaxSize().safeDrawingPadding()) { SetupScreen() }
     Playback.tick // redraw when the player changes, for the Player tab's dimming
     val loaded = Playback.player.mediaItemCount > 0 || Playback.pending != null || Playback.restoring
     androidx.compose.runtime.LaunchedEffect(tab, Nav.playerView) {

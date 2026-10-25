@@ -27,7 +27,11 @@ Requirements: JDK 21 and the Android SDK (compileSdk 37).
 
 The first build downloads SudachiDict (about 77 MB, checked against a pinned sha256) into the Gradle cache.
 
-Release builds are made with `tools/release.sh`: R8 shrinking, Zopfli-recompressed, signed with a key that you supply in `keystore.properties` (not in the repository).
+Release builds are made with `tools/release.sh`: R8 shrinking, Zopfli-recompressed, signed with a key that you supply in `keystore.properties` (not in the repository). A `v*` tag builds and publishes a GitHub release (`.github/workflows/release.yml`).
+
+## Install
+
+Get `roma-<version>.apk` from [Releases](https://github.com/zakius/roma/releases). If you want Japanese romanized, roma offers to install its Japanese dictionary on the first start: a separate app (`roma-dict-…`, a 74 MB download, 202 MB installed), so roma's own updates stay small.
 
 ## Credits
 

@@ -951,11 +951,17 @@ fun SettingsScreen() {
         Text("Scripts you read (shown as written, not romanized)", Modifier.padding(start = 16.dp, top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
         val read = Store.readScripts
         SCRIPTS.forEach { (k, label) ->
-            Row(Modifier.fillMaxWidth().clickable { Store.set(Store.READ_KEY, (if (k in read) read - k else read + k).joinToString(",")) }.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().clickable { Store.setReads(k, k !in read) }.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.Checkbox(k in read, null, Modifier.padding(end = 8.dp))
                 Text(label)
             }
         }
+        val dictionary = when {
+            Dictionary.installed -> "Installed"
+            Dictionary.status != null -> Dictionary.status!!
+            else -> "Not installed: kanji stay as written. Tap to install (${Dictionary.DOWNLOAD})"
+        }
+        Row1("Japanese dictionary", dictionary, enabled = !Dictionary.installed) { Store.setReads("ja", false) }
         Row1("Corrections: ${Store.romanizer.overrides.size}", "Export them to one file") { export.launch("roma-corrections.json") }
         Row1("Import corrections", "Replaces the current ones") { import.launch(arrayOf("application/json", "*/*")) }
         Store.romanizer.overrides.forEach { o ->
@@ -1022,6 +1028,36 @@ fun SettingsScreen() {
         Text("roma ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
     }
     editing?.let { (key, title) -> TextInputDialog(title, Store.str(key, ""), { editing = null }) { Store.set(key, it.trim()) } }
+}
+
+/**
+ * First start: which scripts to romanize. Japanese needs the dictionary app, fetched once if picked; the others need
+ * nothing. Unpicked scripts go into "scripts you read" and show as written. Shown until Continue.
+ */
+@Composable
+fun SetupScreen() {
+    Store.version
+    val read = Store.readScripts
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+        Text("Which scripts should roma romanize?", style = MaterialTheme.typography.headlineSmall)
+        Text("The others show as written. You can change this in Settings.", Modifier.padding(top = 8.dp, bottom = 16.dp), style = MaterialTheme.typography.bodyMedium)
+        SCRIPTS.forEach { (k, label) ->
+            Row(Modifier.fillMaxWidth().clickable { Store.set(Store.READ_KEY, (if (k in read) read - k else read + k).joinToString(",")) }, verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Checkbox(k !in read, null, Modifier.padding(end = 8.dp))
+                Column {
+                    Text(label)
+                    if (k == "ja") Text(if (Dictionary.installed) "Dictionary installed" else "Needs the Japanese dictionary: ${Dictionary.DOWNLOAD}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        androidx.compose.material3.Button(
+            onClick = {
+                Store.set("setup.done", true)
+                if ("ja" !in read) Dictionary.install(Store.context)
+            },
+            Modifier.padding(top = 24.dp).align(Alignment.End),
+        ) { Text("Continue") }
+    }
 }
 
 private val SCRIPTS = listOf("ja" to "Japanese", "zh" to "Chinese", "ko" to "Korean", "cyrillic" to "Cyrillic", "greek" to "Greek", "other" to "Other scripts")

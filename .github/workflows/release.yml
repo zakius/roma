@@ -1,0 +1,49 @@
+# A v* tag builds and signs the release (tools/release.sh) and publishes it as a GitHub release. The dictionary app
+# gets its own release, dict-<version>, the first time its version is seen; roma downloads it from there.
+# Secrets: KEYSTORE_BASE64 (the .jks, base64), STORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Android SDK and pigz
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "build-tools;37.0.0" > /dev/null
+          sudo apt-get install -y pigz > /dev/null
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$RUNNER_TEMP/release.jks" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
+      - name: Dictionary already released?
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          v=$(sed -n 's/^val sudachiVersion = "\(.*\)"/\1/p' core/build.gradle.kts)
+          echo "DICT=dict-$v" >> "$GITHUB_ENV"
+          # A released dictionary isn't rebuilt: release.sh skips it when the file exists.
+          mkdir -p dist
+          if gh release view "dict-$v" > /dev/null 2>&1; then gh release download "dict-$v" -D dist; fi
+      - run: tools/release.sh
+      - name: Publish
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          rm -f keystore.properties
+          if ! gh release view "$DICT" > /dev/null 2>&1; then
+            gh release create "$DICT" dist/roma-dict-*.apk.gz --title "Japanese dictionary ${DICT#dict-}" \
+              --notes "SudachiDict core ${DICT#dict-} as a companion app for roma; roma installs it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
+          fi
+          git log -1 --format=%B "$GITHUB_REF_NAME" | grep -v '^Co-Authored-By' > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" dist/roma-${GITHUB_REF_NAME#v}.apk --title "roma ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" --latest

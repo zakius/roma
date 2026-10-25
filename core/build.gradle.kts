@@ -32,12 +32,13 @@ dependencies {
     testImplementation("com.ibm.icu:icu4j:78.1")
 }
 
-// SudachiDict "core", downloaded once into the Gradle cache (202 MB unpacked, too big for git). The app ships it as
-// an asset; the JVM tests read it from here. To update: change the version and the zip's sha256 (docs/design.md).
+// SudachiDict "core", downloaded once into the Gradle cache (202 MB unpacked, too big for git). It ships as
+// an asset of the :dict companion app; the JVM tests read it from here. To update: change the version and the zip's sha256 (docs/design.md).
 val sudachiVersion = "20261015"
 val sudachiSha256 = "5cf5cb7f1ea943a988e2fb5d285a9a8b3538861faefa7a2604c2cd18c387f503"
 val sudachiDir = File(gradle.gradleUserHomeDir, "caches/roma/sudachi-core-$sudachiVersion")
 extra["sudachiAssets"] = File(sudachiDir, "assets")
+extra["sudachiVersion"] = sudachiVersion
 
 tasks.register("sudachiDict") {
     val assets = File(sudachiDir, "assets")

@@ -4,8 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-// The Japanese dictionary comes from :core's download (see core/build.gradle.kts).
+// The Japanese dictionary is a separate app, :dict; roma needs its version and where to fetch it.
 evaluationDependsOn(":core")
+val dictVersion = project(":core").extra["sudachiVersion"] as String
 
 android {
     namespace = "com.zakius.roma"
@@ -16,11 +17,17 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 28
-        versionName = "0.1.27"
+        versionCode = 29
+        versionName = "0.1.28"
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.
         buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
+        // The dictionary app, gzipped. `-Proma.dictBase=<url>` points a build at another folder holding it.
+        val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
+        buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.apk.gz\"")
+        buildConfigField("int", "DICT_VERSION", dictVersion)
+        buildConfigField("String", "DICT_PACKAGE", "\"com.zakius.roma.dict\"")
+        manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict"
     }
 
     // One APK for both: phones are arm64, the emulator x86_64. The only native code is androidx's tiny path library
@@ -28,7 +35,11 @@ android {
     defaultConfig { ndk { abiFilters += setOf("arm64-v8a", "x86_64") } }
 
     buildTypes {
-        debug { applicationIdSuffix = ".debug" }
+        debug {
+            applicationIdSuffix = ".debug"
+            buildConfigField("String", "DICT_PACKAGE", "\"com.zakius.roma.dict.debug\"")
+            manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict.debug"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -45,15 +56,12 @@ android {
     buildFeatures { compose = true; buildConfig = true }
     // Only the app's languages: libraries bring strings for about 80 locales.
     androidResources { localeFilters += setOf("en", "pl") }
-    sourceSets["main"].assets.srcDir(project(":core").extra["sudachiAssets"] as File)
     packaging {
         resources { excludes += setOf("META-INF/*.md", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "kotlin/**", "DebugProbesKt.bin", "META-INF/*.version") }
         // Native libraries compressed in the APK and unpacked at install (extractNativeLibs), as in tennessine.
         jniLibs { useLegacyPackaging = true }
     }
 }
-
-tasks.named("preBuild") { dependsOn(":core:sudachiDict") }
 
 dependencies {
     implementation(project(":core"))

@@ -44,8 +44,10 @@ class RomanizeSettings(
 class Override(val scope: String, val id: String, val original: String, val latin: String)
 
 /**
- * [dictionary] supplies SudachiDict's system_core.dic, memory-mapped, little-endian. It is called once, on the first
+ * [dictionary] supplies SudachiDict's system_core.dic, memory-mapped, little-endian. It is called on the first
  * Japanese string (or [warmUp]). By default it maps the file named by the system property roma.sudachi (the JVM tests).
+ * If it fails (not installed), Japanese gets kana-only romanization, kanji stay as they are, and the next try comes a
+ * minute later or after [retryDictionary].
  */
 class Romanizer(
     private val icu: Icu,
@@ -198,18 +200,37 @@ class Romanizer(
     // ---- Japanese ----
 
     // A Sudachi tokenizer isn't thread-safe: calls take turns on it (a line takes well under a millisecond).
-    private val tokenizer by lazy {
-        DictionaryFactory().create(Config.defaultConfig().systemDictionary(BinaryDictionary.loadSystem(dictionary()))).create()
+    @Volatile private var loaded: Tokenizer? = null
+    private var failedAt = 0L
+    private val tokenizerLock = Any()
+
+    private fun tokenizer(): Tokenizer? = loaded ?: synchronized(tokenizerLock) {
+        loaded ?: if (failedAt != 0L && System.currentTimeMillis() - failedAt < 60_000) null else runCatching {
+            DictionaryFactory().create(Config.defaultConfig().systemDictionary(BinaryDictionary.loadSystem(dictionary()))).create()
+        }.onSuccess { loaded = it }.onFailure { failedAt = System.currentTimeMillis() }.getOrNull()
     }
 
     /** Loads the dictionary now, so the first Japanese string doesn't wait for it. Call off the main thread. */
-    fun warmUp() { tokenizer }
+    fun warmUp() { tokenizer() }
+
+    /** The next Japanese string tries the dictionary again at once (it was just installed, or a setting changed). */
+    fun retryDictionary() = synchronized(tokenizerLock) { if (loaded == null) failedAt = 0L }
 
     private class Token(val surface: String, val reading: String, val pos: List<String>, val begin: Int, val end: Int)
 
-    private fun tokens(s: String): List<Token> = synchronized(tokenizer) {
+    private fun tokens(s: String): List<Token> {
+        val t = tokenizer() ?: return buildList {
+            // No dictionary: kana read as written, a run of kanji kept as it is (NO_DICTIONARY).
+            var begin = 0
+            for (i in 1..s.length) if (i == s.length || hasHan(s.substring(i - 1, i)) != hasHan(s.substring(i, i + 1))) {
+                val run = s.substring(begin, i)
+                val han = hasHan(run)
+                add(Token(run, if (han) "" else toKatakana(run), listOf(if (han) NO_DICTIONARY else "名詞"), begin, i))
+                begin = i
+            }
+        }
         // A morpheme's begin/end index the original text; surface() can be rewritten (君(きみ) keeps its yomigana).
-        tokenizer.tokenize(Tokenizer.SplitMode.C, s).map { Token(s.substring(it.begin(), it.end()), it.readingForm(), it.partOfSpeech(), it.begin(), it.end()) }
+        return synchronized(t) { t.tokenize(Tokenizer.SplitMode.C, s).map { Token(s.substring(it.begin(), it.end()), it.readingForm(), it.partOfSpeech(), it.begin(), it.end()) } }
     }
 
     /** (surface, romaji with its leading space) per token. In [title] case every word but a particle is capitalized. */
@@ -250,6 +271,7 @@ class Romanizer(
             val unknownHan = hasHan(surface) && t.reading.none(::isKana)
             val reading = if (japaneseText && !unknownHan) spoken(if (t.reading.none(::isKana)) toKatakana(surface) else t.reading, t, tokens.getOrNull(i + 1)) else null
             var romaji = when {
+                pos == NO_DICTIONARY -> surface
                 reading != null -> kana(reading)
                 hasNonLatin(surface) -> other(surface, title, cyrillicLanguage(surface))
                 else -> surface
@@ -389,6 +411,7 @@ class Romanizer(
     fun lookUp(word: String): List<WordInfo> {
         val n = normalize(word).trim()
         if (n.none(::isKana) && !hasHan(n)) return emptyList()
+        val tokenizer = tokenizer() ?: return emptyList()
         val ms = synchronized(tokenizer) { tokenizer.tokenize(Tokenizer.SplitMode.C, n).toList() }
         return ms.filter { it.partOfSpeech()[0] != "空白" }.map { m ->
             val reading = m.readingForm().takeIf { r -> r.any(::isKana) } ?: toKatakana(m.surface())
@@ -565,6 +588,7 @@ class Romanizer(
 
 
     companion object {
+        private const val NO_DICTIONARY = "辞書なし"
         fun isKana(c: Char) = (c in 'ぁ'..'ヺ') || c in 'ㇰ'..'ㇿ' || c in 'ｦ'..'ﾝ'
         fun hasHan(s: String) = s.codePoints().anyMatch { Character.UnicodeScript.of(it) == Character.UnicodeScript.HAN }
         fun hasNonLatin(s: String) = s.codePoints().anyMatch {

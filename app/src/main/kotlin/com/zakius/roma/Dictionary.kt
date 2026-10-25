@@ -1,0 +1,155 @@
+package com.zakius.roma
+
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
+import android.content.res.AssetManager
+import android.os.Build
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
+import java.io.FilterInputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.zip.GZIPInputStream
+import kotlin.concurrent.thread
+
+/**
+ * The Japanese dictionary is its own app (the :dict module): SudachiDict's 202 MB stored uncompressed, installed once
+ * next to roma, so roma's updates stay small and nothing is unpacked into storage. roma downloads it gzipped (about
+ * 74 MB, [BuildConfig.DICT_URL]) straight into a PackageInstaller session; Android asks the user to confirm. It is used
+ * only when it is signed with roma's own key and is at least [BuildConfig.DICT_VERSION].
+ */
+object Dictionary {
+    const val DOWNLOAD = "74 MB download, 202 MB on the phone"
+    private const val ACTION = "com.zakius.roma.DICTIONARY_INSTALL"
+
+    var installed by mutableStateOf(false)
+        private set
+    /** What the install is doing, or why it stopped; null when nothing happened yet. */
+    var status by mutableStateOf<String?>(null)
+        private set
+    private var busy = false
+    // Sent to Android's "install unknown apps" switch; checked again when roma comes back (MainActivity.onResume).
+    private var askedPermission = false
+    // Android's confirmation screen, kept in case it couldn't open while roma was in the background.
+    private var confirm: Intent? = null
+
+    fun init(app: Context) {
+        installed = runCatching { verify(app) }.isSuccess
+        ContextCompat.registerReceiver(app, object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) = finished(c, i)
+        }, IntentFilter(ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
+
+    private fun verify(c: Context) {
+        val pm = c.packageManager
+        check(pm.checkSignatures(c.packageName, BuildConfig.DICT_PACKAGE) == PackageManager.SIGNATURE_MATCH) { "The Japanese dictionary isn't installed" }
+        val p = pm.getPackageInfo(BuildConfig.DICT_PACKAGE, 0)
+        @Suppress("DEPRECATION") val version = if (Build.VERSION.SDK_INT >= 28) p.longVersionCode else p.versionCode.toLong()
+        check(version >= BuildConfig.DICT_VERSION) { "The Japanese dictionary is out of date" }
+    }
+
+    /** The dictionary app's assets; throws if it is missing, out of date or not signed by roma's key. */
+    fun assets(c: Context): AssetManager {
+        verify(c)
+        return c.createPackageContext(BuildConfig.DICT_PACKAGE, 0).assets
+    }
+
+    fun install(c: Context) {
+        val app = c.applicationContext
+        confirm?.let { runCatching { c.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }; return }
+        if (busy || installed) return
+        // Asked first: Android's own detour to this switch cancels the install, which would read as a refusal.
+        if (!app.packageManager.canRequestPackageInstalls()) {
+            askedPermission = true
+            status = "Allow roma to install apps, then come back"
+            c.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:${app.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        }
+        busy = true
+        status = "Downloading the Japanese dictionary…"
+        thread(name = "dictionary") {
+            val installer = app.packageManager.packageInstaller
+            var id = -1
+            try {
+                val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+                params.setAppPackageName(BuildConfig.DICT_PACKAGE)
+                id = installer.createSession(params)
+                installer.openSession(id).use { session ->
+                    val conn = URL(BuildConfig.DICT_URL).openConnection() as HttpURLConnection
+                    check(conn.responseCode == 200) { "The download answered HTTP ${conn.responseCode}" }
+                    val total = conn.contentLengthLong
+                    var read = 0L
+                    var shown = -1L
+                    val counted = object : FilterInputStream(conn.inputStream) {
+                        override fun read(b: ByteArray, off: Int, len: Int) = super.read(b, off, len).also {
+                            if (it > 0) read += it
+                            val percent = if (total > 0) read * 100 / total else read shr 20
+                            if (percent != shown) {
+                                shown = percent
+                                status = if (total > 0) "Downloading the Japanese dictionary… $percent%" else "Downloading the Japanese dictionary… $percent MB"
+                            }
+                        }
+                    }
+                    session.openWrite("dictionary.apk", 0, -1).use { out ->
+                        GZIPInputStream(counted, 1 shl 16).use { it.copyTo(out, 1 shl 16) }
+                        session.fsync(out)
+                    }
+                    status = "Installing the Japanese dictionary…"
+                    val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+                    session.commit(PendingIntent.getBroadcast(app, id, Intent(ACTION).setPackage(app.packageName), flags).intentSender)
+                }
+            } catch (e: Exception) {
+                if (id >= 0) runCatching { installer.abandonSession(id) }
+                busy = false
+                status = "Couldn't get the Japanese dictionary: ${plainError(e)}"
+            }
+        }
+    }
+
+    /** Back from the "install unknown apps" switch: on, the install goes on; off counts as declining. */
+    fun resumed(c: Context) {
+        if (!askedPermission) return
+        askedPermission = false
+        if (c.packageManager.canRequestPackageInstalls()) install(c) else declined()
+    }
+
+    private fun declined() {
+        // Japanese shows as written, until the user turns it on again in Settings.
+        confirm = null
+        busy = false
+        status = "Not installed: Japanese shows as written"
+        Store.setReads("ja", true)
+    }
+
+    private fun finished(c: Context, i: Intent) {
+        when (i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                confirm = IntentCompat.getParcelableExtra(i, Intent.EXTRA_INTENT, Intent::class.java)
+                status = "Confirm the installation"
+                confirm?.let { runCatching { c.startActivity(Intent(it).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+            }
+            PackageInstaller.STATUS_SUCCESS -> {
+                confirm = null
+                busy = false
+                installed = true
+                status = null
+                Store.romanizer.retryDictionary()
+                thread(name = "sudachi") { Store.romanizer.warmUp() }
+            }
+            PackageInstaller.STATUS_FAILURE_ABORTED -> declined()
+            else -> {
+                confirm = null
+                busy = false
+                status = "Couldn't install the Japanese dictionary: " + (i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "unknown reason")
+            }
+        }
+    }
+}

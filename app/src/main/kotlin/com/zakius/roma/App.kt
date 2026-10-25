@@ -3,7 +3,6 @@ package com.zakius.roma
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
-import android.content.res.AssetManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
@@ -24,7 +23,6 @@ import roma.core.Song
 import roma.core.again
 import roma.core.matchDistance
 import java.io.File
-import java.io.FileInputStream
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import kotlin.concurrent.thread
@@ -33,6 +31,7 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         Store.init(this)
+        Dictionary.init(this)
         Playback.init(this)
         thread(name = "sudachi") {
             // Below the UI threads, so unpacking and loading the dictionary doesn't slow the first frame.
@@ -66,32 +65,38 @@ object Store {
         private set
 
     val icu = Icu { id, text -> android.icu.text.Transliterator.getInstance(id).transliterate(text) }
-    private lateinit var assets: AssetManager
+    lateinit var context: Context
 
-    // The dictionary ships compressed (about 80 MB of the APK instead of 202 MB), so the first start unpacks it once to
-    // the cache; from then on it is memory-mapped from there and stays out of the heap. The file name carries the APK's
-    // asset size, so a new dictionary version replaces the old file.
+    // The dictionary is its own app (Dictionary.kt), stored uncompressed, so it is memory-mapped in place from that
+    // APK and stays out of the heap. Nothing is unpacked. While it is missing, or Japanese is in the scripts the user
+    // reads (then nothing would show the romaji), Japanese gets kana only and the dictionary isn't loaded.
     val romanizer = Romanizer(icu) {
-        val size = assets.open("system_core.dic").use { it.available().toLong() }
-        val file = File(cache, "sudachi-core-$size.dic")
-        if (file.length() != size) {
-            cache.listFiles { f -> f.name.startsWith("sudachi-") }?.forEach { it.delete() }
-            val tmp = File(cache, "sudachi.tmp")
-            assets.open("system_core.dic").use { input -> tmp.outputStream().use { input.copyTo(it, 1 shl 16) } }
-            tmp.renameTo(file)
+        try {
+            check("ja" !in readScripts) { "Japanese is read as written" }
+            val fd = Dictionary.assets(context).openFd("system_core.dic")
+            fd.createInputStream().channel.use { it.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.length) }.order(ByteOrder.LITTLE_ENDIAN)
+                .also {
+                    // Names romanized without it, in this run or an earlier one, are redone.
+                    if (prefs.getBoolean("dict.failed", false)) {
+                        prefs.edit().remove("dict.failed").apply()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post { Playback.romanizationChanged(); dataChanged() }
+                    }
+                }
+        } catch (e: Exception) {
+            prefs.edit().putBoolean("dict.failed", true).apply()
+            throw e
         }
-        FileInputStream(file).channel.use { it.map(FileChannel.MapMode.READ_ONLY, 0, file.length()) }.order(ByteOrder.LITTLE_ENDIAN)
     }
 
     fun init(c: Context) {
         prefs = c.getSharedPreferences("roma", Context.MODE_PRIVATE)
-        assets = c.assets
+        context = c.applicationContext
         files = c.filesDir
         cache = c.cacheDir
         pages = File(c.cacheDir, "pages")
         // Up to 0.1.26 these sat in filesDir and the mixes in prefs. Copied, not renamed: a renamed file keeps its
-        // group, and Android counts a file as cache by its group. The dictionary is just unpacked again.
-        files.listFiles { f -> f.name.startsWith("sudachi") }?.forEach { it.delete() }
+        // group, and Android counts a file as cache by its group. The dictionary unpacked by 0.1.27 and earlier goes.
+        listOf(files, cache).flatMap { it.listFiles().orEmpty().toList() }.filter { it.name.startsWith("sudachi") }.forEach { it.delete() }
         for (n in listOf("index.json", "liked.json", "streams.txt")) File(files, n).takeIf { it.exists() }?.let { runCatching { it.copyTo(File(cache, n), true) }; it.delete() }
         prefs.edit().remove("home.mixes").apply()
         romanizer.settings = romanizeSettings()
@@ -122,7 +127,10 @@ object Store {
             romanizer.settings = romanizeSettings()
             Playback.romanizationChanged()
         }
-        if (key == READ_KEY) Playback.romanizationChanged() // the notification's title follows
+        if (key == READ_KEY) {
+            Playback.romanizationChanged() // the notification's title follows
+            romanizer.retryDictionary() // Japanese read as written doesn't load the dictionary; romanized again, it does
+        }
         if (key.startsWith("rom.") || key == "cookie") dataChanged()
         version++
         if (key == "play.ahead" && value == true && Playback.player.isPlaying) Playback.downloadAhead()
@@ -234,6 +242,13 @@ object Store {
     fun shown(t: roma.core.Text) = if (reads(t.original)) t.original else t.latin
 
     const val READ_KEY = "display.read"
+
+    /** Japanese romanized again needs the dictionary app: its install starts here if it is missing. */
+    fun setReads(script: String, read: Boolean) {
+        val r = readScripts
+        set(READ_KEY, (if (read) r + script else r - script).joinToString(","))
+        if (script == "ja" && !read) Dictionary.install(context)
+    }
 
     /** "romanized", "both", "ruby" or "original". */
     val listMode get() = str("display.list", "both")
