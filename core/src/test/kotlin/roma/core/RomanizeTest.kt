@@ -312,4 +312,11 @@ class RomanizeTest {
         assertEquals("taberu", info.first().dictionaryRomaji)
         assertEquals("verb", info.first().partOfSpeech)
     }
+
+    @Test fun japaneseWithoutDictionary() {
+        // It crashed the app: lyrics romanized at launch before the dictionary app was installed.
+        val none = Romanizer(jvmIcu, dictionary = { error("no dictionary") })
+        assertEquals("Konnichiha", none.machine("こんにちは")) // kana read as written
+        none.machine("走って行く")
+    }
 }

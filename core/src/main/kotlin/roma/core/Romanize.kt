@@ -226,7 +226,8 @@ class Romanizer(
             for (i in 1..s.length) if (i == s.length || hasHan(s.substring(i - 1, i)) != hasHan(s.substring(i, i + 1))) {
                 val run = s.substring(begin, i)
                 val han = hasHan(run)
-                add(Token(run, if (han) "" else toKatakana(run), listOf(if (han) NO_DICTIONARY else "名詞"), begin, i))
+                // Six fields, like Sudachi's part of speech: the rules below read pos[1], pos[4] and pos[5].
+                add(Token(run, if (han) "" else toKatakana(run), listOf(if (han) NO_DICTIONARY else "名詞", "*", "*", "*", "*", "*"), begin, i))
                 begin = i
             }
         }

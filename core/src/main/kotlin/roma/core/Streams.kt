@@ -33,7 +33,10 @@ class AudioSource(val url: String, val mimeType: String, val bitrate: Int)
 class StreamException(message: String) : java.io.IOException(message)
 
 object Streams {
-    private val http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS).build()
+    // The disk cache keeps YouTube's player script (about 1 MB, a versioned URL served for a year) between runs for
+    // the full path, which downloaded it again in every run. java.io.tmpdir is the app's cache folder on Android.
+    private val http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS)
+        .cache(okhttp3.Cache(File(System.getProperty("java.io.tmpdir"), "streams_http"), 16L shl 20)).build()
     private var started = false
 
     /**

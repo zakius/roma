@@ -307,7 +307,7 @@ object Store {
     private var saveQueued = false
 
     /** Blocking: call it off the main thread. */
-    fun anySong(): Song? = indexThread.submit<Song?> { index.lastOrNull() }.get()
+    fun anySong(): Song? = indexThread.submit<Song?> { index.firstOrNull() }.get() // the newest: old ones may be gone
 
     fun remember(songs: List<Song>) {
         if (songs.isEmpty()) return

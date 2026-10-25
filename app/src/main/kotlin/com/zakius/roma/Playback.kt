@@ -130,6 +130,9 @@ object Playback {
         scope.launch {
             liked = withContext(Dispatchers.IO) { runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet()) }
             PlaybackService.instance?.updateLikeButton()
+            // The copy on disk serves meanwhile: the whole Likes playlist, page by page, would share the connection
+            // with Home's first request.
+            delay(5_000)
             syncLikes()
         }
         restore()
@@ -137,12 +140,15 @@ object Playback {
         watchHeadphones()
         scope.launch(Dispatchers.IO) {
             Streams.keepIn(File(c.cacheDir, "streams.txt"))
-            // The first stream lookup of a run also loads YouTube's player script (about 1 s more). Do it now, on a song
-            // seen before, so the first tap doesn't pay for it.
-            Store.anySong()?.let { s -> runCatching { streamUrl(s.id) } }
+            // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Do it now so the first
+            // tap doesn't pay for it, on the song Play would resume: its URL is then known too (kept 5 hours).
+            val resume = runCatching { positionFile.readText().substringBefore(' ') }.getOrNull()?.takeIf { !fullyCached(it) }
+            (resume ?: Store.anySong()?.id)?.let { id -> runCatching { streamUrl(id) } }
             // A song needed the InnerTubeX fallback in the last week: warm that path too (its player script, cipher
-            // config and the PoToken WebView, a few seconds cold), within the same limits as the guesses below.
+            // config and the PoToken WebView, a few seconds cold), within the same limits as the guesses below. Later,
+            // not at launch: creating the first WebView blocks the main thread while Home is still coming in.
             if (thrifty()) return@launch
+            delay(10_000)
             Streams.recentFallback()?.let { id -> runCatching { streamUrl(id) } }
         }
         player.addListener(object : Player.Listener {
@@ -683,27 +689,32 @@ object Playback {
 
     private fun restore() {
         scope.launch {
-            val (saved, position) = withContext(Dispatchers.IO) {
-                runCatching { Store.json.decodeFromString<Saved>(queueFile.readText()) }.getOrNull() to
-                    runCatching { positionFile.readText().split(" ").let { it[0] to it[1].toLong() } }.getOrNull()
-            }
-            // A song picked while the file was read wins.
-            if (saved != null && saved.songs.isNotEmpty() && player.mediaItemCount == 0 && pending == null) {
+            // Everything but handing the items to the player happens off the main thread: building a few hundred items
+            // reads settings per song, and the cache check waits until the audio cache has scanned its files.
+            val r = withContext(Dispatchers.IO) {
+                val saved = runCatching { Store.json.decodeFromString<Saved>(queueFile.readText()) }.getOrNull()?.takeIf { it.songs.isNotEmpty() }
+                    ?: return@withContext null
+                val position = runCatching { positionFile.readText().split(" ").let { it[0] to it[1].toLong() } }.getOrNull()
                 val index = saved.index.coerceIn(0, saved.songs.size - 1)
                 val id = saved.songs[index].id
-                val at = if (position?.first == id) position.second else 0L
+                Restored(saved, index, if (position?.first == id) position.second else 0L,
+                    saved.songs.mapIndexed { i, s -> mediaItem(Entry(s, saved.sections.getOrElse(i) { "queued" })) }, fullyCached(id))
+            }
+            // A song picked while the file was read wins.
+            if (r != null && player.mediaItemCount == 0 && pending == null) {
+                val saved = r.saved
                 radioSeed = saved.radioSeed
                 radioContinuation = saved.radioContinuation
                 mixId = saved.mixId
                 mixContinuation = saved.mixContinuation
                 shuffleOrder = saved.shuffleOrder
                 restoringNow = true
-                player.setMediaItems(saved.songs.mapIndexed { i, s -> mediaItem(Entry(s, saved.sections.getOrElse(i) { "queued" })) }, index, at)
+                player.setMediaItems(r.items, r.index, r.at)
                 player.repeatMode = saved.repeat
                 restoringNow = false
                 // A song fully on disk is prepared now; any other is prepared by Play, which reads what's cached
                 // before asking the network, so opening the app to browse costs no data.
-                if (fullyCached(id)) player.prepare()
+                if (r.cached) player.prepare()
             }
             restoring = false
             if (player.mediaItemCount == 0 && pending == null && Nav.tab == TAB_PLAYER) Nav.tab = TAB_HOME
@@ -711,6 +722,8 @@ object Playback {
             restoreWaiters.clear()
         }
     }
+
+    private class Restored(val saved: Saved, val index: Int, val at: Long, val items: List<MediaItem>, val cached: Boolean)
 
     /** The whole song is in the audio cache: it plays, seeks and repeats without the network. */
     fun fullyCached(id: String): Boolean {

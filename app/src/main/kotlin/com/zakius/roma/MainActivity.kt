@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -51,6 +52,9 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.snapshotFlow
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import roma.core.LastFm
@@ -95,9 +99,19 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // Asking again when it's granted still opens the system's permission activity over ours at every start.
+        // Back on Home leaves roma in the background instead of closing it, as Android 12+ does: the next start then
+        // finds the activity and its UI still there.
+        if (Build.VERSION.SDK_INT < 31) onBackPressedDispatcher.addCallback(this) { moveTaskToBack(true) }
+        // The media notification matters once something plays, so that's when it's asked for, and only once: asking at
+        // every start opened the system's permission activity over ours, even after the user refused for good.
         val notify = android.Manifest.permission.POST_NOTIFICATIONS
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(notify) != android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(notify), 0)
+        if (Build.VERSION.SDK_INT >= 33 && !Store.bool("notify.asked", false) && checkSelfPermission(notify) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            lifecycleScope.launch {
+                snapshotFlow { Playback.tick; Playback.player.isPlaying }.first { it }
+                Store.set("notify.asked", true)
+                requestPermissions(arrayOf(notify), 0)
+            }
+        }
         handleLastFm(intent)
         Home.start() // before the first frame, so Home's request and its disk copy are on their way
         setContent { Theme { Root() } }

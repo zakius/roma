@@ -20,7 +20,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="roma"
         android:icon="@android:drawable/ic_media_play"
-        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:theme="@style/Roma"
         android:supportsRtl="true">
         <activity
             android:name=".MainActivity"

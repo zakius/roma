@@ -1,0 +1,23 @@
+# Code ART compiles ahead of time: roma's own and the libraries its launch runs through. Compose and the other
+# androidx libraries bring their own rules. NewPipe, Rhino and Sudachi are left out: they run after launch.
+# tools/repack_apk.py embeds the merged profile so ART compiles it when the APK is installed.
+HSPLcom/zakius/roma/**->**(**)**
+Lcom/zakius/roma/**;
+HSPLroma/core/**->**(**)**
+Lroma/core/**;
+HSPLcom/metrolist/innertube/**->**(**)**
+Lcom/metrolist/innertube/**;
+HSPLio/ktor/**->**(**)**
+Lio/ktor/**;
+HSPLkotlinx/serialization/**->**(**)**
+Lkotlinx/serialization/**;
+HSPLokhttp3/**->**(**)**
+Lokhttp3/**;
+HSPLokio/**->**(**)**
+Lokio/**;
+HSPLandroidx/media3/**->**(**)**
+Landroidx/media3/**;
+HSPLcoil3/**->**(**)**
+Lcoil3/**;
+HSPLandroidx/compose/material3/**->**(**)**
+Landroidx/compose/material3/**;

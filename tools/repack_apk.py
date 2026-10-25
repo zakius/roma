@@ -4,9 +4,13 @@ stored and deflate entries. Deflated entries and the native libraries (useLegacy
 extractNativeLibs) are recompressed; stored ones (resources.arsc) stay stored. zipalign and
 signing come after. Taken from tennessine's tools/repack_apk.py.
 
+It also embeds AGP's baseline profile at assets/art-profile/baseline.prof, where ART (Android 15+) reads it when the
+APK is installed and compiles the profiled code. A sideloaded install otherwise runs uncompiled until the device's
+idle-time dexopt, and every update resets that. AGP only writes assets/dexopt/, which ProfileInstaller handles later.
+
 Usage: repack_apk.py IN OUT
 """
-import os, subprocess, sys, zipfile
+import json, os, subprocess, sys, zipfile
 
 
 class Zopfli:
@@ -39,6 +43,13 @@ def main():
             out.external_attr = info.external_attr
             out.compress_type = zipfile.ZIP_DEFLATED if deflate else zipfile.ZIP_STORED
             dst.writestr(out, src.read(info))
+        # The profile for API 31+ (format 015) from the .dm next to the input APK; it names the dex files by checksum,
+        # and the repack doesn't change their bytes.
+        built = os.path.dirname(sys.argv[1])
+        with open(os.path.join(built, 'output-metadata.json')) as f:
+            dm = next(p['baselineProfiles'][0] for p in json.load(f)['baselineProfiles'] if p['minApi'] >= 31)
+        with zipfile.ZipFile(os.path.join(built, dm)) as z:
+            dst.writestr(zipfile.ZipInfo('assets/art-profile/baseline.prof', (1981, 1, 1, 1, 1, 0)), z.read('primary.prof'))
 
 
 if __name__ == '__main__':
