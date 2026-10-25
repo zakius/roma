@@ -23,6 +23,8 @@
         android:icon="@android:drawable/ic_media_play"
         android:theme="@style/Roma"
         android:supportsRtl="true">
+        <!-- Lets simpleperf (record with the app flag) profile the release build on a phone; costs nothing at run time. -->
+        <profileable android:shell="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

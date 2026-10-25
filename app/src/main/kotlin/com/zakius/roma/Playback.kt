@@ -137,8 +137,9 @@ object Playback {
             syncLikes()
         } }
         Startup.later { restore() }
-        watchNetwork()
-        watchHeadphones()
+        // Two system-service registrations (binder calls into a system_server busy with the launch); nothing before the
+        // first frame plays or needs them, and online starts true.
+        Startup.later { watchNetwork(); watchHeadphones() }
         Startup.later { scope.launch(Dispatchers.IO) {
             Streams.keepIn(File(c.cacheDir, "streams.txt"))
             // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Do it now so the first

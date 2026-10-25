@@ -118,7 +118,7 @@ class MainActivity : ComponentActivity() {
         handleLastFm(intent)
         Home.start() // before the first frame, so Home's request and its disk copy are on their way
         setContent { Theme { Root() } }
-        Startup.mark("composed")
+        Startup.mark("content set") // the composition itself runs in the first traversal ("composed")
         val decor = window.decorView
         decor.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
@@ -132,7 +132,6 @@ class MainActivity : ComponentActivity() {
                 Startup.mark("drawing")
                 decor.post { // not from inside onDraw
                     decor.viewTreeObserver.removeOnDrawListener(this)
-                    Startup.dropGpu()
                     Startup.go()
                 }
             }
@@ -238,6 +237,7 @@ private fun accentScheme(s: androidx.compose.material3.ColorScheme, seed: Int, d
 
 @Composable
 fun Root() {
+    androidx.compose.runtime.SideEffect { if (Startup.marks.none { it.first == "composed" }) Startup.mark("composed") }
     val tab = Nav.tab
     val stack = Nav.stacks[tab]
     BackHandler(enabled = stack.isNotEmpty() || tab != TAB_HOME) {

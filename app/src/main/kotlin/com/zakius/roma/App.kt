@@ -32,9 +32,7 @@ import kotlin.concurrent.thread
 class App : Application() {
     override fun onCreate() {
         Startup.mark("app")
-        Startup.warmGpu() // first: the render thread sets up the GPU while the rest of start-up runs
         super.onCreate()
-        Startup.mark("gpu")
         coil3.SingletonImageLoader.setSafe { c ->
             // The network fetcher named here instead of found by a ServiceLoader scan of the APK on the first image.
             coil3.ImageLoader.Builder(c).serviceLoaderEnabled(false).components { add(OkHttpNetworkFetcherFactory()) }.build()
@@ -65,7 +63,9 @@ class App : Application() {
  */
 object Startup {
     private val t0 = android.os.Process.getStartUptimeMillis()
-    val marks = ArrayList<Pair<String, Long>>() // step, ms after the process started; main thread only
+    // Step, ms after the process started; main thread only. Snapshot state: Settings' readout composed in the first
+    // frame redraws when the marks after it (laid out, drawing) arrive.
+    val marks = androidx.compose.runtime.mutableStateListOf<Pair<String, Long>>()
 
     fun mark(step: String) { marks += step to android.os.SystemClock.uptimeMillis() - t0 }
 
@@ -83,30 +83,6 @@ object Startup {
         later.forEach { it() }
         later.clear()
     }
-
-    // ponytail: GPU set-up overlap, one 1×1 frame; the renderer is dropped after the first real frame.
-    private var gpu: Pair<android.graphics.HardwareRenderer, android.media.ImageReader>? = null
-
-    /**
-     * Has the render thread set up the GPU (driver, context, shader cache) while roma starts, by drawing one pixel
-     * off screen. All renderers in a process share that thread and its GPU context, so the first real frame doesn't
-     * wait for the set-up; otherwise it starts only when the activity launches.
-     */
-    fun warmGpu() {
-        if (android.os.Build.VERSION.SDK_INT < 29) return
-        thread(name = "gpu") { // syncAndDraw waits for the render thread
-            val reader = android.media.ImageReader.newInstance(1, 1, android.graphics.PixelFormat.RGBA_8888, 1, android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
-            val node = android.graphics.RenderNode("warm").apply { setPosition(0, 0, 1, 1); beginRecording().drawColor(0); endRecording() }
-            val r = android.graphics.HardwareRenderer().apply { setContentRoot(node); setSurface(reader.surface) }
-            r.createRenderRequest().syncAndDraw()
-            synchronized(this) { if (gpuDone) { r.destroy(); reader.close() } else gpu = r to reader }
-        }
-    }
-
-    private var gpuDone = false
-
-    @Synchronized
-    fun dropGpu() { gpuDone = true; gpu?.let { (r, reader) -> r.destroy(); reader.close() }; gpu = null }
 
     /** One line per recent start that Android recorded (API 35+): its kind and its steps, in ms after the tap. */
     fun recorded(c: Context): List<String> {
