@@ -1,6 +1,7 @@
 # A v* tag builds and signs the release (tools/release.sh) and publishes it as a GitHub release. The dictionary app
 # gets its own release, dict-<version>, the first time its version is seen; roma downloads it from there. The app and
-# the dictionary build in parallel jobs; roma's release is published only once its dictionary release exists.
+# the dictionary build in parallel jobs, and the core tests (which need the slim dictionary) in a third; roma's release
+# is published only once its dictionary release exists and the tests pass.
 # Secrets: KEYSTORE_BASE64 (the .jks, base64), STORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD.
 name: release
 on:
@@ -32,6 +33,15 @@ jobs:
       - run: tools/release.sh app
       - uses: actions/upload-artifact@v4
         with: { name: app, path: dist/roma-*.apk }
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: 21 }
+      - uses: gradle/actions/setup-gradle@v5
+      - run: tools/release.sh test
 
   # Built only when its version has no release yet; otherwise this job ends after one API call.
   dict:
@@ -75,7 +85,7 @@ jobs:
             --notes "SudachiDict core ${DICT#dict-} as a companion app for roma, without what roma never reads (postal addresses, split and synonym data; duplicate cost rows merged). roma installs it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
 
   publish:
-    needs: [app, dict]
+    needs: [app, dict, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

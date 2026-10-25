@@ -127,6 +127,7 @@ object Playback {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .setLoadControl(AheadLoadControl(load))
             .build()
+        Startup.mark("exoplayer")
         Startup.later { scope.launch {
             liked = withContext(Dispatchers.IO) { runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet()) }
             PlaybackService.instance?.updateLikeButton()

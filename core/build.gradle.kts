@@ -91,14 +91,21 @@ val sudachiSlim = tasks.register<JavaExec>("sudachiSlim") {
     }
 }
 evaluationDependsOn(":dictslim")
-sourceSets["main"].resources.srcDir(slimConfig)
-tasks.named("processResources") { dependsOn(sudachiSlim) }
 tasks.named("sudachiSlim") { dependsOn(":dictslim:classes") }
 
+// The slim build's config files are committed in src/main/resources, so building roma never downloads or slims the
+// dictionary; only the tests and the :dict app need it. The tests check the committed copies are the current ones.
 tasks.test {
     useJUnitPlatform()
     dependsOn(sudachiSlim)
     systemProperty("roma.sudachi", File(slimDict, "system_core.dic").path)
+    doFirst {
+        for (name in listOf("roma-sudachi.json", "roma-unk.def")) {
+            val built = File(slimConfig, name)
+            val committed = file("src/main/resources/$name")
+            check(built.readText() == committed.readText()) { "$committed is out of date: copy $built over it" }
+        }
+    }
 }
 
 tasks.register<JavaExec>("networkCheck") {

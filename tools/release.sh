@@ -4,8 +4,8 @@
 #   dist/roma-dict-<dictionary version>.apk.gz: the Japanese dictionary app (:dict), only when that file is missing.
 #     The APK keeps the dictionary uncompressed (roma maps it in place); the gzip is only for the download.
 # roma fetches the dictionary from its GitHub release (dict-<version>), or from ROMA_DICT_BASE if set.
-# Usage: release.sh [app] [dict]; both by default. The GitHub workflow (.github/workflows/release.yml) builds them in
-# separate jobs for a v* tag.
+# Usage: release.sh [app] [dict] [test]; all three by default (test: the core tests, which need the slim dictionary).
+# The GitHub workflow (.github/workflows/release.yml) runs them in separate jobs for a v* tag.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export JAVA_HOME=${JAVA_HOME:-$HOME/.local/share/JetBrains/Toolbox/apps/air/jbr}
@@ -15,14 +15,17 @@ tools=$(ls -d "$sdk/build-tools/"* | sort -V | tail -n 1)
 version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
 dictVersion=$(sed -n 's/^val dictRelease = "\(.*\)"/\1/p' core/build.gradle.kts)
 dict="dist/roma-dict-$dictVersion.apk.gz"
-parts=" ${*:-app dict} "
-app=; buildDict=
+parts=" ${*:-app dict test} "
+app=; buildDict=; test=
 [[ $parts == *" app "* ]] && app=1
 [[ $parts == *" dict "* && ! -f $dict ]] && buildDict=1
+[[ $parts == *" test "* ]] && test=1
 tasks=()
-[ -n "$app" ] && tasks+=(:core:test :app:assembleRelease)
+[ -n "$test" ] && tasks+=(:core:test)
+[ -n "$app" ] && tasks+=(:app:assembleRelease)
 [ -n "$buildDict" ] && tasks+=(:dict:assembleRelease)
 ./gradlew -q "${tasks[@]}" ${ROMA_DICT_BASE:+-Proma.dictBase=$ROMA_DICT_BASE}
+[ -n "$app$buildDict" ] || exit 0 # tests only: nothing to sign
 source <(sed 's/^\([a-zA-Z]*\)=\(.*\)$/\1="\2"/' keystore.properties)
 sign() { "$tools/apksigner" sign --ks "$storeFile" --ks-pass "pass:$storePassword" --ks-key-alias "$keyAlias" --key-pass "pass:$keyPassword" --out "$2" "$1"; rm -f "$2.idsig"; }
 mkdir -p dist

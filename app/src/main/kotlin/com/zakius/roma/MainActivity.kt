@@ -120,9 +120,16 @@ class MainActivity : ComponentActivity() {
         setContent { Theme { Root() } }
         Startup.mark("composed")
         val decor = window.decorView
+        decor.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                Startup.mark("laid out") // measured and laid out; drawing comes next
+                decor.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
         decor.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
             override fun onDraw() {
-                Startup.mark("first frame")
+                Startup.mark("drawing")
                 decor.post { // not from inside onDraw
                     decor.viewTreeObserver.removeOnDrawListener(this)
                     Startup.dropGpu()

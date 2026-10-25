@@ -34,12 +34,16 @@ class App : Application() {
         Startup.mark("app")
         Startup.warmGpu() // first: the render thread sets up the GPU while the rest of start-up runs
         super.onCreate()
+        Startup.mark("gpu")
         coil3.SingletonImageLoader.setSafe { c ->
             // The network fetcher named here instead of found by a ServiceLoader scan of the APK on the first image.
             coil3.ImageLoader.Builder(c).serviceLoaderEnabled(false).components { add(OkHttpNetworkFetcherFactory()) }.build()
         }
+        Startup.mark("images")
         Store.init(this)
+        Startup.mark("store")
         Dictionary.init(this)
+        Startup.mark("dictionary")
         Playback.init(this)
         Startup.mark("app ready")
         Startup.later {
