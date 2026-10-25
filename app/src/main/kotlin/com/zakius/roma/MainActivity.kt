@@ -111,6 +111,7 @@ class MainActivity : ComponentActivity() {
     // Binding a controller starts the service, which then shows the media notification while playing.
     override fun onStart() {
         super.onStart()
+        Home.start() // back in the foreground: a Home older than 30 minutes loads again behind the shown one
         controller = MediaController.Builder(this, SessionToken(this, ComponentName(this, PlaybackService::class.java))).buildAsync()
     }
 
