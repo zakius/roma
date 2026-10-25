@@ -97,7 +97,6 @@ class MainActivity : ComponentActivity() {
     private var controller: ListenableFuture<MediaController>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        Startup.mark("screen")
         super.onCreate(savedInstanceState)
         // The splash goes the moment roma's first frame is ready, instead of after Android's fade-out (about 130 ms).
         if (Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { it.remove() }
@@ -118,18 +117,10 @@ class MainActivity : ComponentActivity() {
         handleLastFm(intent)
         Home.start() // before the first frame, so Home's request and its disk copy are on their way
         setContent { Theme { Root() } }
-        Startup.mark("content set") // the composition itself runs in the first traversal ("composed")
+        // The first frame is drawn: the start-up work that waited for it runs.
         val decor = window.decorView
-        decor.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
-            override fun onPreDraw(): Boolean {
-                Startup.mark("laid out") // measured and laid out; drawing comes next
-                decor.viewTreeObserver.removeOnPreDrawListener(this)
-                return true
-            }
-        })
         decor.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
             override fun onDraw() {
-                Startup.mark("drawing")
                 decor.post { // not from inside onDraw
                     decor.viewTreeObserver.removeOnDrawListener(this)
                     Startup.go()
@@ -237,7 +228,6 @@ private fun accentScheme(s: androidx.compose.material3.ColorScheme, seed: Int, d
 
 @Composable
 fun Root() {
-    androidx.compose.runtime.SideEffect { if (Startup.marks.none { it.first == "composed" }) Startup.mark("composed") }
     val tab = Nav.tab
     val stack = Nav.stacks[tab]
     BackHandler(enabled = stack.isNotEmpty() || tab != TAB_HOME) {

@@ -29,21 +29,12 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import kotlin.concurrent.thread
 
-class App : Application() {
+class App : Application(), coil3.SingletonImageLoader.Factory {
     override fun onCreate() {
-        Startup.mark("app")
         super.onCreate()
-        coil3.SingletonImageLoader.setSafe { c ->
-            // The network fetcher named here instead of found by a ServiceLoader scan of the APK on the first image.
-            coil3.ImageLoader.Builder(c).serviceLoaderEnabled(false).components { add(OkHttpNetworkFetcherFactory()) }.build()
-        }
-        Startup.mark("images")
         Store.init(this)
-        Startup.mark("store")
         Dictionary.init(this)
-        Startup.mark("dictionary")
         Playback.init(this)
-        Startup.mark("app ready")
         Startup.later {
             thread(name = "sudachi") {
                 // Below the UI threads, so loading the dictionary doesn't slow them.
@@ -55,25 +46,19 @@ class App : Application() {
             thread(name = "images") { coil3.SingletonImageLoader.get(this) } // built before the first picture needs it
         }
     }
+
+    // Coil asks the application for its image loader when the first picture needs it, so start-up registers nothing.
+    // The network fetcher is named here instead of found by a ServiceLoader scan of the APK.
+    override fun newImageLoader(context: coil3.PlatformContext) =
+        coil3.ImageLoader.Builder(context).serviceLoaderEnabled(false).components { add(OkHttpNetworkFetcherFactory()) }.build()
 }
 
-/**
- * When this run's start-up steps happened, for Settings → Start-up: the time from tapping the icon to roma's first frame
- * can't be measured on the user's phone otherwise. Android 15+ also records the steps before roma's code runs.
- */
+/** Work the first frame doesn't need waits until it is drawn, so it doesn't compete with it for the CPU or the main thread. */
 object Startup {
-    private val t0 = android.os.Process.getStartUptimeMillis()
-    // Step, ms after the process started; main thread only. Snapshot state: Settings' readout composed in the first
-    // frame redraws when the marks after it (laid out, drawing) arrive.
-    val marks = androidx.compose.runtime.mutableStateListOf<Pair<String, Long>>()
-
-    fun mark(step: String) { marks += step to android.os.SystemClock.uptimeMillis() - t0 }
-
     private var started = false
     private val later = ArrayList<() -> Unit>()
 
-    /** Runs [f] once roma's first frame is drawn (or now, if it was): work that frame doesn't need waits until then,
-     *  so it doesn't compete with it for the CPU or the main thread. Main thread only. */
+    /** Runs [f] once roma's first frame is drawn (or now, if it was). Main thread only. */
     fun later(f: () -> Unit) { if (started) f() else later += f }
 
     /** The first frame is drawn, or the media service started without a screen: the deferred work runs now. */
@@ -82,25 +67,6 @@ object Startup {
         started = true
         later.forEach { it() }
         later.clear()
-    }
-
-    /** One line per recent start that Android recorded (API 35+): its kind and its steps, in ms after the tap. */
-    fun recorded(c: Context): List<String> {
-        if (android.os.Build.VERSION.SDK_INT < 35) return emptyList()
-        val names = mapOf(
-            android.app.ApplicationStartInfo.START_TIMESTAMP_FORK to "process",
-            android.app.ApplicationStartInfo.START_TIMESTAMP_BIND_APPLICATION to "bind",
-            android.app.ApplicationStartInfo.START_TIMESTAMP_APPLICATION_ONCREATE to "app",
-            android.app.ApplicationStartInfo.START_TIMESTAMP_FIRST_FRAME to "first frame",
-            android.app.ApplicationStartInfo.START_TIMESTAMP_SURFACEFLINGER_COMPOSITION_COMPLETE to "on screen",
-        )
-        val kinds = mapOf(android.app.ApplicationStartInfo.START_TYPE_COLD to "cold", android.app.ApplicationStartInfo.START_TYPE_WARM to "warm", android.app.ApplicationStartInfo.START_TYPE_HOT to "hot")
-        return c.getSystemService(android.app.ActivityManager::class.java).getHistoricalProcessStartReasons(5).map { info ->
-            val ts = info.startupTimestamps // ns, elapsed realtime
-            val launch = ts[android.app.ApplicationStartInfo.START_TIMESTAMP_LAUNCH] ?: ts.values.minOrNull() ?: 0L
-            val steps = names.mapNotNull { (k, n) -> ts[k]?.let { "$n ${(it - launch) / 1_000_000}" } }
-            "${kinds[info.startType] ?: "?"}: " + steps.joinToString(" · ")
-        }
     }
 }
 

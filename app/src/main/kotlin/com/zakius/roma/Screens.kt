@@ -1036,12 +1036,6 @@ fun SettingsScreen() {
             else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LastFm(Store.str("lastfm.key", ""), "").authUrl("roma://lastfm"))))
         }
 
-        Header("Start-up")
-        // ms after the process started (this run), and after the tap for the starts Android recorded.
-        Text(Startup.marks.distinctBy { it.first }.joinToString(" · ") { "${it.first} ${it.second}" }, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
-        val recorded = remember { Startup.recorded(context) }
-        recorded.forEach { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 2.dp), style = MaterialTheme.typography.bodySmall) }
-
         Text("roma ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
     }
     editing?.let { (key, title) -> TextInputDialog(title, Store.str(key, ""), { editing = null }) { Store.set(key, it.trim()) } }
