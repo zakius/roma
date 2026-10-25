@@ -12,7 +12,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 sdk=${ANDROID_HOME:-$HOME/Android/Sdk}
 tools=$(ls -d "$sdk/build-tools/"* | sort -V | tail -n 1)
 version=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
-dictVersion=$(sed -n 's/^val sudachiVersion = "\(.*\)"/\1/p' core/build.gradle.kts)
+dictVersion=$(sed -n 's/^val dictRelease = "\(.*\)"/\1/p' core/build.gradle.kts)
 dict="dist/roma-dict-$dictVersion.apk.gz"
 tasks=(:core:test :app:assembleRelease)
 [ -f "$dict" ] || tasks+=(:dict:assembleRelease)

@@ -32,7 +32,7 @@ jobs:
       - name: Dictionary already released?
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          v=$(sed -n 's/^val sudachiVersion = "\(.*\)"/\1/p' core/build.gradle.kts)
+          v=$(sed -n 's/^val dictRelease = "\(.*\)"/\1/p' core/build.gradle.kts)
           echo "DICT=dict-$v" >> "$GITHUB_ENV"
           # A released dictionary isn't rebuilt: release.sh skips it when the file exists.
           mkdir -p dist
@@ -44,7 +44,7 @@ jobs:
           rm -f keystore.properties
           if ! gh release view "$DICT" > /dev/null 2>&1; then
             gh release create "$DICT" dist/roma-dict-*.apk.gz --title "Japanese dictionary ${DICT#dict-}" \
-              --notes "SudachiDict core ${DICT#dict-} as a companion app for roma; roma installs it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
+              --notes "SudachiDict core ${DICT#dict-} as a companion app for roma, without what roma never reads (postal addresses, split and synonym data; duplicate cost rows merged). roma installs it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
           fi
           # Notes: the version's own commit ("0.1.28: …"), which may sit below later fixes on the tag.
           git log -1 --format=%B --grep "^${GITHUB_REF_NAME#v}:" "$GITHUB_REF_NAME" | grep -v '^Co-Authored-By' > "$RUNNER_TEMP/notes.md"

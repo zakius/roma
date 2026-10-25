@@ -118,6 +118,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Dictionary.resumed(this)
+        Dictionary.ensure(this)
     }
 
     override fun onStop() {

@@ -6,7 +6,7 @@ plugins {
 
 // The Japanese dictionary is a separate app, :dict; roma needs its version and where to fetch it.
 evaluationDependsOn(":core")
-val dictVersion = project(":core").extra["sudachiVersion"] as String
+val dictVersion = project(":core").extra["dictRelease"] as String
 
 android {
     namespace = "com.zakius.roma"
@@ -17,15 +17,15 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 29
-        versionName = "0.1.28"
+        versionCode = 30
+        versionName = "0.1.29"
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.
         buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
         // The dictionary app, gzipped. `-Proma.dictBase=<url>` points a build at another folder holding it.
         val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
         buildConfigField("String", "DICT_URL", "\"$dictBase/roma-dict-$dictVersion.apk.gz\"")
-        buildConfigField("int", "DICT_VERSION", dictVersion)
+        buildConfigField("int", "DICT_VERSION", (project(":core").extra["dictCode"] as Int).toString())
         buildConfigField("String", "DICT_PACKAGE", "\"com.zakius.roma.dict\"")
         manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict"
     }

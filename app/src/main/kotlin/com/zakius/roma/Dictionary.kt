@@ -21,13 +21,13 @@ import java.util.zip.GZIPInputStream
 import kotlin.concurrent.thread
 
 /**
- * The Japanese dictionary is its own app (the :dict module): SudachiDict's 202 MB stored uncompressed, installed once
+ * The Japanese dictionary is its own app (the :dict module): slimmed SudachiDict, 107 MB stored uncompressed, installed once
  * next to roma, so roma's updates stay small and nothing is unpacked into storage. roma downloads it gzipped (about
- * 74 MB, [BuildConfig.DICT_URL]) straight into a PackageInstaller session; Android asks the user to confirm. It is used
+ * 46 MB, [BuildConfig.DICT_URL]) straight into a PackageInstaller session; Android asks the user to confirm. It is used
  * only when it is signed with roma's own key and is at least [BuildConfig.DICT_VERSION].
  */
 object Dictionary {
-    const val DOWNLOAD = "74 MB download, 202 MB on the phone"
+    const val DOWNLOAD = "46 MB download, 107 MB on the phone"
     private const val ACTION = "com.zakius.roma.DICTIONARY_INSTALL"
 
     var installed by mutableStateOf(false)
@@ -112,6 +112,15 @@ object Dictionary {
                 status = "Couldn't get the Japanese dictionary: ${plainError(e)}"
             }
         }
+    }
+
+    /**
+     * Japanese is romanized but the dictionary is missing or older than this roma needs (after an update of roma):
+     * the install starts by itself, once per run; a refusal or failure leaves it to Settings.
+     */
+    fun ensure(c: Context) {
+        installed = runCatching { verify(c) }.isSuccess
+        if (!installed && status == null && Store.bool("setup.done", false) && "ja" !in Store.readScripts) install(c)
     }
 
     /** Back from the "install unknown apps" switch: on, the install goes on; off counts as declining. */

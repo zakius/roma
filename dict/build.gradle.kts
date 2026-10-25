@@ -16,12 +16,12 @@ android {
         applicationId = "com.zakius.roma.dict"
         minSdk = 26
         targetSdk = 36
-        versionCode = (project(":core").extra["sudachiVersion"] as String).toInt()
-        versionName = project(":core").extra["sudachiVersion"] as String
+        versionCode = project(":core").extra["dictCode"] as Int
+        versionName = project(":core").extra["dictRelease"] as String
     }
     buildTypes { debug { applicationIdSuffix = ".debug" } }
     androidResources { noCompress += "dic" }
-    sourceSets["main"].assets.srcDir(project(":core").extra["sudachiAssets"] as File)
+    sourceSets["main"].assets.srcDir(project(":core").extra["sudachiSlimAssets"] as File)
 }
 
-tasks.named("preBuild") { dependsOn(":core:sudachiDict") }
+tasks.named("preBuild") { dependsOn(":core:sudachiSlim") }

@@ -32,13 +32,19 @@ dependencies {
     testImplementation("com.ibm.icu:icu4j:78.1")
 }
 
-// SudachiDict "core", downloaded once into the Gradle cache (202 MB unpacked, too big for git). It ships as
+// SudachiDict "core", downloaded once into the Gradle cache (202 MB unpacked, too big for git). Its slim build ships as
 // an asset of the :dict companion app; the JVM tests read it from here. To update: change the version and the zip's sha256 (docs/design.md).
 val sudachiVersion = "20261015"
 val sudachiSha256 = "5cf5cb7f1ea943a988e2fb5d285a9a8b3538861faefa7a2604c2cd18c387f503"
 val sudachiDir = File(gradle.gradleUserHomeDir, "caches/roma/sudachi-core-$sudachiVersion")
 extra["sudachiAssets"] = File(sudachiDir, "assets")
 extra["sudachiVersion"] = sudachiVersion
+// The dictionary app's release: the SudachiDict version, then roma's slimming revision (bump it when Slim.kt changes
+// what it writes). Its versionCode is the two run together: 20261015.1 -> 202610151.
+val dictRelease = "20261015.1"
+check(dictRelease.startsWith("$sudachiVersion.")) { "dictRelease must start with sudachiVersion" }
+extra["dictRelease"] = dictRelease
+extra["dictCode"] = dictRelease.replace(".", "").toInt()
 
 tasks.register("sudachiDict") {
     val assets = File(sudachiDir, "assets")
@@ -60,15 +66,44 @@ tasks.register("sudachiDict") {
     }
 }
 
+// The dictionary roma ships: SudachiDict core minus what roma never reads (:dictslim, docs/design.md). The renumbered
+// unknown-word definitions and config go into this module's resources; the dictionary into the :dict app.
+val slimDir = File(sudachiDir, "slim")
+val slimDict = File(slimDir, "dict")
+val slimConfig = File(slimDir, "config")
+extra["sudachiSlimAssets"] = slimDict
+val sudachiSlim = tasks.register<JavaExec>("sudachiSlim") {
+    dependsOn("sudachiDict")
+    classpath = project(":dictslim").extensions.getByType<SourceSetContainer>()["main"].runtimeClasspath
+    mainClass = "SlimKt"
+    maxHeapSize = "6g"
+    args(File(sudachiDir, "assets/system_core.dic").path, slimDir.path + "/build", sudachiVersion)
+    outputs.dirs(slimDict, slimConfig)
+    onlyIf { !File(slimDict, "system_core.dic").exists() }
+    doLast {
+        val built = File(slimDir, "build")
+        slimDict.mkdirs(); slimConfig.mkdirs()
+        File(built, "roma-sudachi.json").renameTo(File(slimConfig, "roma-sudachi.json"))
+        File(built, "roma-unk.def").renameTo(File(slimConfig, "roma-unk.def"))
+        File(sudachiDir, "assets/sudachi-LEGAL.txt").copyTo(File(slimDict, "sudachi-LEGAL.txt"), true)
+        File(built, "system_core.dic").renameTo(File(slimDict, "system_core.dic"))
+        built.deleteRecursively()
+    }
+}
+evaluationDependsOn(":dictslim")
+sourceSets["main"].resources.srcDir(slimConfig)
+tasks.named("processResources") { dependsOn(sudachiSlim) }
+tasks.named("sudachiSlim") { dependsOn(":dictslim:classes") }
+
 tasks.test {
     useJUnitPlatform()
-    dependsOn("sudachiDict")
-    systemProperty("roma.sudachi", File(sudachiDir, "assets/system_core.dic").path)
+    dependsOn(sudachiSlim)
+    systemProperty("roma.sudachi", File(slimDict, "system_core.dic").path)
 }
 
 tasks.register<JavaExec>("networkCheck") {
     classpath = sourceSets["test"].runtimeClasspath
-    dependsOn("sudachiDict")
-    systemProperty("roma.sudachi", File(sudachiDir, "assets/system_core.dic").path)
+    dependsOn(sudachiSlim)
+    systemProperty("roma.sudachi", File(slimDict, "system_core.dic").path)
     mainClass = (project.findProperty("main") as String?) ?: "roma.core.NetworkCheckKt"
 }

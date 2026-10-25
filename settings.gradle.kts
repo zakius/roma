@@ -23,4 +23,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "roma"
-include(":core", ":app", ":dict")
+include(":core", ":app", ":dict", ":dictslim")
