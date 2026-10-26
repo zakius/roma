@@ -20,6 +20,12 @@ class Text(val original: String, val latin: String) {
 }
 
 /** ICU transliteration, supplied by the platform: android.icu on Android, ICU4J on a desktop JVM. */
+/** Kept [Romanizer.machine] results by key; called from any thread. */
+interface RomanizeCache {
+    fun get(key: String): String?
+    fun put(key: String, value: String)
+}
+
 fun interface Icu {
     fun transliterate(id: String, text: String): String
 }
@@ -54,6 +60,13 @@ class Romanizer(
     var settings: RomanizeSettings = RomanizeSettings(),
     private val dictionary: () -> ByteBuffer = { MMap.map(System.getProperty("roma.sudachi") ?: error("roma.sudachi: path to system_core.dic")) },
 ) {
+    /**
+     * Where [machine] keeps its results, if the app gives one (roma's lasts across starts). A string seen before then
+     * costs a lookup, not the dictionary or an ICU table loaded for it. The app empties it whenever settings, overrides
+     * or the dictionary's presence change the results.
+     */
+    @Volatile var cache: RomanizeCache? = null
+
     @Volatile private var loading: java.util.concurrent.Future<List<Override>>? = null
     /** The user's corrections. Reading waits for [loadOverrides]' file read if it hasn't finished. */
     var overrides: List<Override> = emptyList()
@@ -78,7 +91,15 @@ class Romanizer(
     fun machine(s: String, siblings: List<String> = emptyList(), sentence: Boolean = false, songId: String? = null): String {
         val n = normalize(s)
         if (!hasNonLatin(n)) return n
-        return capFirst(n, raw(n, siblings, !sentence, words = wordReadings(songId)))
+        val words = wordReadings(songId)
+        // The siblings only decide whether it's Japanese; a song's own word readings are left out of the cache.
+        val japanese = isJapanese(n, siblings)
+        val key = if (words.isEmpty()) "${if (sentence) 's' else 't'}${if (japanese) 'j' else 'o'}$n" else null
+        key?.let { k -> cache?.get(k)?.let { return it } }
+        val out = capFirst(n, raw(n, siblings, !sentence, words = words))
+        // Japanese romanized without the dictionary (kana only) is redone once it loads, so it isn't kept.
+        if (key != null && (!japanese || loaded != null)) cache?.put(key, out)
+        return out
     }
 
     private fun raw(n: String, siblings: List<String>, title: Boolean, cyrLang: String = cyrillicLanguage(n), words: Map<String, String> = emptyMap()) =

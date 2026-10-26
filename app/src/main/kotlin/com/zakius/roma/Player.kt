@@ -73,10 +73,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
-import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.text.SpanStyle
@@ -106,7 +106,7 @@ fun PlayerScreen() {
     Playback.tick
     var view by Nav::playerView
     // Back closes the lyrics or queue view first, then leaves the player as usual.
-    androidx.activity.compose.BackHandler(enabled = view != "song") { view = "song" }
+    androidx.activity.compose.BackHandler(enabled = view != "song" && LocalTabShown.current) { view = "song" }
     var menuOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
     // Where a seek-bar drag would land, -1 when there's no drag: the upper area shows the lyric line there.
@@ -219,7 +219,9 @@ fun PlayerScreen() {
 private fun LyricsBackdrop(thumb: String?) {
     if (thumb == null) return
     val context = LocalContext.current
-    val request = coil3.request.ImageRequest.Builder(context).data(bigThumb(thumb)).size(16).build()
+    // EXACT: otherwise Coil hands back the full-size art from its memory cache (the player just showed it), and the
+    // backdrop is a sharp full-screen picture instead of a blur.
+    val request = coil3.request.ImageRequest.Builder(context).data(bigThumb(thumb)).size(16).precision(coil3.size.Precision.EXACT).build()
     AsyncImage(request, null, Modifier.fillMaxSize(), alpha = 0.2f, contentScale = androidx.compose.ui.layout.ContentScale.Crop)
     val bg = MaterialTheme.colorScheme.surface
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to bg, 0.15f to Color.Transparent, 0.85f to Color.Transparent, 1f to bg)))
@@ -486,7 +488,8 @@ private fun QueueView() {
     val cur = Playback.player.currentMediaItemIndex
     var menuFor by remember { mutableStateOf<Int?>(null) }
     // The next songs are the likely taps here.
-    LaunchedEffect(Unit) { Playback.prepare(all.drop(cur + 1).map { it.song }) }
+    val shown = LocalTabShown.current
+    LaunchedEffect(shown) { if (shown) Playback.prepare(all.drop(cur + 1).map { it.song }) }
     val rows = ArrayList<Pair<String?, Int>>() // header or entry index
     if (cur in all.indices) { rows.add("Now" to -1); rows.add(null to cur) }
     val queued = (cur + 1 until all.size).filter { all[it].section == "queued" }
@@ -521,26 +524,31 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     }
     val lines = shown.lines
     val synced = shown.synced
-    // The current line and word follow the position once per display frame, at the screen's refresh rate. The
-    // states change only when the line or word does, so a frame without a change costs a position read and two
-    // searches, not a redraw. While paused, the position moves only by a seek (a tapped line), and every seek or
-    // start is a player change (Playback.tick): the loop sleeps until one comes.
+    // The current line and word follow the position: the loop sleeps until the next line or word starts, or until a
+    // player change (Playback.tick: a seek, pause, start or speed change) comes first. Not once per display frame:
+    // at 120 Hz that woke the main thread 120 times a second for a word change every few hundred ms, about 5% of a
+    // core on the phone (2026-10-26). While paused, only a player change moves the position.
     // The view opens (or the lyrics arrive) already at the current line: it is read from the player here, before the
     // first frame, and the list starts there. Only later line changes scroll smoothly.
     val startLine = remember(lines) { if (synced && Playback.pending == null) lines.indexOfLast { it.startMs <= Playback.player.currentPosition } else -1 }
     var current by remember(lines) { mutableIntStateOf(startLine) }
     var currentWord by remember(lines) { mutableIntStateOf(-1) }
-    LaunchedEffect(lines, synced) {
-        if (!synced) return@LaunchedEffect
-        var seen = -1
+    // Paused while another tab is shown; back on screen, it starts again from the current position.
+    val onScreen = LocalTabShown.current
+    LaunchedEffect(lines, synced, onScreen) {
+        if (!synced || !onScreen) return@LaunchedEffect
         while (true) {
-            if (Playback.player.isPlaying) withFrameNanos { }
-            else if (seen == Playback.tick) snapshotFlow { Playback.tick to Playback.pending }.drop(1).first()
-            seen = Playback.tick
+            val seen = Playback.tick to Playback.pending
             val pos = if (Playback.pending != null) -1L else Playback.player.currentPosition
             val line = lines.indexOfLast { it.startMs <= pos }
+            val words = lines.getOrNull(line)?.words
+            val word = words?.indexOfLast { it.startMs <= pos } ?: -1
             current = line
-            currentWord = lines.getOrNull(line)?.words?.indexOfLast { it.startMs <= pos } ?: -1
+            currentWord = word
+            val next = minOf(lines.getOrNull(line + 1)?.startMs ?: Long.MAX_VALUE, words?.getOrNull(word + 1)?.startMs ?: Long.MAX_VALUE)
+            val change = snapshotFlow { Playback.tick to Playback.pending }.filter { it != seen }
+            if (!Playback.player.isPlaying || pos < 0 || next == Long.MAX_VALUE) change.first()
+            else withTimeoutOrNull(((next - pos) / Playback.player.playbackParameters.speed).toLong().coerceAtLeast(1)) { change.first() }
         }
     }
     val state = remember(lines) { LazyListState(firstVisibleItemIndex = if (startLine > 2) startLine - 2 else 0) }

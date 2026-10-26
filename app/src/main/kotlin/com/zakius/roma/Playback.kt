@@ -126,15 +126,24 @@ object Playback {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .setLoadControl(AheadLoadControl(load))
+            // Neither is used for one audio stream at a time, and both cost binder calls during the launch: the default
+            // bandwidth meter watches the network type and asks telephony for the country, the diagnostics report each
+            // playback session to MediaMetrics.
+            .setBandwidthMeter(NoBandwidthMeter)
+            .setUsePlatformDiagnostics(false)
             .build()
         Startup.later { scope.launch {
             liked = withContext(Dispatchers.IO) { runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet()) }
             PlaybackService.instance?.updateLikeButton()
-            // The copy on disk serves meanwhile: the whole Likes playlist, page by page, would share the connection
-            // with Home's first request.
+            // The restored song's like, after Home's first request has the connection to itself.
             delay(5_000)
-            syncLikes()
+            checkLike(current()?.song)
         } }
+        // The saved queue and the current song's lyrics are read now, in parallel with the first frame; restore() hands
+        // them to the player after it. Read only then, they reached the screen two disk reads after the first frame.
+        val read = java.util.concurrent.FutureTask { readSaved() }
+        restoreRead = read
+        kotlin.concurrent.thread(name = "restore") { read.run() }
         Startup.later { restore() }
         // Two system-service registrations (binder calls into a system_server busy with the launch); nothing before the
         // first frame plays or needs them, and online starts true.
@@ -359,6 +368,7 @@ object Playback {
         if (sideWorkFor != e.song.id) return
         sideWorkFor = null
         loadLyrics(e.song)
+        checkLike(e.song)
         topUpRadio()
         prefetchNext()
         downloadAhead()
@@ -688,18 +698,32 @@ object Playback {
         tmp.renameTo(f)
     }
 
+    private lateinit var restoreRead: java.util.concurrent.FutureTask<Restored?>
+
+    // Everything but handing the items to the player happens off the main thread: building a few hundred items reads
+    // settings per song. The romanized lyrics land in their memory cache, so the restored song shows them at once.
+    private fun readSaved(): Restored? {
+        val saved = runCatching { Store.json.decodeFromString<Saved>(queueFile.readText()) }.getOrNull()?.takeIf { it.songs.isNotEmpty() }
+            ?: return null
+        val position = runCatching { positionFile.readText().split(" ").let { it[0] to it[1].toLong() } }.getOrNull()
+        val index = saved.index.coerceIn(0, saved.songs.size - 1)
+        val song = saved.songs[index]
+        romanizedOnDisk(song)
+        // When the player is the screen a start shows, its art is decoded into the memory cache now, so the first
+        // frame has it; requested only in the first frame, it came 2 to 3 frames later.
+        if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_PLAYER) song.thumb?.let {
+            coil3.SingletonImageLoader.get(appContext).enqueue(coil3.request.ImageRequest.Builder(appContext).data(bigThumb(it)).build())
+        }
+        return Restored(saved, index, if (position?.first == song.id) position.second else 0L,
+            saved.songs.mapIndexed { i, s -> mediaItem(Entry(s, saved.sections.getOrElse(i) { "queued" })) })
+    }
+
     private fun restore() {
         scope.launch {
-            // Everything but handing the items to the player happens off the main thread: building a few hundred items
-            // reads settings per song, and the cache check waits until the audio cache has scanned its files.
-            val r = withContext(Dispatchers.IO) {
-                val saved = runCatching { Store.json.decodeFromString<Saved>(queueFile.readText()) }.getOrNull()?.takeIf { it.songs.isNotEmpty() }
-                    ?: return@withContext null
-                val position = runCatching { positionFile.readText().split(" ").let { it[0] to it[1].toLong() } }.getOrNull()
-                val index = saved.index.coerceIn(0, saved.songs.size - 1)
-                val id = saved.songs[index].id
-                Restored(saved, index, if (position?.first == id) position.second else 0L,
-                    saved.songs.mapIndexed { i, s -> mediaItem(Entry(s, saved.sections.getOrElse(i) { "queued" })) }, fullyCached(id))
+            // The cache check waits until the audio cache has scanned its files, so it stays off the main thread too.
+            val (r, onDisk) = withContext(Dispatchers.IO) {
+                val r = restoreRead.get()
+                r to (r != null && fullyCached(r.saved.songs[r.index].id))
             }
             // A song picked while the file was read wins.
             if (r != null && player.mediaItemCount == 0 && pending == null) {
@@ -715,7 +739,7 @@ object Playback {
                 restoringNow = false
                 // A song fully on disk is prepared now; any other is prepared by Play, which reads what's cached
                 // before asking the network, so opening the app to browse costs no data.
-                if (r.cached) player.prepare()
+                if (onDisk) player.prepare()
             }
             restoring = false
             if (player.mediaItemCount == 0 && pending == null && Nav.tab == TAB_PLAYER) Nav.tab = TAB_HOME
@@ -724,7 +748,7 @@ object Playback {
         }
     }
 
-    private class Restored(val saved: Saved, val index: Int, val at: Long, val items: List<MediaItem>, val cached: Boolean)
+    private class Restored(val saved: Saved, val index: Int, val at: Long, val items: List<MediaItem>)
 
     /** The whole song is in the audio cache: it plays, seeks and repeats without the network. */
     fun fullyCached(id: String): Boolean {
@@ -874,44 +898,56 @@ object Playback {
         if (!Store.signedIn) return
         val like = song.id !in liked
         liked = if (like) liked + song.id else liked - song.id
+        toggled += song.id
         scope.launch(Dispatchers.IO) {
-            if (YouTube.likeVideo(song.id, like).isFailure) withContext(Dispatchers.Main) {
-                liked = if (like) liked - song.id else liked + song.id
-                PlaybackService.instance?.updateLikeButton()
+            val ok = YouTube.likeVideo(song.id, like).isSuccess
+            withContext(Dispatchers.Main) {
+                if (ok) saveLiked() else {
+                    liked = if (like) liked - song.id else liked + song.id
+                    PlaybackService.instance?.updateLikeButton()
+                }
             }
         }
         PlaybackService.instance?.updateLikeButton()
     }
 
+    /** Callable from any thread: pages call it while they load on Dispatchers.IO, and the player is main-thread only. */
     fun markLiked(ids: Collection<String>) {
-        liked = liked + ids
-        PlaybackService.instance?.updateLikeButton()
+        main.post {
+            liked = liked + ids
+            saveLiked()
+            PlaybackService.instance?.updateLikeButton()
+        }
     }
 
-    /** Replaces the liked set with the account's "Liked songs" playlist (LM), so likes made elsewhere show up. */
-    fun syncLikes() {
-        if (!Store.signedIn) return
+    // Asked once per song per run; and a song liked or unliked here since is left alone, so a late answer can't undo it.
+    private val likeChecked = HashSet<String>()
+    private val toggled = HashSet<String>()
+
+    /**
+     * Asks YouTube whether the user likes [s] (one small request), so likes made elsewhere show up: when a song plays,
+     * when its menu opens. The liked set kept on disk shows meanwhile, and offline. Main thread.
+     */
+    fun checkLike(s: Song?) {
+        val id = s?.id ?: return
+        if (!Store.signedIn || id in toggled || !likeChecked.add(id)) return
         scope.launch {
-            val ids = withContext(Dispatchers.IO) {
-                val first = YouTube.playlist("LM").getOrNull() ?: return@withContext null
-                val all = first.songs.mapTo(LinkedHashSet()) { it.id }
-                var cont = first.songsContinuation
-                // ponytail: stops at 200 pages (about 20,000 likes); raise it if someone has more.
-                repeat(200) {
-                    val c = cont ?: return@repeat
-                    val more = YouTube.playlistContinuation(c).getOrNull() ?: return@withContext null
-                    more.songs.mapTo(all) { it.id }
-                    cont = more.continuation
-                }
-                all
-            } ?: return@launch
-            liked = ids
-            likedFile.writeText(Store.json.encodeToString(ids.toList()))
+            val like = withContext(Dispatchers.IO) { YouTube.likeStatus(id).getOrNull() }
+            if (like == null) { likeChecked -= id; return@launch }
+            if (id in toggled || like == (id in liked)) return@launch
+            liked = if (like) liked + id else liked - id
+            saveLiked()
             PlaybackService.instance?.updateLikeButton()
         }
     }
 
     private val likedFile get() = java.io.File(appContext.cacheDir, "liked.json")
+
+    // What the Like controls show until YouTube answers for a song, on the next start too.
+    private fun saveLiked() {
+        val ids = liked.toList()
+        saver.execute { writeAtomically(likedFile, Store.json.encodeToString(ids)) }
+    }
 
     private var romanizeJob: Job? = null
 
@@ -921,6 +957,7 @@ object Playback {
      */
     fun romanizationChanged() {
         Store.bumpRomanizationVersion()
+        Store.Names.forget()
         forgetRomanizedLyrics()
         romanizeJob?.cancel()
         romanizeJob = scope.launch {
@@ -1158,3 +1195,11 @@ fun bigThumb(url: String) = url.replace(BIG_WH, "=w544-h544").replace(SMALL_STIL
 // Compiled once: a 1,000-song playlist builds 1,000 media items on the main thread when it starts.
 private val BIG_WH = Regex("=w\\d+-h\\d+")
 private val SMALL_STILL = Regex("/(default|mqdefault)\\.jpg")
+
+/** Bitrate estimates only matter when choosing between video qualities; roma plays one audio format per song. */
+private object NoBandwidthMeter : androidx.media3.exoplayer.upstream.BandwidthMeter {
+    override fun getBitrateEstimate() = 1_000_000L
+    override fun getTransferListener(): androidx.media3.datasource.TransferListener? = null
+    override fun addEventListener(handler: Handler, listener: androidx.media3.exoplayer.upstream.BandwidthMeter.EventListener) {}
+    override fun removeEventListener(listener: androidx.media3.exoplayer.upstream.BandwidthMeter.EventListener) {}
+}

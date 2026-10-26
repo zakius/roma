@@ -32,6 +32,8 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -226,6 +228,12 @@ private fun accentScheme(s: androidx.compose.material3.ColorScheme, seed: Int, d
     else s.copy(primary = tone(sat, 0.38f), onPrimary = tone(sat, 0.98f), secondaryContainer = tone(sat * 0.6f, 0.88f), onSecondaryContainer = tone(sat, 0.15f), inversePrimary = tone(sat, 0.8f))
 }
 
+/** Whether the tab this screen is in is the one on screen (Root keeps visited tabs composed). */
+val LocalTabShown = androidx.compose.runtime.staticCompositionLocalOf { true }
+
+// Composed but taking no space and never placed: not measured, drawn or touched, and no semantics for accessibility.
+private fun Modifier.hidden() = clearAndSetSemantics {}.layout { _, c -> layout(c.minWidth, c.minHeight) {} }
+
 @Composable
 fun Root() {
     val tab = Nav.tab
@@ -242,19 +250,33 @@ fun Root() {
         Store.prefs.edit().putInt("ui.tab", tab).putString("ui.playerView", Nav.playerView).apply()
     }
     val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    // Tabs stay composed once visited, so switching back only lays out and draws: rebuilding Home took 10 to 14 ms of
+    // the main thread on the phone (2026-10-26). A hidden tab isn't measured, drawn, touched or read by accessibility
+    // services; its screens check LocalTabShown to pause their own work and Back handling.
+    val visited = androidx.compose.runtime.remember { mutableStateListOf(tab) }
+    if (tab !in visited) visited += tab
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Box(Modifier.weight(1f)) {
-            val page = stack.lastOrNull()
-            // Each tab and page keeps its saved state (scroll position, search text) while another one is shown, so
-            // going back lands where it was. ponytail: states of closed pages stay until the app ends; small.
-            saved.SaveableStateProvider(if (page != null) "$tab/${stack.size}/${page.kind}/${page.id}" else "$tab") {
-                when {
-                    page != null -> PageScreen(page)
-                    tab == TAB_HOME -> HomeScreen()
-                    tab == TAB_SEARCH -> SearchScreen()
-                    tab == TAB_LIBRARY -> LibraryScreen()
-                    tab == TAB_PLAYER -> PlayerScreen()
-                    else -> SettingsScreen()
+            for (t in visited) androidx.compose.runtime.key(t) {
+                val shown = t == tab
+                Box(if (shown) Modifier.fillMaxSize() else Modifier.hidden()) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides shown) {
+                        val tabStack = Nav.stacks[t]
+                        val page = tabStack.lastOrNull()
+                        // Each tab and page keeps its saved state (scroll position, search text) while another one is
+                        // shown, so going back lands where it was. ponytail: states of closed pages stay until the app
+                        // ends; small.
+                        saved.SaveableStateProvider(if (page != null) "$t/${tabStack.size}/${page.kind}/${page.id}" else "$t") {
+                            when {
+                                page != null -> PageScreen(page)
+                                t == TAB_HOME -> HomeScreen()
+                                t == TAB_SEARCH -> SearchScreen()
+                                t == TAB_LIBRARY -> LibraryScreen()
+                                t == TAB_PLAYER -> PlayerScreen()
+                                else -> SettingsScreen()
+                            }
+                        }
+                    }
                 }
             }
         }

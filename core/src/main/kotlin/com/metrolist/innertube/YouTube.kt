@@ -2890,6 +2890,13 @@ object YouTube {
         if (it is CancellationException) throw it
     }
 
+    /** Whether the signed-in user likes the video: true, false, or null when YouTube didn't say. */
+    suspend fun likeStatus(videoId: String): Result<Boolean?> =
+        runCatching {
+            innerTube.next(WEB_REMIX, videoId, null, null, null, null)
+                .body<com.metrolist.innertube.models.response.LikeStatusResponse>().liked(videoId)
+        }
+
     suspend fun next(
         endpoint: WatchEndpoint,
         continuation: String? = null,

@@ -105,6 +105,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -147,8 +148,9 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
  * 80–115 KB), which a 48–128 dp image doesn't need. YouTube video stills come in fixed sizes and stay as they are.
  */
 @Composable
-fun shownThumb(url: String?, size: Dp): String? {
-    val px = with(LocalDensity.current) { size.roundToPx() }
+fun shownThumb(url: String?, size: Dp): String? = thumbAt(url, with(LocalDensity.current) { size.roundToPx() })
+
+fun thumbAt(url: String?, px: Int): String? {
     if (url == null || "googleusercontent.com/" !in url) return url
     return url.replace(SIZE_WH, "=w$px-h$px").replace(SIZE_S, "=s$px")
 }
@@ -221,6 +223,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     var fixing by remember { mutableStateOf(false) }
     val inQueue = queueIndex != null && queueIndex != Playback.player.currentMediaItemIndex
     val liked = s.id in Playback.liked
+    LaunchedEffect(s.id) { Playback.checkLike(s) }
     val context = LocalContext.current
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Fully open at once: half open, the bans at the bottom would need a drag first.
@@ -547,9 +550,33 @@ object Home {
         job = scope.launch { load() }
     }
 
+    @Volatile private var preloaded: java.util.concurrent.FutureTask<Pair<List<Item>?, List<Section>?>>? = null
+
+    /** When Home is the screen a start shows, its copy on disk is read beside the rest of start-up. */
+    fun preload() {
+        val read = java.util.concurrent.FutureTask { Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())) }
+        preloaded = read
+        kotlin.concurrent.thread(name = "home") { read.run() }
+    }
+
+    // The pictures of the first screen (the mixes row and the first cards of the first shelves), decoded into the memory
+    // cache now so the first frame has them instead of the next few. Not earlier: decoding them during ASUS's font
+    // rebuild (App) slowed that, and the first frame waits for it.
+    private fun decodeFirstPictures(c: android.content.Context, mixes: List<Item>?, shelves: List<Section>?) {
+        val px = (128 * c.resources.displayMetrics.density).roundToInt()
+        val loader = coil3.SingletonImageLoader.get(c)
+        (mixes.orEmpty().take(4) + shelves.orEmpty().take(4).flatMap { it.items.take(4) }).forEach { item ->
+            thumbAt(item.thumb, px)?.let { loader.enqueue(coil3.request.ImageRequest.Builder(c).data(it).build()) }
+        }
+    }
+
     private suspend fun load() = coroutineScope {
         if (sections.isEmpty()) launch {
-            val (saved, disk) = withContext(Dispatchers.IO) { Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())) }
+            val (saved, disk) = withContext(Dispatchers.IO) {
+                val pre = preloaded?.get()?.also { preloaded = null }
+                pre?.let { decodeFirstPictures(Store.context, it.first, it.second) }
+                pre ?: (Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())))
+            }
             if (!mixesRead) { if (mixes == null) mixes = saved; mixesRead = true }
             if (sections.isEmpty() && disk != null) sections = disk
         }
@@ -682,8 +709,11 @@ fun SearchScreen() {
     var asTyped by rememberSaveable { mutableStateOf<String?>(null) }
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val focus = remember { FocusRequester() }
-    // The keyboard comes up for a new search, not when coming back to results.
-    LaunchedEffect(Unit) { if (query.isEmpty()) focus.requestFocus() }
+    // The keyboard comes up for a new search, not when coming back to results; it goes when another tab is shown
+    // (this one stays composed, focus included).
+    val shown = LocalTabShown.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    LaunchedEffect(shown) { if (!shown) focusManager.clearFocus() else if (query.isEmpty()) focus.requestFocus() }
     fun search(q: String) { query = q; submitted = q.trim(); asTyped = null }
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
@@ -910,7 +940,7 @@ private fun LoginScreen() {
                         Store.set("cookie", cookie)
                         Toast.makeText(context, "Signed in", Toast.LENGTH_SHORT).show()
                         Nav.stacks[Nav.tab].clear()
-                        Playback.syncLikes()
+                        Playback.checkLike(Playback.current()?.song)
                     }
                 }
             }
@@ -937,45 +967,54 @@ fun SettingsScreen() {
     }
     var editing by remember { mutableStateOf<Pair<String, String>?>(null) } // key, title
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Header("Account")
-        if (Store.signedIn) Row1("Signed in to YouTube Music", "Tap to sign out") {
-            CookieManager.getInstance().removeAllCookies(null)
-            YouTube.cookie = null
-            Store.set("cookie", null)
-        } else Row1("Sign in to YouTube Music", "For your library and likes") { Nav.open(Page("login", "")) }
+    // Read here, not in the rows: neither is state, and a lazy row only recomposes when what it reads or holds changes.
+    val signedIn = Store.signedIn
+    val corrections = Store.romanizer.overrides
+    // Lazy: Settings is longer than the screen, and a Column composed and measured every row on each visit (24 to
+    // 32 ms of the main thread on the phone, 2026-10-26) where the visible ones take a third of that.
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { Header("Account") }
+        item {
+            if (signedIn) Row1("Signed in to YouTube Music", "Tap to sign out") {
+                CookieManager.getInstance().removeAllCookies(null)
+                YouTube.cookie = null
+                Store.set("cookie", null)
+            } else Row1("Sign in to YouTube Music", "For your library and likes") { Nav.open(Page("login", "")) }
+        }
 
-        Header("Display")
-        Options("Lists", "display.list", "both", MODES)
-        Options("Player", "display.player", "both", MODES)
-        Switch1("Left-handed player controls", "ui.leftHanded", false)
-        Switch1("True black in dark mode (saves power on OLED screens)", "ui.trueBlack", false)
-        Switch1("Accent colour from the song's artwork", "ui.artColors", false)
+        item { Header("Display") }
+        item { Options("Lists", "display.list", "both", MODES) }
+        item { Options("Player", "display.player", "both", MODES) }
+        item { Switch1("Left-handed player controls", "ui.leftHanded", false) }
+        item { Switch1("True black in dark mode (saves power on OLED screens)", "ui.trueBlack", false) }
+        item { Switch1("Accent colour from the song's artwork", "ui.artColors", false) }
 
-        Header("Romanization")
-        Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true)
-        Switch1("Chinese: pinyin with tone marks", "rom.tones", true)
-        Options("Cyrillic (other languages use their national Latin form)", "rom.cyrillic", "english", listOf("english" to "Russian: English-style", "polish" to "Russian: Polish-style", "iso9" to "ISO 9, every language"))
-        Options("Greek", "rom.greek", "classical", listOf("classical" to "Classical, no accents (β = b)", "elot" to "Modern, ELOT 743 (β = v)"))
-        Options("Han text without kana is", "rom.han", "ja", listOf("ja" to "Japanese", "zh" to "Chinese"))
+        item { Header("Romanization") }
+        item { Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true) }
+        item { Switch1("Chinese: pinyin with tone marks", "rom.tones", true) }
+        item { Options("Cyrillic (other languages use their national Latin form)", "rom.cyrillic", "english", listOf("english" to "Russian: English-style", "polish" to "Russian: Polish-style", "iso9" to "ISO 9, every language")) }
+        item { Options("Greek", "rom.greek", "classical", listOf("classical" to "Classical, no accents (β = b)", "elot" to "Modern, ELOT 743 (β = v)")) }
+        item { Options("Han text without kana is", "rom.han", "ja", listOf("ja" to "Japanese", "zh" to "Chinese")) }
         // Text only in scripts the user reads shows as written, in lists, the player, the notification and lyrics.
-        Text("Scripts you read (shown as written, not romanized)", Modifier.padding(start = 16.dp, top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
-        val read = Store.readScripts
-        SCRIPTS.forEach { (k, label) ->
+        item { Text("Scripts you read (shown as written, not romanized)", Modifier.padding(start = 16.dp, top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
+        items(SCRIPTS) { (k, label) ->
+            val read = Store.readScripts
             Row(Modifier.fillMaxWidth().clickable { Store.setReads(k, k !in read) }.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.Checkbox(k in read, null, Modifier.padding(end = 8.dp))
                 Text(label)
             }
         }
-        val dictionary = when {
-            Dictionary.installed -> "Installed"
-            Dictionary.status != null -> Dictionary.status!!
-            else -> "Not installed: kanji stay as written. Tap to install (${Dictionary.DOWNLOAD})"
+        item {
+            val dictionary = when {
+                Dictionary.installed -> "Installed"
+                Dictionary.status != null -> Dictionary.status!!
+                else -> "Not installed: kanji stay as written. Tap to install (${Dictionary.DOWNLOAD})"
+            }
+            Row1("Japanese dictionary", dictionary, enabled = !Dictionary.installed) { Store.setReads("ja", false) }
         }
-        Row1("Japanese dictionary", dictionary, enabled = !Dictionary.installed) { Store.setReads("ja", false) }
-        Row1("Corrections: ${Store.romanizer.overrides.size}", "Export them to one file") { export.launch("roma-corrections.json") }
-        Row1("Import corrections", "Replaces the current ones") { import.launch(arrayOf("application/json", "*/*")) }
-        Store.romanizer.overrides.forEach { o ->
+        item { Row1("Corrections: ${corrections.size}", "Export them to one file") { export.launch("roma-corrections.json") } }
+        item { Row1("Import corrections", "Replaces the current ones") { import.launch(arrayOf("application/json", "*/*")) } }
+        items(corrections) { o ->
             val scope = when (o.scope) {
                 "song" -> "This song"; "artist" -> "This artist"
                 "word" -> if (o.id == "") "Word, everywhere" else "Word, in one song"
@@ -986,9 +1025,9 @@ fun SettingsScreen() {
             }
         }
 
-        Header("Lyrics")
+        item { Header("Lyrics") }
         val order = Store.lyricsOrder()
-        order.forEachIndexed { i, p ->
+        itemsIndexed(order) { i, p ->
             Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("${i + 1}. ${p.name}", Modifier.weight(1f))
                 IconButton(onClick = { move(order, i, -1) }, enabled = i > 0) { Icon(Icons.Default.KeyboardArrowUp, "Move up") }
@@ -996,47 +1035,51 @@ fun SettingsScreen() {
                 Switch(Store.lyricsEnabled(p), { Store.set("lyrics.on.${p.id}", it) }, Modifier.padding(end = 16.dp))
             }
         }
-        Text("All are asked at once. YouTube Music's text is the reference: word timing that matches it wins, then its own timed lyrics, then matching line timing, then its plain text. The order above only matters when YouTube Music has no lyrics.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
-        Row1("Search lyrics again for this song", "After changing the providers") { Playback.refetchLyrics() }
-        Switch1("Show original", "lyrics.layer.original", true)
-        Switch1("Show romanization", "lyrics.layer.latin", true)
-        Options("Romanization layout", "lyrics.layout", "lines", listOf("lines" to "A line under the original", "ruby" to "Above each word, like furigana"))
-        Text("Long-press a word in the lyrics to see its reading and correct it, for that song or everywhere.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+        item { Text("All are asked at once. YouTube Music's text is the reference: word timing that matches it wins, then its own timed lyrics, then matching line timing, then its plain text. The order above only matters when YouTube Music has no lyrics.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
+        item { Row1("Search lyrics again for this song", "After changing the providers") { Playback.refetchLyrics() } }
+        item { Switch1("Show original", "lyrics.layer.original", true) }
+        item { Switch1("Show romanization", "lyrics.layer.latin", true) }
+        item { Options("Romanization layout", "lyrics.layout", "lines", listOf("lines" to "A line under the original", "ruby" to "Above each word, like furigana")) }
+        item { Text("Long-press a word in the lyrics to see its reading and correct it, for that song or everywhere.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
         // A global setting: never dimmed by the current song. A song whose translation isn't in the chosen language
         // just shows none.
-        Switch1("Show translation", "lyrics.layer.translation", true)
-        val device = java.util.Locale.getDefault().let { it.getDisplayLanguage(it) }
-        Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device), then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
-
-        Header("Queue and radio")
-        Options("Radio may drift", "radio.leash", "free", listOf("close" to "Close: same and related artists", "medium" to "Medium: at most half other artists", "free" to "Free: YouTube's autoplay as is"))
-        Switch1("Prefer audio tracks over music videos", "radio.preferAudio", true)
-        Switch1("Hide live, sped up, nightcore, slowed", "radio.hideVersions", true)
-        Switch1("Skip banned songs and artists", "radio.skipBanned", true)
-        Switch1("Stop when the queue ends", "queue.stopAtEnd", false)
-        Switch1("Even out loudness", "play.normalize", true)
-        Switch1("Download songs ahead", "play.ahead", false, subtitle = "The whole song and the next 3, so playback goes on without a network. Uses more data: about 4 MB per song you skip")
-        Switch1("Resume when headphones reconnect", "play.resumeOnHeadphones", false, subtitle = "Within an hour of them pausing the song by disconnecting")
-        Switch1("Get likely songs ready on mobile data and in Battery Saver", "prepare.always", false, subtitle = "roma looks up the song you're likely to tap next (a page's first song, Search's top result, the queue's next songs) and loads its first second, so it starts at once. About 45 KB each, at most 3 MB an hour. Off: only on Wi-Fi and outside Battery Saver")
-
-        Header("Banned")
-        val banned = Store.banned
-        if (banned.isEmpty()) Text("Nothing banned.", Modifier.padding(horizontal = 16.dp))
-        banned.forEach { b -> Row1("${if (b.kind == "artist") "Artist" else "Song"}: ${b.name}", "Tap to unban") { Store.unban(b.kind, b.id) } }
-
-        Header("Last.fm")
-        Row1("API key", Store.str("lastfm.key", "").ifBlank { "Not set: create one at last.fm/api/account/create" }) { editing = "lastfm.key" to "Last.fm API key" }
-        Row1("Shared secret", if (Store.str("lastfm.secret", "").isBlank()) "Not set" else "Set") { editing = "lastfm.secret" to "Last.fm shared secret" }
-        val connected = Store.str("lastfm.session", "").isNotBlank()
-        // A file read: off the main thread, so a switch on this page doesn't wait for it.
-        val waiting by produceState(0, connected, Store.version) { value = withContext(Dispatchers.IO) { if (connected) Playback.scrobbleQueue().load().size else 0 } }
-        val ready = Store.str("lastfm.key", "").isNotBlank() && Store.str("lastfm.secret", "").isNotBlank()
-        Row1(if (connected) "Connected: scrobbling" else "Connect", if (connected) "Tap to disconnect · $waiting waiting" else "Opens the browser to allow access", ready || connected) {
-            if (connected) Store.set("lastfm.session", null)
-            else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LastFm(Store.str("lastfm.key", ""), "").authUrl("roma://lastfm"))))
+        item { Switch1("Show translation", "lyrics.layer.translation", true) }
+        item {
+            val device = java.util.Locale.getDefault().let { it.getDisplayLanguage(it) }
+            Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device), then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
         }
 
-        Text("roma ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
+        item { Header("Queue and radio") }
+        item { Options("Radio may drift", "radio.leash", "free", listOf("close" to "Close: same and related artists", "medium" to "Medium: at most half other artists", "free" to "Free: YouTube's autoplay as is")) }
+        item { Switch1("Prefer audio tracks over music videos", "radio.preferAudio", true) }
+        item { Switch1("Hide live, sped up, nightcore, slowed", "radio.hideVersions", true) }
+        item { Switch1("Skip banned songs and artists", "radio.skipBanned", true) }
+        item { Switch1("Stop when the queue ends", "queue.stopAtEnd", false) }
+        item { Switch1("Even out loudness", "play.normalize", true) }
+        item { Switch1("Download songs ahead", "play.ahead", false, subtitle = "The whole song and the next 3, so playback goes on without a network. Uses more data: about 4 MB per song you skip") }
+        item { Switch1("Resume when headphones reconnect", "play.resumeOnHeadphones", false, subtitle = "Within an hour of them pausing the song by disconnecting") }
+        item { Switch1("Get likely songs ready on mobile data and in Battery Saver", "prepare.always", false, subtitle = "roma looks up the song you're likely to tap next (a page's first song, Search's top result, the queue's next songs) and loads its first second, so it starts at once. About 45 KB each, at most 3 MB an hour. Off: only on Wi-Fi and outside Battery Saver") }
+
+        item { Header("Banned") }
+        val banned = Store.banned
+        if (banned.isEmpty()) item { Text("Nothing banned.", Modifier.padding(horizontal = 16.dp)) }
+        items(banned) { b -> Row1("${if (b.kind == "artist") "Artist" else "Song"}: ${b.name}", "Tap to unban") { Store.unban(b.kind, b.id) } }
+
+        item { Header("Last.fm") }
+        item { Row1("API key", Store.str("lastfm.key", "").ifBlank { "Not set: create one at last.fm/api/account/create" }) { editing = "lastfm.key" to "Last.fm API key" } }
+        item { Row1("Shared secret", if (Store.str("lastfm.secret", "").isBlank()) "Not set" else "Set") { editing = "lastfm.secret" to "Last.fm shared secret" } }
+        item {
+            val connected = Store.str("lastfm.session", "").isNotBlank()
+            // A file read: off the main thread, so a switch on this page doesn't wait for it.
+            val waiting by produceState(0, connected, Store.version) { value = withContext(Dispatchers.IO) { if (connected) Playback.scrobbleQueue().load().size else 0 } }
+            val ready = Store.str("lastfm.key", "").isNotBlank() && Store.str("lastfm.secret", "").isNotBlank()
+            Row1(if (connected) "Connected: scrobbling" else "Connect", if (connected) "Tap to disconnect · $waiting waiting" else "Opens the browser to allow access", ready || connected) {
+                if (connected) Store.set("lastfm.session", null)
+                else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LastFm(Store.str("lastfm.key", ""), "").authUrl("roma://lastfm"))))
+            }
+        }
+
+        item { Text("roma ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall) }
     }
     editing?.let { (key, title) -> TextInputDialog(title, Store.str(key, ""), { editing = null }) { Store.set(key, it.trim()) } }
 }

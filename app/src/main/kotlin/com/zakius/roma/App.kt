@@ -30,9 +30,33 @@ import java.nio.channels.FileChannel
 import kotlin.concurrent.thread
 
 class App : Application(), coil3.SingletonImageLoader.Factory {
+    @android.annotation.SuppressLint("MissingSuperCall") // called on the fonts thread
     override fun onCreate() {
-        super.onCreate()
+        // Set-up the first frame would otherwise wait for, done beside the rest of start-up: the RenderThread, which
+        // adding the window waited for (8 to 10 ms on the phone, 2026-10-26), and ICU's locale-key data, which the
+        // first line break loaded (11 ms); text itself would race the font swap below, so a locale name does it.
+        // Where the activity waits for ASUS's fonts (35 ms), also the GPU context, which the first draw waited for,
+        // through a 1x1 surface that is never drawn to. Without that wait the window would come while it is still
+        // being made, and adding the window then waits for it instead.
+        thread(name = "hwui") {
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                val renderer = android.graphics.HardwareRenderer()
+                val reader = if (android.provider.Settings.Global.getString(contentResolver, "flipfont_settings_path") == null) null
+                    else android.media.ImageReader.newInstance(1, 1, android.graphics.PixelFormat.RGBA_8888, 1,
+                        android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
+                reader?.let { renderer.setSurface(it.surface) }
+                renderer.destroy()
+                reader?.close()
+            }
+            java.util.Locale.forLanguageTag(java.util.Locale.getDefault().toLanguageTag() + "-u-lb-normal").getDisplayName()
+        }
+        // Android's own Application.onCreate is empty. ASUS's applies its FlipFont font theme, and rebuilds the system
+        // font map while at it, theme or not (its "already applied" check never matches in a new process): 25 to 40 ms
+        // on the phone. Here it runs beside the rest of start-up; Activity.onCreate makes the same call under the same
+        // lock, so the activity waits for it there.
+        thread(name = "fonts") { superOnCreate() }
         Store.init(this)
+        if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME) Home.preload()
         Dictionary.init(this)
         Playback.init(this)
         Startup.later {
@@ -46,6 +70,8 @@ class App : Application(), coil3.SingletonImageLoader.Factory {
             thread(name = "images") { coil3.SingletonImageLoader.get(this) } // built before the first picture needs it
         }
     }
+
+    private fun superOnCreate() = super.onCreate()
 
     // Coil asks the application for its image loader when the first picture needs it, so start-up registers nothing.
     // The network fetcher is named here instead of found by a ServiceLoader scan of the APK.
@@ -131,6 +157,9 @@ object Store {
         }
         romanizer.settings = romanizeSettings()
         romanizer.loadOverrides(indexThread.submit<List<Override>> { loadOverrides() })
+        romanizer.cache = Names
+        // After the first frame: new names come with network results, well after it, and start-up has enough reads.
+        Startup.later { Names.load(File(c.cacheDir, "names.json")) }
         cookie = prefs.getString("cookie", null)
         YouTube.cookie = cookie
         // InnerTubeX sends the account cookies on browse and next calls (home, radio) only with this on; without it
@@ -339,6 +368,57 @@ object Store {
     // took about 100 ms of app start and each save about 15 ms. Saves that queue up behind each other are written once.
     private val index = ArrayList<Song>()
     private val indexThread = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    /**
+     * Romanized names kept across starts: Home and the lists show the same titles start after start, and a start whose
+     * names are all known loads neither the Japanese dictionary nor ICU's tables for them (Han-Latin alone takes about
+     * 220 ms the first time in a run). Tied to the romanization version and to this build, emptied when either changes.
+     */
+    object Names : roma.core.RomanizeCache {
+        // ponytail: 6,000 names (about 400 KB on disk), least recently used dropped; enough for Home, the library and
+        // the queue. A bigger library just romanizes its rarely seen names again.
+        private val map = object : LinkedHashMap<String, String>(1024, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>) = size > 6000
+        }
+        @Volatile private var ready = false
+        private var file: File? = null
+        private var saveQueued = false
+        private val stamp get() = "$romanizationVersion/${BuildConfig.VERSION_CODE}"
+
+        fun load(f: File) {
+            file = f
+            indexThread.execute {
+                val kept = runCatching { json.decodeFromString<Map<String, String>>(f.readText()) }.getOrNull()
+                synchronized(map) { if (kept?.get("") == stamp) map.putAll(kept - "") }
+                ready = true
+            }
+        }
+
+        // Before the file is read, a name is romanized as usual: nothing waits for the cache.
+        override fun get(key: String) = if (!ready) null else synchronized(map) { map[key] }
+
+        override fun put(key: String, value: String) {
+            if (!ready) return
+            synchronized(map) {
+                map[key] = value
+                if (saveQueued) return
+                saveQueued = true
+            }
+            // Written once a burst of new names (a page of results) is done.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ indexThread.execute(::save) }, 2_000)
+        }
+
+        private fun save() {
+            val copy = synchronized(map) { saveQueued = false; map.toMap() }
+            runCatching { file?.writeText(json.encodeToString(copy + ("" to stamp))) }
+        }
+
+        /** After a romanization change: the kept names no longer apply. */
+        fun forget() {
+            synchronized(map) { map.clear() }
+            indexThread.execute { file?.delete() }
+        }
+    }
     private var saveQueued = false
 
     /** Blocking: call it off the main thread. */
