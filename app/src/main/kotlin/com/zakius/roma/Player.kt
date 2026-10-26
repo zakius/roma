@@ -21,6 +21,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.ui.semantics.stateDescription
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -719,6 +723,8 @@ private class ShownComment(val c: roma.core.Comment, val text: String, val latin
     /** Its replies, loaded when first opened. */
     val replies by lazy { CommentList(c.thread) }
     var open by mutableStateOf(false)
+    /** A long comment shows a few lines until tapped. Kept here, not in the row, so it survives scrolling away. */
+    var unfolded by mutableStateOf(false)
 }
 
 /** Comments loaded a page at a time: the song's, or one comment's replies. */
@@ -738,6 +744,7 @@ private class CommentList(var next: (() -> roma.core.CommentPage)?, val songId: 
                 val p = fetch()
                 p to p.comments.map { c ->
                     val text = androidx.core.text.HtmlCompat.fromHtml(c.text, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString().trim { it.isWhitespace() || it == '\u200B' } // a reply starting with an @mention has a zero-width space first
+                        .replace(Regex("\n\\s*\n\\s*\n+"), "\n\n") // at most one blank line in a row
                     val latin = if (!Romanizer.hasNonLatin(text) || Store.reads(text)) null
                         else text.lines().joinToString("\n") { Store.romanizer.machine(it, sentence = true) }
                     ShownComment(c, text, latin)
@@ -781,21 +788,16 @@ private fun CommentsView() {
     Box { LazyColumn(Modifier.fillMaxSize(), list) {
         items(state.items.size) { i ->
             val s = state.items[i]
-            CommentRow(s)
-            // A thread opens under its comment, indented; its later pages load on "More replies".
-            if (s.c.thread != null) {
-                val r = s.replies
-                TextButton(
-                    onClick = { s.open = !s.open; if (s.open && r.items.isEmpty()) scope.launch { r.load() } },
-                    Modifier.padding(start = 8.dp),
-                ) { Text((if (s.open) "Hide replies" else if (s.c.replies == 1) "1 reply" else "${s.c.replies} replies"), style = MaterialTheme.typography.labelLarge) }
-                if (s.open) Column(Modifier.padding(start = 32.dp)) {
-                    r.items.forEach { CommentRow(it) }
-                    when {
-                        r.loading -> Text("Loading…", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        r.error != null -> TextButton(onClick = { scope.launch { r.load() } }) { Text("${r.error} Retry") }
-                        r.next != null -> TextButton(onClick = { scope.launch { r.load() } }) { Text("More replies") }
-                    }
+            val r = s.replies
+            CommentRow(s, onReplies = s.c.thread?.let { { s.open = !s.open; if (s.open && r.items.isEmpty()) scope.launch { r.load() } } })
+            // A thread opens under its comment, its avatars in line with the comment's text; later pages load on "More replies".
+            if (s.open) Column(Modifier.padding(start = 48.dp, bottom = 4.dp)) {
+                r.items.forEach { CommentRow(it, avatar = 24.dp) }
+                val more = Modifier.padding(start = 4.dp)
+                when {
+                    r.loading -> Text("Loading…", Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    r.error != null -> TextButton(onClick = { scope.launch { r.load() } }, more) { Text("${r.error} Retry") }
+                    r.next != null -> TextButton(onClick = { scope.launch { r.load() } }, more) { Text("More replies") }
                 }
             }
         }
@@ -810,14 +812,45 @@ private fun CommentsView() {
 }
 
 @Composable
-private fun CommentRow(s: ShownComment) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        val meta = listOfNotNull("Pinned".takeIf { s.c.pinned }, s.c.author, s.c.ago.ifEmpty { null }, s.c.likes.takeIf { it.isNotBlank() }?.let { if (it == "1") "1 like" else "$it likes" })
-        Text(meta.joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (s.latin != null) {
-            Text(s.latin, style = MaterialTheme.typography.bodyMedium)
-            Text(s.text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else Text(s.text, style = MaterialTheme.typography.bodyMedium)
+private fun CommentRow(s: ShownComment, avatar: androidx.compose.ui.unit.Dp = 36.dp, onReplies: (() -> Unit)? = null) {
+    val c = s.c
+    val type = MaterialTheme.typography
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = if (onReplies == null) 8.dp else 0.dp)) {
+        // The author's initial, not their picture: no image to fetch for every comment.
+        Box(Modifier.size(avatar).clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+            Text(c.author.removePrefix("@").take(1).uppercase(), style = if (avatar < 36.dp) type.labelSmall else type.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        }
+        Spacer(Modifier.size(12.dp))
+        Column(Modifier.weight(1f)) {
+            if (c.pinned) Text("Pinned", style = type.labelSmall, color = MaterialTheme.colorScheme.primary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(c.author, Modifier.weight(1f, fill = false), style = type.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (c.ago.isNotEmpty()) Text(" · ${c.ago}", style = type.labelMedium, color = muted, maxLines = 1)
+            }
+            Spacer(Modifier.height(2.dp))
+            var folds by remember { mutableStateOf(false) }
+            val lines = if (s.unfolded) Int.MAX_VALUE else 6
+            Column(if (folds) Modifier.clickable(onClickLabel = if (s.unfolded) "Show less" else "Read more") { s.unfolded = !s.unfolded } else Modifier) {
+                Text(s.latin ?: s.text, style = type.bodyMedium, maxLines = lines, overflow = TextOverflow.Ellipsis, onTextLayout = { folds = folds || it.hasVisualOverflow })
+                if (s.latin != null) Text(s.text, style = type.bodySmall, color = muted, maxLines = lines, overflow = TextOverflow.Ellipsis, onTextLayout = { folds = folds || it.hasVisualOverflow })
+                if (folds) Text(if (s.unfolded) "Show less" else "Read more", Modifier.padding(top = 2.dp), style = type.labelMedium, color = muted)
+            }
+            if (c.likes.isNotBlank() || onReplies != null) Row(if (onReplies != null) Modifier.heightIn(min = 40.dp) else Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (c.likes.isNotBlank()) Row(
+                    Modifier.padding(end = 8.dp).clearAndSetSemantics { contentDescription = if (c.likes == "1") "1 like" else "${c.likes} likes" },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Outlined.ThumbUp, null, Modifier.size(14.dp), tint = muted)
+                    Spacer(Modifier.size(4.dp))
+                    Text(c.likes, style = type.labelMedium, color = muted)
+                }
+                if (onReplies != null) TextButton(onReplies, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
+                    Text(if (s.open) "Hide replies" else if (c.replies == 1) "1 reply" else "${c.replies} replies", style = type.labelLarge)
+                    Icon(if (s.open) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null, Modifier.size(18.dp))
+                }
+            }
+        }
     }
 }
 
