@@ -43,6 +43,14 @@ fun main() = runBlocking {
         age.fold({ "${it.mimeType} ${it.bitrate} bps" }, { "refused: ${it.message}" }))
     YouTube.cookie = null
 
+    // Comments through NewPipe, two pages.
+    val comments = Comments.of(song.id)
+    println("comments: ${comments.comments.size}, next page ${comments.next?.invoke()?.comments?.size}, first: ${comments.comments.firstOrNull()?.text?.take(60)}")
+    check(comments.comments.isNotEmpty())
+    val replies = comments.comments.first { it.thread != null }.thread!!()
+    println("replies: ${replies.comments.size}, more ${replies.next != null}, first: ${replies.comments.firstOrNull()?.text?.take(60)}")
+    check(replies.comments.isNotEmpty() && replies.comments.all { it.thread == null })
+
     // Lyrics providers, each on its own, with the song's original metadata, then the rule that picks one.
     for (query in listOf("YOASOBI 夜に駆ける", "米津玄師 Lemon", "The Weeknd Blinding Lights", "周杰倫 晴天")) {
         val s = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG).getOrThrow().items.first() as SongItem

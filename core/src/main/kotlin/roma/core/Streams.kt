@@ -59,7 +59,7 @@ object Streams {
     const val NO_CONNECTION = "No connection to YouTube."
 
     @Synchronized
-    private fun start() {
+    internal fun start() {
         if (started) return
         NewPipe.init(OkHttpDownloader(http))
         started = true

@@ -127,6 +127,7 @@ fun PlayerScreen() {
                     if (lyricsState != null && lyrics != null) LyricsView(lyricsState, lyrics, Playback.shown()?.id) else Centered("Looking for lyrics…")
                 }
                 "queue" -> QueueView()
+                "comments" -> CommentsView()
                 else -> SongView()
             }
             Playback.lastBan?.let { (song, _) ->
@@ -158,7 +159,7 @@ fun PlayerScreen() {
                 val slots: List<@Composable RowScope.() -> Unit> = listOf(
                     { Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true } },
                     { Spacer(Modifier.weight(1f)) }, // deliberately empty: no icon, no label, not tappable
-                    { Spacer(Modifier.weight(1f)) },
+                    { Slot(rememberVectorPainter(CommentsIcon), "Comments", entry != null, view == "comments", label = "Comments", state = if (view == "comments") "shown" else null) { view = if (view == "comments") "song" else "comments" } },
                     { Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics", state = if (view == "lyrics") "shown" else null) { view = if (view == "lyrics") "song" else "lyrics" } },
                     { Slot(rememberVectorPainter(Icons.Default.List), "Queue", entry != null, view == "queue", label = "Queue", state = if (view == "queue") "shown" else null) { view = if (view == "queue") "song" else "queue" } },
                     {
@@ -456,13 +457,15 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         val art = coil3.request.ImageRequest.Builder(context).data(s.thumb?.let(::bigThumb)).placeholderMemoryCacheKey(placeholder).build()
         AsyncImage(art, null, Modifier.weight(1f, fill = false).aspectRatio(1f).clip(RoundedCornerShape(8.dp)))
         Spacer(Modifier.height(16.dp))
-        // Long-pressing the title or artist opens the correction dialog, the same as More → Correct romanization.
+        // Tapping the title opens its album, the artist their page (as More → Go to album / artist). Long-pressing either
+        // opens the correction dialog, the same as More → Correct romanization.
         var fixing by remember { mutableStateOf(false) }
-        Column(Modifier.pointerInput(s.id) { detectTapGestures(onLongPress = { fixing = true }) }) {
-            Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true)
-            Spacer(Modifier.height(4.dp))
-            Name(roma.core.Text(s.artistOriginal, s.artistLatin), Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true)
-        }
+        fun Modifier.goTo(kind: String, id: String?) = combinedClickable(
+            onClickLabel = id?.let { "Go to $kind" }, onLongClickLabel = "Correct romanization", onLongClick = { fixing = true },
+        ) { if (id != null) Nav.open(Page(kind, id)) }
+        Column(Modifier.goTo("album", s.album?.id)) { Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true) }
+        Spacer(Modifier.height(4.dp))
+        Column(Modifier.goTo("artist", s.firstArtistId)) { Name(roma.core.Text(s.artistOriginal, s.artistLatin), Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true) }
         if (fixing) CorrectDialog(s) { fixing = false }
         if (current && Playback.waitingForNetwork) {
             Spacer(Modifier.height(8.dp))
@@ -711,6 +714,113 @@ private fun WordsText(words: List<String>, whole: String, current: Int, style: a
     )
 }
 
+/** A comment as shown: its text without HTML, and the romanization when it has non-Latin text the user doesn't read. */
+private class ShownComment(val c: roma.core.Comment, val text: String, val latin: String?) {
+    /** Its replies, loaded when first opened. */
+    val replies by lazy { CommentList(c.thread) }
+    var open by mutableStateOf(false)
+}
+
+/** Comments loaded a page at a time: the song's, or one comment's replies. */
+private class CommentList(var next: (() -> roma.core.CommentPage)?, val songId: String? = null) {
+    val items = androidx.compose.runtime.mutableStateListOf<ShownComment>()
+    var disabled by mutableStateOf(false)
+    var error by mutableStateOf<String?>(null)
+    var loading by mutableStateOf(false)
+
+    suspend fun load() {
+        val fetch = next ?: return
+        if (loading) return
+        loading = true
+        error = null
+        try {
+            val page = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val p = fetch()
+                p to p.comments.map { c ->
+                    val text = androidx.core.text.HtmlCompat.fromHtml(c.text, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString().trim { it.isWhitespace() || it == '\u200B' } // a reply starting with an @mention has a zero-width space first
+                    val latin = if (!Romanizer.hasNonLatin(text) || Store.reads(text)) null
+                        else text.lines().joinToString("\n") { Store.romanizer.machine(it, sentence = true) }
+                    ShownComment(c, text, latin)
+                }
+            }
+            items += page.second
+            disabled = page.first.disabled
+            next = page.first.next
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            error = plainError(e)
+        } finally {
+            loading = false
+        }
+    }
+}
+
+/** The playing song's comments, kept while it plays so switching views doesn't load them again. */
+private var songComments: CommentList? = null
+
+@Composable
+private fun CommentsView() {
+    Playback.tick // the restored queue arrives after the first frame
+    val songId = Playback.shown()?.id ?: return if (Playback.restoring) Unit else Centered("Nothing playing.")
+    val state = remember(songId) { songComments?.takeIf { it.songId == songId } ?: CommentList({ roma.core.Comments.of(songId) }, songId).also { songComments = it } }
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    // The first page at once, the next when the list nears its end.
+    val nearEnd by remember { derivedStateOf { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= list.layoutInfo.totalItemsCount - 5 } }
+    LaunchedEffect(state, nearEnd, state.error, state.items.size) {
+        if (state.error == null && (state.items.isEmpty() || nearEnd)) state.load()
+    }
+    val scope = rememberCoroutineScope()
+    when {
+        state.disabled && state.items.isEmpty() -> return Centered("Comments are turned off for this song.")
+        state.items.isEmpty() && state.error != null -> return Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
+            Text(state.error!!, Modifier.padding(horizontal = 24.dp), textAlign = TextAlign.Center)
+            TextButton(onClick = { scope.launch { state.load() } }) { Text("Retry") }
+        }
+        state.items.isEmpty() -> return Centered(if (state.loading) "Loading comments…" else "No comments yet.")
+    }
+    Box { LazyColumn(Modifier.fillMaxSize(), list) {
+        items(state.items.size) { i ->
+            val s = state.items[i]
+            CommentRow(s)
+            // A thread opens under its comment, indented; its later pages load on "More replies".
+            if (s.c.thread != null) {
+                val r = s.replies
+                TextButton(
+                    onClick = { s.open = !s.open; if (s.open && r.items.isEmpty()) scope.launch { r.load() } },
+                    Modifier.padding(start = 8.dp),
+                ) { Text((if (s.open) "Hide replies" else if (s.c.replies == 1) "1 reply" else "${s.c.replies} replies"), style = MaterialTheme.typography.labelLarge) }
+                if (s.open) Column(Modifier.padding(start = 32.dp)) {
+                    r.items.forEach { CommentRow(it) }
+                    when {
+                        r.loading -> Text("Loading…", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        r.error != null -> TextButton(onClick = { scope.launch { r.load() } }) { Text("${r.error} Retry") }
+                        r.next != null -> TextButton(onClick = { scope.launch { r.load() } }) { Text("More replies") }
+                    }
+                }
+            }
+        }
+        if (state.next != null || state.error != null) item {
+            Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                if (state.error != null) TextButton(onClick = { scope.launch { state.load() } }) { Text("Retry") }
+                else Text("Loading…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+    FastScroll(list) }
+}
+
+@Composable
+private fun CommentRow(s: ShownComment) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        val meta = listOfNotNull("Pinned".takeIf { s.c.pinned }, s.c.author, s.c.ago.ifEmpty { null }, s.c.likes.takeIf { it.isNotBlank() }?.let { if (it == "1") "1 like" else "$it likes" })
+        Text(meta.joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (s.latin != null) {
+            Text(s.latin, style = MaterialTheme.typography.bodyMedium)
+            Text(s.text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else Text(s.text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
 @Composable
 fun Centered(text: String) {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { Text(text, textAlign = TextAlign.Center) }
@@ -722,6 +832,18 @@ val LyricsIcon: ImageVector by lazy {
         addPath(
             androidx.compose.ui.graphics.vector.PathParser().parsePathString(
                 "M4,4h16a2,2 0,0 1,2 2v10a2,2 0,0 1,-2 2H8l-4,4V6a2,2 0,0 1,2,-2zM7,8v2h10V8zM7,12v2h7v-2z",
+            ).toNodes(),
+            fill = androidx.compose.ui.graphics.SolidColor(androidx.compose.ui.graphics.Color.Black),
+        )
+    }.build()
+}
+
+/** Two speech bubbles (Material's "forum"), apart from the lyrics icon's single one. */
+val CommentsIcon: ImageVector by lazy {
+    ImageVector.Builder("comments", 24.dp, 24.dp, 24f, 24f).apply {
+        addPath(
+            androidx.compose.ui.graphics.vector.PathParser().parsePathString(
+                "M21,6h-2v9H6v2c0,0.55 0.45,1 1,1h11l4,4V7c0,-0.55 -0.45,-1 -1,-1zM17,12V3c0,-0.55 -0.45,-1 -1,-1H3c-0.55,0 -1,0.45 -1,1v14l4,-4h10c0.55,0 1,-0.45 1,-1z",
             ).toNodes(),
             fill = androidx.compose.ui.graphics.SolidColor(androidx.compose.ui.graphics.Color.Black),
         )

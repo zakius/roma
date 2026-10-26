@@ -63,8 +63,8 @@ import roma.core.LastFm
 import coil3.toBitmap
 import coil3.request.allowHardware
 
-/** A page opened from a list: an album, playlist or artist, or the sign-in page. */
-class Page(val kind: String, val id: String)
+/** A page opened from a list: an album, playlist or artist, or the sign-in page. [fromPlayer]: Back returns to the player. */
+class Page(val kind: String, val id: String, val fromPlayer: Boolean = false)
 
 const val TAB_HOME = 0
 const val TAB_SEARCH = 1
@@ -86,8 +86,9 @@ object Nav {
     val stacks = List(5) { mutableStateListOf<Page>() }
 
     fun open(p: Page) {
-        if (tab == TAB_PLAYER) tab = TAB_HOME
-        stacks[tab].add(p)
+        val fromPlayer = tab == TAB_PLAYER
+        if (fromPlayer) tab = TAB_HOME
+        stacks[tab].add(Page(p.kind, p.id, fromPlayer))
     }
 
     fun leavePlayer() {
@@ -240,7 +241,7 @@ fun Root() {
     val stack = Nav.stacks[tab]
     BackHandler(enabled = stack.isNotEmpty() || tab != TAB_HOME) {
         // Picking a song jumps to the player, so leaving it returns to the list it was picked from.
-        if (stack.isNotEmpty()) stack.removeAt(stack.size - 1) else if (tab == TAB_PLAYER) Nav.leavePlayer() else Nav.tab = TAB_HOME
+        if (stack.isNotEmpty()) { if (stack.removeAt(stack.size - 1).fromPlayer) Nav.tab = TAB_PLAYER } else if (tab == TAB_PLAYER) Nav.leavePlayer() else Nav.tab = TAB_HOME
     }
     if (!Store.bool("setup.done", false)) return Box(Modifier.fillMaxSize().safeDrawingPadding()) { SetupScreen() }
     DictionaryPrompt()

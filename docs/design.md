@@ -12,7 +12,7 @@ Working name; rename freely.
 - Android first. Test devices: Zenfone 10 and a Huawei MatePad on EMUI, which has **no Google Play Services**. Never depend on GMS.
 - Desktop (Linux, then Windows) is a maybe, decided later by cost. The only concession now: modules `core` (data, romanization, lyrics) must not import Android APIs, so a desktop app can reuse them later.
 - Language: Kotlin, because Media3 fits best. The user isn't keen on Kotlin, so keep the code plain. No Flutter, no KMP setup now.
-- Not in v1: offline downloads (the stream cache is enough), a separate tablet layout (the MatePad uses the phone layout; only landscape puts the controls beside the upper area), comments, video playback, the mini player.
+- Not in v1: offline downloads (the stream cache is enough), a separate tablet layout (the MatePad uses the phone layout; only landscape puts the controls beside the upper area), video playback, the mini player.
 
 ## Stack
 
@@ -95,17 +95,19 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 
 ```
 [ 0:42 ][ seek bar ][ 3:16 ]                                   about 28 dp
-[ More ] [ (empty) ] [ (empty) ] [ Lyrics ] [ Queue ] [ Like ]  about 44 dp, small icon, 10 sp label
+[ More ] [ (empty) ] [ Comments ] [ Lyrics ] [ Queue ] [ Like ] about 44 dp, small icon, 10 sp label
 [ shuffle ] [ prev ] [ PLAY/PAUSE ] [ next ] [ repeat ]        about 52 dp, play icon 44 dp
 [ Home ] [ Search ] [ Player ] [ Library ] [ Settings ]        bottom navigation, about 48 dp
 ```
 
 - The elapsed and total time sit on the seek bar's line. Every slot is at least 48 dp wide. No extra gap between the rows.
-- The action row has 6 equal slots. Slots 2 and 3 are deliberately empty: no icon, no label, not tappable. They keep More (which holds Ban) away from the other buttons.
+- The action row has 6 equal slots. Slot 2 is deliberately empty: no icon, no label, not tappable. It keeps More (which holds Ban) away from the other buttons. Slot 3 was empty too until Comments took it (user, 2026-10-26).
 - Left-handed mode (setting) mirrors the action row: Like on the left, More on the right. Nothing else moves.
 - On a landscape screen (a phone on its side, the MatePad) the upper area is on the left and the same block, in the same order, on the right. On a wide portrait screen the block keeps at most 560 dp of width, centred.
 - The Never button was removed (user, 2026-10-24). Ban song / Ban artist live in More; banning the playing song skips it and shows a "Banned · Undo" bar for about 5 s.
-- Lyrics and Queue are toggles that swap the upper area. The selected one is highlighted. Lyrics is dimmed when no provider has lyrics.
+- Lyrics, Queue and Comments are toggles that swap the upper area. The selected one is highlighted. Lyrics is dimmed when no provider has lyrics.
+- Comments: the song's YouTube comments (top first) through NewPipe's comments extractor (`roma.core.Comments`), a page of 20 at a time as the list scrolls; kept while the song plays. Text with non-Latin letters in a script the user doesn't read shows its romanization (sentence case) above the original. A comment with replies has an "N replies" button that opens its thread underneath, indented, a page at a time ("More replies"); YouTube nests replies one level only. A song with comments turned off says so.
+- On the song view, tapping the title opens its album and tapping the artist opens the (first) artist's page, as More → Go to album / Go to artist do; long-pressing either still opens the correction dialog. Back from a page opened from the player returns to the player.
 - Like is always the rightmost slot.
 - No mini player. The bottom nav has a Player tab to get back to the player.
 - Notification / lock screen (MediaSession): prev, play/pause, next, Like as a custom action. No ban button there. Title = Latin form; artist line = artist + original title.
