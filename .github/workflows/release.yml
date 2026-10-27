@@ -9,9 +9,10 @@ on:
     tags: ["v*"]
 permissions:
   contents: write
+# ubuntu-24.04, not ubuntu-latest: the image the release is built and tested on, changed on purpose rather than by GitHub.
 jobs:
   app:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -31,11 +32,11 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$RUNNER_TEMP/release.jks" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
       - run: tools/release.sh app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: app, path: dist/roma-*.apk }
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -45,7 +46,7 @@ jobs:
 
   # Built only when its version has no release yet; otherwise this job ends after one API call.
   dict:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - name: Dictionary already released?
@@ -86,11 +87,11 @@ jobs:
 
   publish:
     needs: [app, dict, test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: app, path: dist }
       - name: Publish
         env: { GH_TOKEN: "${{ github.token }}" }
