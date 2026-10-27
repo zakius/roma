@@ -15,8 +15,8 @@
         { "class" : "com.worksap.nlp.sudachi.MeCabOovProviderPlugin", "unkDef" : "roma-unk.def" },
         { "class" : "com.worksap.nlp.sudachi.SimpleOovProviderPlugin",
           "oovPOS" : [ "補助記号", "一般", "*", "*", "*", "*" ],
-          "leftId" : 4600,
-          "rightId" : 4582,
+          "leftId" : 4134,
+          "rightId" : 4119,
           "cost" : 3857 }
     ],
     "pathRewritePlugin" : [

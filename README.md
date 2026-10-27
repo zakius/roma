@@ -33,7 +33,7 @@ Release builds are made with `tools/release.sh`: R8 shrinking, Zopfli-recompress
 
 ## Install
 
-Get `roma-<version>.apk` from [Releases](https://github.com/zakius/roma/releases). If you want Japanese romanized, roma offers to install its Japanese dictionary on the first start: a separate app (`roma-dict-…`, a 46 MB download, 107 MB installed), so roma's own updates stay small.
+Get `roma-<version>.apk` from [Releases](https://github.com/zakius/roma/releases). If you want Japanese romanized, roma offers to install its Japanese dictionary on the first start: a separate app (`roma-dict-…`, a 31 MB download, 63 MB installed), so roma's own updates stay small.
 
 ## Credits
 
