@@ -24,12 +24,10 @@ class SectionListRenderer(
             ) {
                 @Serializable
                 class ChipCloudChipRenderer(
-                    val isSelected: Boolean = false,
                     val navigationEndpoint: NavigationEndpoint? = null,
                     val onDeselectedCommand: NavigationEndpoint? = null,
                     // The close button doesn't have the following two fields
                     val text: Runs?,
-                    val uniqueId: String?,
                 )
             }
         }
@@ -41,7 +39,6 @@ class SectionListRenderer(
         @JsonNames("musicImmersiveCarouselShelfRenderer")
         val musicCarouselShelfRenderer: MusicCarouselShelfRenderer?,
         val musicShelfRenderer: MusicShelfRenderer?,
-        val musicCardShelfRenderer: MusicCardShelfRenderer?,
         val musicPlaylistShelfRenderer: MusicPlaylistShelfRenderer?,
         val musicDescriptionShelfRenderer: MusicDescriptionShelfRenderer?,
         val musicResponsiveHeaderRenderer: MusicResponsiveHeaderRenderer?,
@@ -54,7 +51,6 @@ class SectionListRenderer(
 @Serializable
 class ItemSectionRenderer(
     val contents: List<Content>?,
-    val header: Header? = null,
 ) {
     @Serializable
     class Content(
@@ -71,15 +67,5 @@ class ItemSectionRenderer(
     class Correction(
         val correctedQuery: Runs? = null,
         val originalQueryEndpoint: NavigationEndpoint? = null,
-    )
-
-    @Serializable
-    class Header(
-        val itemSectionTabbedHeaderRenderer: ItemSectionTabbedHeaderRenderer?,
-    )
-
-    @Serializable
-    class ItemSectionTabbedHeaderRenderer(
-        val title: Runs?,
     )
 }
