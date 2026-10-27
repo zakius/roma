@@ -65,9 +65,7 @@ class InnerTubeExtractor internal constructor(
         private const val PLAYER_CONFIG_CACHE_TTL_MS = 3 * 60 * 60 * 1000L
         private const val WEB_EMBEDDED_PLAYER_ID = "WEB_EMBEDDED_PLAYER"
         private const val WEB_KIDS_ID = "WEB_KIDS"
-        private val EXPIRE_REGEX = Regex("[?&]expire=([0-9]+)")
         private val N_PARAMETER_REGEX = Regex("(?:[?&]|%26)n(?:=|%3[dD])", RegexOption.IGNORE_CASE)
-        private val CODECS_REGEX = Regex("codecs=\"([^\"]+)\"")
 
         // Allow a cached-config pass and a fresh-config pass, plus native probes: 4 per automatic client plus 2, for
         // InnerTubeX's 12 (roma's catalog keeps the 6 it can select).
@@ -650,9 +648,6 @@ class InnerTubeExtractor internal constructor(
             if (streamingData == null) {
                 continue
             }
-            val playbackTracking =
-                response.playbackTracking
-                    .toPlaybackTrackingData(clientPlaybackNonce)
 
             val allFormats =
                 (streamingData.formats ?: emptyList()) +
@@ -695,8 +690,6 @@ class InnerTubeExtractor internal constructor(
                 if (!isAllowedMediaUrl(directUrl)) continue
                 // Fast path: if the selected URL is already playback-ready, skip cipher/ejs work.
                 if (!directUrl.hasNParameter()) {
-                    val expireSeconds = extractExpire(directUrl)
-                    val expiresAt = expireSeconds?.let { Instant.fromEpochSeconds(it) }
                     val directHeaders =
                         buildHeaders(
                             diagnostics,
@@ -718,25 +711,12 @@ class InnerTubeExtractor internal constructor(
                     }
 
                     return ExtractedStream(
-                        videoId = videoId,
                         audioUrl = directUrl,
-                        headers = directHeaders,
                         loudnessDb = response.playerConfig?.audioConfig?.loudnessDb ?: directFastPathCandidate.loudnessDb,
-                        expiresAt = expiresAt,
-                        contentLengthBytes = contentLength,
-                        itag = directFastPathCandidate.itag,
                         mimeType = directFastPathCandidate.mimeType.substringBefore(";").trim(),
-                        codecs = directFastPathCandidate.mimeType.extractCodecs(),
                         bitrate = directFastPathCandidate.bitrate,
-                        sampleRate = directFastPathCandidate.audioSampleRate,
-                        clientName = result.clientName,
                         profileId = result.profileId,
-                        requireBoundedRange = requireBoundedRange,
-                        useRangeChunks = usesChunkedMediaRanges(result.clientName),
-                        rangeChunkSizeBytes = mediaRangeChunkSize(result.clientName),
-                        playbackTracking = playbackTracking,
-                        streamDiagnostics = diagnostics.snapshot(),
-                    ).withResponseMetadata(response).also { diagnostics.ensureSessionCurrent() }
+                    ).also { diagnostics.ensureSessionCurrent() }
                 }
             }
 
@@ -787,8 +767,6 @@ class InnerTubeExtractor internal constructor(
                 continue
             }
             if (!isAllowedMediaUrl(url)) continue
-            val expireSeconds = extractExpire(url)
-            val expiresAt = expireSeconds?.let { Instant.fromEpochSeconds(it) }
             val directHeaders =
                 buildHeaders(
                     diagnostics,
@@ -810,25 +788,12 @@ class InnerTubeExtractor internal constructor(
             }
 
             return ExtractedStream(
-                videoId = videoId,
                 audioUrl = url,
-                headers = directHeaders,
                 loudnessDb = response.playerConfig?.audioConfig?.loudnessDb ?: audioFormat.loudnessDb,
-                expiresAt = expiresAt,
-                contentLengthBytes = contentLength,
-                itag = audioFormat.itag,
                 mimeType = audioFormat.mimeType.substringBefore(";").trim(),
-                codecs = audioFormat.mimeType.extractCodecs(),
                 bitrate = audioFormat.bitrate,
-                sampleRate = audioFormat.audioSampleRate,
-                clientName = result.clientName,
                 profileId = result.profileId,
-                requireBoundedRange = requireBoundedRange,
-                useRangeChunks = usesChunkedMediaRanges(result.clientName),
-                rangeChunkSizeBytes = mediaRangeChunkSize(result.clientName),
-                playbackTracking = playbackTracking,
-                streamDiagnostics = diagnostics.snapshot(),
-            ).withResponseMetadata(response).also { diagnostics.ensureSessionCurrent() }
+            ).also { diagnostics.ensureSessionCurrent() }
         }
 
         val failedProfiles =
@@ -875,11 +840,6 @@ class InnerTubeExtractor internal constructor(
                 attempts = attempts.takeLast(32),
                 usedAuthenticatedWatchPage = usedAuthenticatedWatchPage,
             )
-    }
-
-    private fun extractExpire(url: String): Long? {
-        val match = EXPIRE_REGEX.find(url)
-        return match?.groupValues?.get(1)?.toLongOrNull()
     }
 
     private fun String.hasNParameter(): Boolean = N_PARAMETER_REGEX.containsMatchIn(this)
@@ -959,38 +919,6 @@ class InnerTubeExtractor internal constructor(
         }
     }
 
-    private fun PlayerResponse.PlaybackTracking?.toPlaybackTrackingData(clientPlaybackNonce: String) =
-        PlaybackTrackingData(
-            clientPlaybackNonce = clientPlaybackNonce,
-            playbackUrl = this?.videostatsPlaybackUrl?.baseUrl,
-            watchtimeUrl = this?.videostatsWatchtimeUrl?.baseUrl,
-            scheduledFlushWalltimeSeconds = this?.videostatsScheduledFlushWalltimeSeconds,
-            defaultFlushIntervalSeconds = this?.videostatsDefaultFlushIntervalSeconds,
-            resolvedAtEpochMs = Clock.System.now().toEpochMilliseconds(),
-        )
-
-    private fun ExtractedStream.withResponseMetadata(response: PlayerResponse): ExtractedStream =
-        apply {
-            perceptualLoudnessDb = response.playerConfig?.audioConfig?.perceptualLoudnessDb
-            mediaMetadata = response.toExtractedMediaMetadata()
-        }
-
-    private fun PlayerResponse.toExtractedMediaMetadata(): ExtractedMediaMetadata? =
-        videoDetails?.let { details ->
-            ExtractedMediaMetadata(
-                title = details.title,
-                author = details.author,
-                channelId = details.channelId,
-                durationSeconds = details.lengthSeconds?.toLongOrNull(),
-                musicVideoType = details.musicVideoType,
-                viewCount = details.viewCount,
-                thumbnails = details.thumbnail?.thumbnails.orEmpty(),
-                isLive = details.isLiveContent == true,
-            )
-        }
-
-    private fun String.extractCodecs(): String? = CODECS_REGEX.find(this)?.groupValues?.getOrNull(1)
-
     private fun isAllowedMediaUrl(value: String): Boolean =
         runCatching { Url(value) }.getOrNull()?.let {
             it.protocol == URLProtocol.HTTPS &&
@@ -1005,7 +933,3 @@ class InnerTubeExtractor internal constructor(
 
 internal fun requiresBoundedMediaRange(clientName: String): Boolean =
     clientName == "ANDROID_VR" || clientName == "IOS" || clientName == "TVHTML5_SIMPLY"
-
-internal fun usesChunkedMediaRanges(clientName: String): Boolean = clientName == "ANDROID_VR" || clientName == "TVHTML5_SIMPLY"
-
-internal fun mediaRangeChunkSize(clientName: String): Long = if (usesChunkedMediaRanges(clientName)) 512L * 1_024L else 1_024L * 1_024L
