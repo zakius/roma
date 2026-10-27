@@ -25,3 +25,7 @@ android {
 }
 
 tasks.named("preBuild") { dependsOn(":core:sudachiSlim") }
+
+// The NOTICE (Apache-2.0 §4) names the SudachiDict release the dictionary is modified from.
+val sudachiVersion = project(":core").extra["sudachiVersion"] as String
+check("SudachiDict core $sudachiVersion " in file("src/main/assets/NOTICE").readText()) { "dict-app/src/main/assets/NOTICE: name SudachiDict core $sudachiVersion" }
