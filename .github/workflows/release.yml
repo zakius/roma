@@ -98,4 +98,8 @@ jobs:
         run: |
           # Notes: the version's own commit ("0.1.28: …"), which may sit below later fixes on the tag.
           git log -1 --format=%B --grep "^${GITHUB_REF_NAME#v}:" "$GITHUB_REF_NAME" | grep -v '^Co-Authored-By' > "$RUNNER_TEMP/notes.md"
-          gh release create "$GITHUB_REF_NAME" dist/roma-${GITHUB_REF_NAME#v}.apk --title "roma ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          # javax.json ships in the APK under GPL 2 with the Classpath Exception, so its source goes with each release.
+          json=dist/javax.json-1.1.4-sources.jar
+          curl -sfL -o "$json" https://repo1.maven.org/maven2/org/glassfish/javax.json/1.1.4/javax.json-1.1.4-sources.jar
+          echo "31d21d4721eb050616683bee90e3c7d126110dffdbf8bf4d3cc992891a60419b  $json" | sha256sum -c -
+          gh release create "$GITHUB_REF_NAME" dist/roma-${GITHUB_REF_NAME#v}.apk "$json" --title "roma ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" --latest

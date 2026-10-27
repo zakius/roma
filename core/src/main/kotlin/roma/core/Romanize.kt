@@ -1,10 +1,9 @@
 package roma.core
 
 import com.worksap.nlp.sudachi.Config
-import com.worksap.nlp.sudachi.DictionaryFactory
 import com.worksap.nlp.sudachi.MMap
 import com.worksap.nlp.sudachi.Tokenizer
-import com.worksap.nlp.sudachi.dictionary.BinaryDictionary
+import com.worksap.nlp.sudachi.dictionary.RomaDictionary
 import kotlinx.serialization.Serializable
 import java.nio.ByteBuffer
 import java.text.Normalizer
@@ -235,7 +234,7 @@ class Romanizer(
     private fun tokenizer(): Tokenizer? = loaded ?: synchronized(tokenizerLock) {
         loaded ?: if (failedAt != 0L && System.currentTimeMillis() - failedAt < 60_000) null else runCatching {
             // roma's config: Sudachi's default with the slim dictionary's renumbered unknown-word ids (:dict-tool).
-            DictionaryFactory().create(Config.fromClasspath("roma-sudachi.json").systemDictionary(BinaryDictionary.loadSystem(dictionary()))).create()
+            RomaDictionary(dictionary()).tokenizer(Config.fromClasspath("roma-sudachi.json"))
         }.onSuccess { loaded = it }.onFailure { failedAt = System.currentTimeMillis() }.getOrNull()
     }
 

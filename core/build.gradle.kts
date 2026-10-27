@@ -24,6 +24,8 @@ dependencies {
     implementation("io.ktor:ktor-client-encoding:3.6.0")
     // Japanese words and readings. The dictionary isn't in the jar: see sudachiDict below.
     implementation("com.worksap.nlp:sudachi:0.8.2")
+    // Sudachi's own trie, for roma's dictionary format (RomaDictionary.kt); the version Sudachi depends on.
+    implementation("com.worksap.nlp:jdartsclone:1.2.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     testImplementation(kotlin("test"))
     // Android supplies android.icu; on the JVM the tests use ICU4J.
@@ -39,7 +41,7 @@ extra["sudachiAssets"] = File(sudachiDir, "assets")
 extra["sudachiVersion"] = sudachiVersion
 // The dictionary app's release: the SudachiDict version, then roma's slimming revision (bump it when Slim.kt changes
 // what it writes). Its versionCode is the two run together: 20261015.1 -> 202610151.
-val dictRelease = "20261015.1"
+val dictRelease = "20261015.2"
 check(dictRelease.startsWith("$sudachiVersion.")) { "dictRelease must start with sudachiVersion" }
 extra["dictRelease"] = dictRelease
 extra["dictCode"] = dictRelease.replace(".", "").toInt()
@@ -66,7 +68,7 @@ tasks.register("sudachiDict") {
 
 // The dictionary roma ships: SudachiDict core minus what roma never reads (:dict-tool, docs/design.md). The renumbered
 // unknown-word definitions and config go into this module's resources; the dictionary into :dict-app.
-val slimDir = File(sudachiDir, "slim")
+val slimDir = File(sudachiDir, "slim-$dictRelease")
 val slimDict = File(slimDir, "dict")
 val slimConfig = File(slimDir, "config")
 extra["sudachiSlimAssets"] = slimDict

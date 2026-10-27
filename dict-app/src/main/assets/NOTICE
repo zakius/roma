@@ -1,0 +1,15 @@
+roma's Japanese dictionary
+
+system_core.dic is modified from SudachiDict core 20261015 by Works Applications Co., Ltd.
+(https://github.com/WorksApplications/SudachiDict), licensed under the Apache License 2.0
+(LICENSE-2.0.txt). Its parts from UniDic and NEologd, and their terms, are in sudachi-LEGAL.txt.
+
+roma (https://github.com/zakius/roma, dict-tool/src/main/kotlin/Slim.kt) changed it:
+- Removed postal addresses: compound place names of 5 or more characters that contain
+  都, 道, 府, 県, 市, 区, 町, 村 or 郡.
+- Removed words that another word with the same text outranks in every context.
+- Cleared normalized forms, split data (A, B, C, word structure) and synonym groups.
+- Connection cost matrix: kept only the ids in use, merged identical rows and columns, and
+  renumbered the ids.
+- Rewrote it in roma's own binary format: shorter word entries, katakana-only strings stored
+  one byte per character, the connection matrix stored as shared pieces.

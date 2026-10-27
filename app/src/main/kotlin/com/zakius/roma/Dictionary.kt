@@ -21,13 +21,13 @@ import java.util.zip.GZIPInputStream
 import kotlin.concurrent.thread
 
 /**
- * The Japanese dictionary is its own app (the :dict-app module): slimmed SudachiDict, 107 MB stored uncompressed, installed once
+ * The Japanese dictionary is its own app (the :dict-app module): slimmed SudachiDict, 62 MB stored uncompressed, installed once
  * next to roma, so roma's updates stay small and nothing is unpacked into storage. roma downloads it gzipped (about
- * 46 MB, [BuildConfig.DICT_URL]) straight into a PackageInstaller session; Android asks the user to confirm. It is used
+ * 31 MB, [BuildConfig.DICT_URL]) straight into a PackageInstaller session; Android asks the user to confirm. It is used
  * only when it is signed with roma's own key and is at least [BuildConfig.DICT_VERSION].
  */
 object Dictionary {
-    const val DOWNLOAD = "46 MB download, 107 MB on the phone"
+    const val DOWNLOAD = "31 MB download, 62 MB on the phone"
     private const val ACTION = "com.zakius.roma.DICTIONARY_INSTALL"
 
     var installed by mutableStateOf(false)
