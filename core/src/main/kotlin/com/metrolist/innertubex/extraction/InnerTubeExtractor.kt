@@ -11,11 +11,6 @@ import com.metrolist.innertubex.models.YouTubeLocale
 import com.metrolist.innertubex.models.response.PlayerResponse
 import com.metrolist.innertubex.models.response.PlayerResponse.StreamingData
 import com.metrolist.innertubex.models.response.PlayerResponse.StreamingData.Format
-import com.metrolist.innertubex.sabr.ExperimentalSabrApi
-import com.metrolist.innertubex.sabr.isSabrAudioCandidate
-import com.metrolist.innertubex.sabr.requireAllowedSabrUrl
-import com.metrolist.innertubex.sabr.sabrRequestOrigin
-import com.metrolist.innertubex.sabr.toSabrBootstrap
 import com.metrolist.innertubex.utils.encodeQueryComponent
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
@@ -36,7 +31,6 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
-@OptIn(ExperimentalSabrApi::class)
 class InnerTubeExtractor internal constructor(
     private val configParser: YtConfigParser,
     private val clientDirector: PlayerClientDirector,
@@ -74,7 +68,6 @@ class InnerTubeExtractor internal constructor(
     )
 
     private companion object {
-        private const val DEFAULT_BOUNDED_RANGE_CHUNK_BYTES = 1_048_576L
 
         // An unusable cached config is refetched immediately, so the TTL only bounds idle staleness.
         private const val PLAYER_CONFIG_CACHE_TTL_MS = 3 * 60 * 60 * 1000L
@@ -563,7 +556,7 @@ class InnerTubeExtractor internal constructor(
                 hints.isUploaded != true && hints.isLive != true &&
                 !authenticatedPremiumHighQuality
         val deferConfigFree =
-            configFreeEligible && hints.isKidsContent != true && !hints.sabrFirst &&
+            configFreeEligible && hints.isKidsContent != true &&
                 innerTube.sessionSnapshot().visitorData.isNullOrBlank() &&
                 clientDirector.includesVisitorBackedLegacy(excludedClients)
 
@@ -965,119 +958,6 @@ class InnerTubeExtractor internal constructor(
                     .sorted()
 
             val isLive = response.videoDetails?.isLiveContent == true
-
-            if (result.useSabr) {
-                if (!hints.allowSabr) {
-                    continue
-                }
-                val audioFormat =
-                    selectBestAudioFormat(
-                        formats = allFormats.filter { response.isSabrAudioCandidate(it) },
-                        audioQuality = audioQuality,
-                        requireUrl = false,
-                    )
-                if (audioFormat == null) {
-                    continue
-                }
-                val videoFormat =
-                    if (hints.wantVideo) {
-                        selectBestVideoFormat(
-                            formats = preferredVideoFormats(streamingData, requireUrl = false),
-                            requireUrl = false,
-                            maxHeight = hints.maxVideoHeight ?: 2160,
-                        )
-                    } else {
-                        null
-                    }
-                if (hints.wantVideo && videoFormat == null) {
-                    continue
-                }
-                val rawSabrUrl = streamingData.serverAbrStreamingUrl
-                // Validate the bootstrap (duration, format identities, bounded config) before paying for any n transform.
-                val bootstrapResult =
-                    runCatching {
-                        response.toSabrBootstrap(
-                            clientId = result.clientId,
-                            clientVersion = result.clientVersion,
-                            audioFormat = audioFormat,
-                            poToken = result.streamingDataPoToken,
-                            requestUserAgent = result.userAgent,
-                            requestOrigin = sabrRequestOrigin(result.clientName),
-                            videoFormat = videoFormat,
-                        )
-                    }
-                val untransformedBootstrap = bootstrapResult.getOrNull()
-                if (untransformedBootstrap == null) {
-                    continue
-                }
-                if (rawSabrUrl?.hasNParameter() == true && !allowCipherProcessing) {
-                    continue
-                }
-                val processedSabrUrl =
-                    if (rawSabrUrl?.hasNParameter() == true) {
-                        cipherService
-                            .processFormats(
-                                playerUrl = playerConfig.playerUrl,
-                                formats =
-                                    listOf(
-                                        audioFormat.copy(
-                                            url = rawSabrUrl,
-                                            signatureCipher = null,
-                                            cipher = null,
-                                        ),
-                                    ),
-                            ).also { diagnostics.ensureSessionCurrent() }
-                            .firstOrNull()
-                            ?.url
-                    } else {
-                        rawSabrUrl
-                    }
-                if (rawSabrUrl?.hasNParameter() == true && processedSabrUrl == null) {
-                    continue
-                }
-                // The transformed URL is validated again: checking only the original would not cover the rewrite.
-                val trackedSabrUrl =
-                    processedSabrUrl?.let { candidate ->
-                        runCatching {
-                            requireAllowedSabrUrl(appendClientPlaybackNonce(candidate, clientPlaybackNonce))
-                        }.getOrNull()
-                    } ?: continue
-                val bootstrap = untransformedBootstrap.copy(serverAbrStreamingUrl = trackedSabrUrl)
-                val expiresAt =
-                    streamingData.expiresInSeconds
-                        ?.takeIf { it > 0 }
-                        ?.let { Clock.System.now() + it.seconds }
-                return ExtractedStream(
-                    videoId = videoId,
-                    audioUrl = "sabr://$videoId",
-                    headers = emptyMap(),
-                    loudnessDb = response.playerConfig?.audioConfig?.loudnessDb ?: audioFormat.loudnessDb,
-                    expiresAt = expiresAt,
-                    contentLengthBytes = audioFormat.contentLength,
-                    itag = audioFormat.itag,
-                    mimeType = audioFormat.mimeType.substringBefore(';').trim(),
-                    codecs = audioFormat.mimeType.extractCodecs(),
-                    bitrate = audioFormat.bitrate,
-                    sampleRate = audioFormat.audioSampleRate,
-                    clientName = result.clientName,
-                    profileId = result.profileId,
-                    requireBoundedRange = false,
-                    rangeChunkSizeBytes = DEFAULT_BOUNDED_RANGE_CHUNK_BYTES,
-                    playbackTracking = playbackTracking,
-                    streamDiagnostics = diagnostics.snapshot(),
-                    videoUrl = videoFormat?.let { "sabr-video://$videoId" },
-                    videoWidth = videoFormat?.width,
-                    videoHeight = videoFormat?.height,
-                    videoMimeType = videoFormat?.mimeType?.substringBefore(';')?.trim(),
-                    videoCodecs = videoFormat?.mimeType?.extractCodecs(),
-                    videoBitrate = videoFormat?.bitrate,
-                    videoItag = videoFormat?.itag,
-                    videoContentLengthBytes = videoFormat?.contentLength,
-                    sabrBootstrap = bootstrap,
-                    sabrVideoBootstrap = bootstrap.takeIf { videoFormat != null },
-                    availableVideoHeights = availableVideoHeights,
-                ).withResponseMetadata(response).also { diagnostics.ensureSessionCurrent() }
-            }
 
             val hlsManifestUrl =
                 streamingData.hlsManifestUrl

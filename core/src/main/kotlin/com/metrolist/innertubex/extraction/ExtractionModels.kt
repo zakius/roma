@@ -2,7 +2,6 @@ package com.metrolist.innertubex.extraction
 
 import com.metrolist.innertubex.models.Thumbnail
 import com.metrolist.innertubex.models.response.PlayerResponse
-import com.metrolist.innertubex.sabr.SabrBootstrap
 import kotlin.time.Instant
 
 public class ContentHints(
@@ -15,15 +14,12 @@ public class ContentHints(
     public val endpointParams: String? = null,
     public val wantVideo: Boolean = false,
     public val playbackClientOverrideId: String? = null,
-    public val sabrFirst: Boolean = false,
     public val maxVideoHeight: Int? = null,
 ) {
     /** True only when the caller has independently confirmed YouTube Premium entitlement. */
     public var premium: Boolean = false
         private set
     public var allowHls: Boolean = true
-        private set
-    public var allowSabr: Boolean = true
         private set
     public var allowBoundedRange: Boolean = true
         private set
@@ -46,9 +42,7 @@ public class ContentHints(
 
     public operator fun component9(): String? = playbackClientOverrideId
 
-    public operator fun component10(): Boolean = sabrFirst
-
-    public operator fun component11(): Int? = maxVideoHeight
+    public operator fun component10(): Int? = maxVideoHeight
 
     public fun copy(
         isExplicit: Boolean? = this.isExplicit,
@@ -60,7 +54,6 @@ public class ContentHints(
         endpointParams: String? = this.endpointParams,
         wantVideo: Boolean = this.wantVideo,
         playbackClientOverrideId: String? = this.playbackClientOverrideId,
-        sabrFirst: Boolean = this.sabrFirst,
         maxVideoHeight: Int? = this.maxVideoHeight,
     ): ContentHints =
         ContentHints(
@@ -73,12 +66,10 @@ public class ContentHints(
             endpointParams = endpointParams,
             wantVideo = wantVideo,
             playbackClientOverrideId = playbackClientOverrideId,
-            sabrFirst = sabrFirst,
             maxVideoHeight = maxVideoHeight,
         ).also {
             it.premium = premium
             it.allowHls = allowHls
-            it.allowSabr = allowSabr
             it.allowBoundedRange = allowBoundedRange
         }
 
@@ -90,12 +81,10 @@ public class ContentHints(
 
     public fun withStreamCapabilities(
         allowHls: Boolean = true,
-        allowSabr: Boolean = true,
         allowBoundedRange: Boolean = true,
     ): ContentHints =
         copy().also {
             it.allowHls = allowHls
-            it.allowSabr = allowSabr
             it.allowBoundedRange = allowBoundedRange
         }
 
@@ -111,11 +100,9 @@ public class ContentHints(
             endpointParams == other.endpointParams &&
             wantVideo == other.wantVideo &&
             playbackClientOverrideId == other.playbackClientOverrideId &&
-            sabrFirst == other.sabrFirst &&
             maxVideoHeight == other.maxVideoHeight &&
             premium == other.premium &&
             allowHls == other.allowHls &&
-            allowSabr == other.allowSabr &&
             allowBoundedRange == other.allowBoundedRange
     }
 
@@ -129,11 +116,9 @@ public class ContentHints(
         result = 31 * result + (endpointParams?.hashCode() ?: 0)
         result = 31 * result + wantVideo.hashCode()
         result = 31 * result + (playbackClientOverrideId?.hashCode() ?: 0)
-        result = 31 * result + sabrFirst.hashCode()
         result = 31 * result + (maxVideoHeight ?: 0)
         result = 31 * result + premium.hashCode()
         result = 31 * result + allowHls.hashCode()
-        result = 31 * result + allowSabr.hashCode()
         return 31 * result + allowBoundedRange.hashCode()
     }
 
@@ -144,8 +129,8 @@ public fun ContentHints.diagnosticSummary(): String =
     "{explicit=$isExplicit, kids=$isKidsContent, ageRestricted=$isAgeRestricted, " +
         "live=$isLive, uploaded=$isUploaded, local=$isLocal, " +
         "endpointParamsPresent=${endpointParams != null}, wantVideo=$wantVideo, " +
-        "clientOverride=$playbackClientOverrideId, sabrFirst=$sabrFirst, maxVideoHeight=$maxVideoHeight, " +
-        "premium=$premium, allowHls=$allowHls, allowSabr=$allowSabr, allowBoundedRange=$allowBoundedRange}"
+        "clientOverride=$playbackClientOverrideId, maxVideoHeight=$maxVideoHeight, " +
+        "premium=$premium, allowHls=$allowHls, allowBoundedRange=$allowBoundedRange}"
 
 public data class PlayerConfig(
     val playerUrl: String,
@@ -172,7 +157,6 @@ internal data class ClientResult(
     val streamingDataPoToken: String? = null,
     val clientId: Int = 0,
     val clientVersion: String = "",
-    val useSabr: Boolean = false,
     val bearerAuthenticated: Boolean = false,
 ) {
     override fun toString(): String =
@@ -183,7 +167,6 @@ internal data class ClientResult(
             "streamingDataPoToken=${streamingDataPoToken.presence()}, " +
             "clientId=$clientId, " +
             "clientVersion=${clientVersion.presence()}, " +
-            "useSabr=$useSabr, " +
             "bearerAuthenticated=$bearerAuthenticated)"
 }
 
@@ -257,8 +240,6 @@ public class ExtractedStream(
     val videoBitrate: Int? = null,
     val videoItag: Int? = null,
     val videoContentLengthBytes: Long? = null,
-    val sabrBootstrap: SabrBootstrap? = null,
-    val sabrVideoBootstrap: SabrBootstrap? = null,
     val availableVideoHeights: List<Int> = emptyList(),
 ) {
     public var perceptualLoudnessDb: Double? = null
@@ -319,11 +300,7 @@ public class ExtractedStream(
 
     public operator fun component26(): Long? = videoContentLengthBytes
 
-    public operator fun component27(): SabrBootstrap? = sabrBootstrap
-
-    public operator fun component28(): SabrBootstrap? = sabrVideoBootstrap
-
-    public operator fun component29(): List<Int> = availableVideoHeights
+    public operator fun component27(): List<Int> = availableVideoHeights
 
     public fun copy(
         videoId: String = this.videoId,
@@ -352,8 +329,6 @@ public class ExtractedStream(
         videoBitrate: Int? = this.videoBitrate,
         videoItag: Int? = this.videoItag,
         videoContentLengthBytes: Long? = this.videoContentLengthBytes,
-        sabrBootstrap: SabrBootstrap? = this.sabrBootstrap,
-        sabrVideoBootstrap: SabrBootstrap? = this.sabrVideoBootstrap,
         availableVideoHeights: List<Int> = this.availableVideoHeights,
     ): ExtractedStream =
         ExtractedStream(
@@ -383,8 +358,6 @@ public class ExtractedStream(
             videoBitrate = videoBitrate,
             videoItag = videoItag,
             videoContentLengthBytes = videoContentLengthBytes,
-            sabrBootstrap = sabrBootstrap,
-            sabrVideoBootstrap = sabrVideoBootstrap,
             availableVideoHeights = availableVideoHeights,
         ).also {
             it.perceptualLoudnessDb = perceptualLoudnessDb
@@ -420,8 +393,6 @@ public class ExtractedStream(
             videoBitrate == other.videoBitrate &&
             videoItag == other.videoItag &&
             videoContentLengthBytes == other.videoContentLengthBytes &&
-            sabrBootstrap == other.sabrBootstrap &&
-            sabrVideoBootstrap == other.sabrVideoBootstrap &&
             availableVideoHeights == other.availableVideoHeights &&
             (perceptualLoudnessDb?.equals(other.perceptualLoudnessDb) ?: (other.perceptualLoudnessDb == null)) &&
             mediaMetadata == other.mediaMetadata
@@ -454,8 +425,6 @@ public class ExtractedStream(
         result = 31 * result + (videoBitrate?.hashCode() ?: 0)
         result = 31 * result + (videoItag?.hashCode() ?: 0)
         result = 31 * result + (videoContentLengthBytes?.hashCode() ?: 0)
-        result = 31 * result + (sabrBootstrap?.hashCode() ?: 0)
-        result = 31 * result + (sabrVideoBootstrap?.hashCode() ?: 0)
         result = 31 * result + availableVideoHeights.hashCode()
         result = 31 * result + (perceptualLoudnessDb?.hashCode() ?: 0)
         result = 31 * result + (mediaMetadata?.hashCode() ?: 0)
@@ -474,9 +443,7 @@ public class ExtractedStream(
             "profileId=$profileId, " +
             "mediaMetadata=${mediaMetadata != null}, " +
             "videoUrl=${videoUrl.presence()}, " +
-            "videoItag=$videoItag, " +
-            "sabr=${sabrBootstrap != null}, " +
-            "sabrVideo=${sabrVideoBootstrap != null})"
+            "videoItag=$videoItag)"
 }
 
 public data class StreamAttemptDiagnostic(

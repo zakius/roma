@@ -101,17 +101,10 @@ class ContentAwareFallbackStrategy(
                                 // Repeatedly failing clients go behind every healthy transport instead of only losing points.
                                 it.manifest?.id in healthDemoted -> 3
 
-                                // Tokenless gated SABR stops at ~50s with ATTESTATION_REQUIRED (live 2026-10-21); keep token-backed direct audio first.
-                                it.client.useSabr -> 2
-
                                 request.hints.isKidsContent == true && it.client in kidsClients -> 0
 
                                 else -> 1
                             }
-                        }
-
-                        PlaybackTransportPreference.SABR -> {
-                            if (it.client.useSabr) 0 else 1
                         }
 
                         else -> {
@@ -167,17 +160,13 @@ class ContentAwareFallbackStrategy(
                 add("legacy direct playback verified for normal and explicit audio only")
             }
             if (request.hints.wantVideo &&
-                manifest.transports.none { it == PlaybackTransport.DIRECT || it == PlaybackTransport.SABR }
+                PlaybackTransport.DIRECT !in manifest.transports
             ) {
                 add("transport cannot satisfy video request")
             }
 
             if (manifest.transports.none { transport ->
                     when (transport) {
-                        PlaybackTransport.SABR -> {
-                            request.hints.allowSabr
-                        }
-
                         PlaybackTransport.HLS -> {
                             request.hints.allowHls
                         }
@@ -278,11 +267,6 @@ class ContentAwareFallbackStrategy(
             CapabilitySupport.UNKNOWN -> adjust(-4, "content-unknown")
             CapabilitySupport.UNSUPPORTED -> Unit
         }
-        // Prefer sustained audio playback over Web SABR responses that stall on attestation.
-        // Keep the existing video ordering: these probes only decoded audio.
-        if (manifest.id == "VISIONOS_SABR" && !request.hints.wantVideo) {
-            adjust(80, "sabr-audio-playback")
-        }
 
         val restrictedContent =
             request.hints.isExplicit == true ||
@@ -301,10 +285,6 @@ class ContentAwareFallbackStrategy(
 
             PlaybackTransportPreference.DIRECT -> {
                 adjust(if (PlaybackTransport.DIRECT in manifest.transports) 30 else -30, "direct-preference")
-            }
-
-            PlaybackTransportPreference.SABR -> {
-                adjust(if (PlaybackTransport.SABR in manifest.transports) 30 else -30, "sabr-preference")
             }
 
             PlaybackTransportPreference.HLS -> {

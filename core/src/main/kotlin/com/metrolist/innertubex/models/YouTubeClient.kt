@@ -32,7 +32,6 @@ data class YouTubeClient(
     val requirePoToken: Boolean = false,
     val poTokenBinding: PoTokenBinding = PoTokenBinding.VIDEO_ID,
     val includeUserAgentInContext: Boolean = false,
-    val useSabr: Boolean = false,
     val useMusicPlayerEndpoint: Boolean = false,
     val skipPlayerResponseValidation: Boolean = false,
 ) {
@@ -445,71 +444,6 @@ data class YouTubeClient(
                 loginSupported = false,
                 useSignatureTimestamp = false,
                 includeUserAgentInContext = true,
-            )
-
-        val ANDROID_SABR =
-            ANDROID.copy(
-                friendlyName = "Android SABR",
-                useSabr = true,
-            )
-
-        val WEB_REMIX_SABR =
-            WEB_REMIX.copy(
-                friendlyName = "Web Remix SABR",
-                requirePoToken = true,
-                poTokenBinding = PoTokenBinding.VISITOR_DATA,
-                useSabr = true,
-            )
-
-        val ANDROID_VR_SABR =
-            ANDROID_VR_1_65_10.copy(
-                friendlyName = "Android VR SABR",
-                useSabr = true,
-            )
-
-        val VISIONOS_SABR =
-            VISIONOS.copy(
-                friendlyName = "visionOS SABR",
-                useSabr = true,
-            )
-
-        val TVHTML5_SIMPLY_SABR =
-            TVHTML5_SIMPLY.copy(
-                friendlyName = "TV HTML5 Simply SABR",
-                useSabr = true,
-            )
-
-        val WEB_SABR =
-            WEB.copy(
-                friendlyName = "Web SABR",
-                poTokenBinding = PoTokenBinding.VIDEO_ID,
-                useSabr = true,
-            )
-
-        val WEB_SAFARI_SABR =
-            WEB_SAFARI.copy(
-                friendlyName = "Web Safari SABR",
-                poTokenBinding = PoTokenBinding.VIDEO_ID,
-                useSabr = true,
-            )
-
-        val MWEB_SABR =
-            MWEB.copy(
-                friendlyName = "Mobile Web SABR",
-                poTokenBinding = PoTokenBinding.VIDEO_ID,
-                useSabr = true,
-            )
-
-        val TVHTML5_SABR =
-            TVHTML5.copy(
-                friendlyName = "TV HTML5 SABR",
-                useSabr = true,
-            )
-
-        val IOS_SABR =
-            IOS.copy(
-                friendlyName = "iOS SABR",
-                useSabr = true,
             )
 
         /** Cookie-oriented fallback used by current yt-dlp defaults. */

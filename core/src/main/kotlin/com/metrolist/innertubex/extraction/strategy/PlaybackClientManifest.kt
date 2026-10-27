@@ -29,7 +29,6 @@ enum class AuthenticationPolicy {
 
 enum class PlaybackTransport {
     DIRECT,
-    SABR,
     HLS,
     DASH,
 }

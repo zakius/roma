@@ -17,7 +17,6 @@ import com.metrolist.innertubex.extraction.strategy.SelectedClient
 import com.metrolist.innertubex.models.PoTokenBinding
 import com.metrolist.innertubex.models.YouTubeClient
 import com.metrolist.innertubex.models.response.PlayerResponse
-import com.metrolist.innertubex.sabr.hasSabrBootstrapPrerequisites
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -160,9 +159,6 @@ internal class PlayerClientDirector(
                 transportPreference =
                     when {
                         hints.isLive == true -> PlaybackTransportPreference.HLS
-
-                        // Direct video needs a poToken and cipher pass; SABR video needs neither.
-                        hints.sabrFirst || hints.wantVideo -> PlaybackTransportPreference.SABR
 
                         else -> PlaybackTransportPreference.AUTO
                     },
@@ -357,7 +353,6 @@ internal class PlayerClientDirector(
                         streamingDataPoToken = attempt.streamingDataPoToken,
                         clientId = client.clientId.toIntOrNull() ?: 0,
                         clientVersion = client.clientVersion,
-                        useSabr = client.useSabr,
                     )
                 if (result.profileId in excludedClients) {
                     continue
@@ -369,12 +364,8 @@ internal class PlayerClientDirector(
                 }
 
                 val yieldsDirect =
-                    (client.useSabr && hasUsableSabrAudio(attempt.response)) ||
-                        (
-                            !client.useSabr &&
-                                hasPlaybackReadyDirectAudioUrl(attempt.response) &&
-                                (!wantVideo || hasPlaybackReadyDirectVideoUrl(attempt.response))
-                        )
+                    hasPlaybackReadyDirectAudioUrl(attempt.response) &&
+                        (!wantVideo || hasPlaybackReadyDirectVideoUrl(attempt.response))
                 if (yieldsDirect) {
                     // For video, prefer a poToken client over a direct non-poToken one: YouTube 403s
                     // direct video URLs without a poToken, attached by the extractor after cipher resolution.
@@ -983,13 +974,7 @@ internal class PlayerClientDirector(
         client: YouTubeClient,
     ): Boolean =
         (response.playabilityStatus.status == "OK" || client.skipPlayerResponseValidation) &&
-            if (client.useSabr) {
-                hasUsableSabrAudio(response)
-            } else {
-                hasUsableAudioFormat(response) || !response.streamingData?.hlsManifestUrl.isNullOrBlank()
-            }
-
-    private fun hasUsableSabrAudio(response: PlayerResponse): Boolean = response.hasSabrBootstrapPrerequisites()
+            (hasUsableAudioFormat(response) || !response.streamingData?.hlsManifestUrl.isNullOrBlank())
 
     private fun hasUsableAudioFormat(response: PlayerResponse): Boolean {
         val streamingData = response.streamingData ?: return false
@@ -1188,8 +1173,6 @@ internal class PlayerClientDirector(
             append(if (!response.streamingData?.hlsManifestUrl.isNullOrBlank()) "present" else "absent")
             append(",dash=")
             append(if (!response.streamingData?.dashManifestUrl.isNullOrBlank()) "present" else "absent")
-            append(",sabr=")
-            append(if (!response.streamingData?.serverAbrStreamingUrl.isNullOrBlank()) "present" else "absent")
         }
     }
 
@@ -1201,8 +1184,8 @@ internal class PlayerClientDirector(
 }
 
 /**
- * Drops fields that only steer local transport/token policy, so profiles such as WEB_REMIX and WEB_REMIX_SABR
- * share one identical untokenized request. Each caller still applies its own transport and token checks.
+ * Drops fields that only steer local token policy, so profiles of one client share one identical untokenized
+ * request. Each caller still applies its own transport and token checks.
  */
 internal fun YouTubeClient.wireIdentity(): YouTubeClient =
     copy(
@@ -1210,7 +1193,6 @@ internal fun YouTubeClient.wireIdentity(): YouTubeClient =
         requirePoToken = false,
         poTokenBinding = PoTokenBinding.VIDEO_ID,
         useWebPoTokens = false,
-        useSabr = false,
         skipPlayerResponseValidation = false,
     )
 

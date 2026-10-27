@@ -6,7 +6,6 @@ import com.metrolist.innertubex.models.YouTubeClient
 enum class PlaybackTransportPreference {
     AUTO,
     DIRECT,
-    SABR,
     HLS,
 }
 

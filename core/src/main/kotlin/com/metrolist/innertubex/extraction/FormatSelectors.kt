@@ -1,7 +1,6 @@
 package com.metrolist.innertubex.extraction
 
 import com.metrolist.innertubex.models.response.PlayerResponse.StreamingData.Format
-import com.metrolist.innertubex.sabr.ProtoReader
 import kotlin.io.encoding.Base64
 
 public fun selectBestAudioFormat(
