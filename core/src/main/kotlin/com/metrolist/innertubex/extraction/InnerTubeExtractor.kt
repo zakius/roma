@@ -16,12 +16,6 @@ import io.ktor.http.URLProtocol
 import io.ktor.http.Url
 import io.ktor.util.sha256
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -39,7 +33,6 @@ class InnerTubeExtractor internal constructor(
     private val tokenProvider: TokenProvider = UnavailableTokenProvider,
     private val now: () -> Instant = { Clock.System.now() },
     private val extractionTimeBudgetMs: Long = 30_000L,
-    private val bootstrapWriteScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) : StreamExtractor {
     constructor(
         configParser: YtConfigParser,
@@ -70,10 +63,8 @@ class InnerTubeExtractor internal constructor(
 
         // An unusable cached config is refetched immediately, so the TTL only bounds idle staleness.
         private const val PLAYER_CONFIG_CACHE_TTL_MS = 3 * 60 * 60 * 1000L
-        private const val PREWARM_VIDEO_ID = "dQw4w9WgXcQ"
         private const val WEB_EMBEDDED_PLAYER_ID = "WEB_EMBEDDED_PLAYER"
         private const val WEB_KIDS_ID = "WEB_KIDS"
-        private val PO_TOKEN_PREFETCH_TIMEOUT = 18.seconds
         private val EXPIRE_REGEX = Regex("[?&]expire=([0-9]+)")
         private val N_PARAMETER_REGEX = Regex("(?:[?&]|%26)n(?:=|%3[dD])", RegexOption.IGNORE_CASE)
         private val CODECS_REGEX = Regex("codecs=\"([^\"]+)\"")
@@ -152,99 +143,12 @@ class InnerTubeExtractor internal constructor(
         }
     }
 
-    // Guarded by playerConfigCacheMutex.
-    private var readPlayerBootstrap: (suspend () -> String?)? = null
-    private var writePlayerBootstrap: (suspend (String) -> Unit)? = null
-    private var playerBootstrapRestoreAttempted = false
-    private val bootstrapRestoreMutex = Mutex()
-    private var bootstrapStoreGeneration = 0L
-    private var bootstrapWriterRunning = false
-    private var pendingPlayerBootstrap: Pair<suspend (String) -> Unit, String>? = null
-    private var writtenPlayerBootstrap: Pair<suspend (String) -> Unit, String>? = null
-
-    /**
-     * Installs optional host storage for the public player bootstrap: player URL, signature timestamp and client
-     * version of the signed-out watch config. After a restart the first cipher-dependent extraction can then skip the
-     * watch-page request. Nothing session- or account-bound is stored, and a stale or rejected value simply refetches.
-     */
-    suspend fun setPlayerBootstrapCache(
-        read: suspend () -> String?,
-        write: suspend (String) -> Unit,
-    ) = playerConfigCacheMutex.withLock {
-        readPlayerBootstrap = read
-        writePlayerBootstrap = write
-        playerBootstrapRestoreAttempted = false
-        bootstrapStoreGeneration++
-        pendingPlayerBootstrap = null
-        writtenPlayerBootstrap = null
-    }
-
-    private suspend fun restorePlayerBootstrap(nowMs: Long): CachedPlayerConfig? {
-        return bootstrapRestoreMutex.withLock {
-            val (read, generation, identity) =
-                playerConfigCacheMutex.withLock {
-                    getCachedPlayerConfigLocked(false, nowMs)?.let { return it }
-                    if (playerBootstrapRestoreAttempted) return null
-                    val read = readPlayerBootstrap ?: return null
-                    // The watch page must still supply visitor data when the session has none.
-                    if (innerTube.sessionSnapshot().visitorData.isNullOrBlank()) return null
-                    playerBootstrapRestoreAttempted = true
-                    Triple(read, bootstrapStoreGeneration, configIdentity(useLoginCookies = false))
-                }
-            val stored =
-                try {
-                    withTimeoutOrNull(1.seconds) { read() }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    null
-                }
-            val snapshot = PlayerBootstrapSnapshot.decode(stored) ?: return null
-            val config = snapshot.toPlayerConfig(identity.locale, nowMs, PLAYER_CONFIG_CACHE_TTL_MS) ?: return null
-            return playerConfigCacheMutex.withLock {
-                if (generation != bootstrapStoreGeneration || identity != configIdentity(useLoginCookies = false)) return@withLock null
-                getCachedPlayerConfigLocked(false, nowMs)
-                    ?: CachedPlayerConfig(config, snapshot.savedAtMs, identity, usedLoginCookies = false)
-                        .also { playerConfigCache[false] = it }
-            }
-        }
-    }
-
-    private fun persistPlayerBootstrapLocked(
-        config: PlayerConfig,
-        identity: ConfigIdentity,
-    ) {
-        val write = writePlayerBootstrap ?: return
-        val encoded = PlayerBootstrapSnapshot.of(config, identity.locale, Clock.System.now().toEpochMilliseconds())?.encode() ?: return
-        pendingPlayerBootstrap = write to encoded
-        if (bootstrapWriterRunning) return
-        bootstrapWriterRunning = true
-        // One writer drains only the latest pending value, even when host storage stalls.
-        bootstrapWriteScope.launch {
-            while (true) {
-                val pending =
-                    playerConfigCacheMutex.withLock {
-                        val pending = pendingPlayerBootstrap?.takeUnless { it == writtenPlayerBootstrap }
-                        pendingPlayerBootstrap = null
-                        if (pending == null) bootstrapWriterRunning = false
-                        pending
-                    } ?: return@launch
-                try {
-                    pending.first(pending.second)
-                    playerConfigCacheMutex.withLock { writtenPlayerBootstrap = pending }
-                } catch (_: Exception) {
-                    // Best effort: the next successful fetch writes again.
-                }
-            }
-        }
-    }
-
     private val playerConfigCacheMutex = Mutex()
     private val playerConfigFetchMutexes = mapOf(false to Mutex(), true to Mutex())
 
     private fun ensureSessionGeneration(generation: Long) {
         if (innerTube.sessionSnapshot().generation != generation) {
-            throw CancellationException("InnerTube session changed during TV discovery")
+            throw CancellationException("InnerTube session changed")
         }
     }
 
@@ -255,77 +159,6 @@ class InnerTubeExtractor internal constructor(
             ?.takeIf(String::isNotBlank)
             ?.let { innerTube.sessionSnapshotWithVisitorData(expected, it) }
             ?: throw CancellationException("InnerTube session changed")
-    }
-
-    override suspend fun prewarm() {
-        val startMs = Clock.System.now().toEpochMilliseconds()
-        try {
-            coroutineScope {
-                val initialSession = innerTube.sessionSnapshot()
-                val fetchedVisitorData =
-                    if (tokenProvider.capabilities.providers.isNotEmpty()) {
-                        initialSession.visitorData ?: innerTube.fetchFreshVisitorData(initialSession)
-                    } else {
-                        null
-                    }
-                val session = currentExtractionSession(initialSession)
-
-                fun warmToken(visitorData: String?) =
-                    visitorData?.takeIf { it.isNotBlank() && tokenProvider.capabilities.providers.isNotEmpty() }?.let {
-                        async {
-                            currentExtractionSession(session)
-                            val token =
-                                withTimeoutOrNull(PO_TOKEN_PREFETCH_TIMEOUT) {
-                                    try {
-                                        tokenProvider.getPoToken(PREWARM_VIDEO_ID, it, session.cookie)
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (_: Exception) {
-                                        null
-                                    }
-                                }
-                            currentExtractionSession(session)
-                            token
-                        }
-                    }
-                val earlyTokenWarmup = warmToken(fetchedVisitorData)
-                val defaultConfigFetch =
-                    async {
-                        (
-                            getCachedPlayerConfig(false, Clock.System.now().toEpochMilliseconds())
-                                ?: fetchPlayerConfig(PREWARM_VIDEO_ID, false, requestSession = session)
-                        ).config
-                    }
-                val authenticatedConfigFetch =
-                    if (!session.sapisid.isNullOrBlank()) {
-                        async {
-                            try {
-                                fetchPlayerConfig(PREWARM_VIDEO_ID, true, requestSession = session).config
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                null
-                            }
-                        }
-                    } else {
-                        null
-                    }
-                cipherService.initialize()
-                val configs = listOfNotNull(defaultConfigFetch.await(), authenticatedConfigFetch?.await())
-                currentExtractionSession(session)
-                val tokenWarmup = earlyTokenWarmup ?: warmToken(configs.firstNotNullOfOrNull(PlayerConfig::visitorData))
-                configs
-                    .asReversed()
-                    .firstOrNull { it.playerUrl.isNotBlank() }
-                    ?.let { cipherService.preloadPlayerCode(it.playerUrl) }
-                tokenWarmup?.await()
-                currentExtractionSession(session)
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            cipherService.prewarmEjs()
-        }
     }
 
     override suspend fun extract(
@@ -738,7 +571,6 @@ class InnerTubeExtractor internal constructor(
                 if (configIdentity(useLoginCookies) != expectedIdentity) {
                     throw CancellationException("InnerTube session changed")
                 }
-                if (!useLoginCookies) persistPlayerBootstrapLocked(config, expectedIdentity)
                 cachePlayerConfig(useLoginCookies, config, expectedIdentity)
             }
         }
@@ -748,7 +580,6 @@ class InnerTubeExtractor internal constructor(
         nowMs: Long,
     ): CachedPlayerConfig? =
         playerConfigCacheMutex.withLock { getCachedPlayerConfigLocked(useLoginCookies, nowMs) }
-            ?: if (!useLoginCookies) restorePlayerBootstrap(nowMs) else null
 
     private fun getCachedPlayerConfigLocked(
         useLoginCookies: Boolean,

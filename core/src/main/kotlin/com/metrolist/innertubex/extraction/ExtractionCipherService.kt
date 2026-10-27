@@ -10,12 +10,6 @@ import com.metrolist.innertubex.models.response.PlayerResponse.StreamingData.For
  * process so a native engine crash cannot take down playback.
  */
 interface ExtractionCipherService {
-    suspend fun initialize()
-
-    suspend fun preloadPlayerCode(playerUrl: String)
-
-    suspend fun prewarmEjs()
-
     suspend fun processFormats(
         playerUrl: String,
         formats: List<Format>,

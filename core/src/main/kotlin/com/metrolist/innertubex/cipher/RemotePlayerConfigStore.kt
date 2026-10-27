@@ -21,10 +21,9 @@ import kotlin.time.Clock
 /**
  * Runtime store for Faraday/Zemer-style player configs.
  *
- * The store deliberately separates the normal six-hour refresh from the two
- * failure-triggered refreshes used by Zemer: an unknown player hash and a CDN
- * rejection. Both failure paths are single-flight and rate-limited so a bad
- * player rotation cannot create a request storm.
+ * The store deliberately separates the normal six-hour refresh from the
+ * failure-triggered refresh for an unknown player hash, which is single-flight
+ * and rate-limited so a bad player rotation cannot create a request storm.
  */
 class RemotePlayerConfigStore internal constructor(
     private val httpClient: HttpClient,
@@ -79,12 +78,6 @@ class RemotePlayerConfigStore internal constructor(
     @Volatile
     private var lastUnknownHashRefreshAtMs: Long = 0L
 
-    @Volatile
-    private var lastStreamRejectionRefreshSourceUrl: String? = null
-
-    @Volatile
-    private var lastStreamRejectionRefreshAtMs: Long = 0L
-
     private data class CachedLegacyTimestamp(
         val value: Int?,
         val fetchedAtMs: Long,
@@ -129,25 +122,6 @@ class RemotePlayerConfigStore internal constructor(
         }
     }
 
-    /**
-     * Force a conditional refresh after a deciphered URL is rejected by the CDN.
-     * This is intentionally separate from unknown-hash cooldown: a stale or wrong
-     * solver can produce a bad signature without throwing an extraction exception.
-     */
-    internal suspend fun refreshAfterStreamRejection(): Boolean {
-        if (!repository.enabled) return false
-        val sourceUrl = configuredUrl() ?: return false
-        val reservation = reserveStreamRejectionRefresh(sourceUrl) ?: return false
-        return try {
-            val result = refresh(sourceUrl, force = true)
-            if (!result.requestAttempted) releaseStreamRejectionRefresh(sourceUrl, reservation)
-            result.changed
-        } catch (e: CancellationException) {
-            withContext(NonCancellable) { releaseStreamRejectionRefresh(sourceUrl, reservation) }
-            throw e
-        }
-    }
-
     private suspend fun reserveUnknownHashRefresh(sourceUrl: String): Long? =
         mutex.withLock {
             val now = nowMs()
@@ -159,17 +133,6 @@ class RemotePlayerConfigStore internal constructor(
             now
         }
 
-    private suspend fun reserveStreamRejectionRefresh(sourceUrl: String): Long? =
-        mutex.withLock {
-            val now = nowMs()
-            if (withinCooldown(lastStreamRejectionRefreshSourceUrl, lastStreamRejectionRefreshAtMs, sourceUrl, now)) {
-                return@withLock null
-            }
-            lastStreamRejectionRefreshSourceUrl = sourceUrl
-            lastStreamRejectionRefreshAtMs = now
-            now
-        }
-
     private suspend fun releaseUnknownHashRefresh(
         sourceUrl: String,
         reservedAt: Long,
@@ -178,18 +141,6 @@ class RemotePlayerConfigStore internal constructor(
             if (lastUnknownHashRefreshSourceUrl == sourceUrl && lastUnknownHashRefreshAtMs == reservedAt) {
                 lastUnknownHashRefreshSourceUrl = null
                 lastUnknownHashRefreshAtMs = 0L
-            }
-        }
-    }
-
-    private suspend fun releaseStreamRejectionRefresh(
-        sourceUrl: String,
-        reservedAt: Long,
-    ) {
-        mutex.withLock {
-            if (lastStreamRejectionRefreshSourceUrl == sourceUrl && lastStreamRejectionRefreshAtMs == reservedAt) {
-                lastStreamRejectionRefreshSourceUrl = null
-                lastStreamRejectionRefreshAtMs = 0L
             }
         }
     }

@@ -75,32 +75,8 @@ class YouTubeCipherService(
     // Guarded by cacheMutex. In-flight preloads cannot repopulate caches after dispose().
     private var disposeGeneration = 0L
 
-    override suspend fun initialize() = Unit
-
-    /** Binary-compatible no-op: Kotlin programs do not use preprocessed EJS scripts or this storage. */
-    @Suppress("UNUSED_PARAMETER")
-    suspend fun setPreprocessedPlayerCache(
-        read: suspend (String) -> String?,
-        write: suspend (String, String?) -> Unit,
-    ) = Unit
-
-    /** Binary-compatible no-op. Use [preloadPlayerCode] to compile a particular player. */
-    override suspend fun prewarmEjs() = Unit
-
-    /** Refreshes the remote landmarks after a deciphered stream is rejected by the CDN. */
-    suspend fun refreshAfterStreamRejection(): Boolean = remotePlayerConfigStore?.refreshAfterStreamRejection() ?: false
-
-    suspend fun refreshForUnknownPlayer(playerUrl: String): Boolean {
-        val hash = RemotePlayerConfigParser.extractPlayerHash(playerUrl) ?: return false
-        return remotePlayerConfigStore?.forceRefresh(missingHash = hash) ?: false
-    }
-
     /** Shares the bounded, single-flight player download with timestamp extraction. */
     internal suspend fun playerCode(playerUrl: String): String = getOrDownloadPlayerCode(canonicalPlayerUrl(playerUrl))
-
-    override suspend fun preloadPlayerCode(playerUrl: String) {
-        availableProgram(playerUrl)
-    }
 
     override suspend fun processFormats(
         playerUrl: String,

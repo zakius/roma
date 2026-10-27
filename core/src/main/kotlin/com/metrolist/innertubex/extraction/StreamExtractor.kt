@@ -3,8 +3,6 @@ package com.metrolist.innertubex.extraction
 import com.metrolist.innertubex.extraction.AudioQuality
 
 public interface StreamExtractor {
-    suspend fun prewarm()
-
     public suspend fun extract(
         videoId: String,
         hints: ContentHints,
