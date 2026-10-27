@@ -742,7 +742,7 @@ fun SearchScreen() {
                 items(suggestions) { q -> Text(q, Modifier.fillMaxWidth().clickable { search(q) }.padding(horizontal = 16.dp, vertical = 12.dp)) }
             }
         } else if (submitted.isNotEmpty()) {
-            // The local index holds the Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't. These rows
+            // Songs played before, by their Latin forms, so "kimi no" finds 君の声 even though YouTube wouldn't. These rows
             // show as soon as the local lookup is done and keep their place when YouTube's results arrive below them.
             // The lookup runs off the main thread, once per search, before this search's own results join the index.
             val local by produceState(emptyList<Song>(), submitted, filter) {

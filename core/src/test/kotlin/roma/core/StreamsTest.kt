@@ -2,12 +2,11 @@ package roma.core
 
 import com.metrolist.innertubex.extraction.StreamResolveException
 import com.metrolist.innertubex.extraction.StreamResolveException.Reason
-import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class StreamsTest {
-    private val premium = ContentNotAvailableException("This video is a YouTube Music Premium video")
+    private val premium = StreamException("This video is a YouTube Music Premium video")
 
     @Test
     fun lastSpecificReasonWins() {
@@ -32,7 +31,7 @@ class StreamsTest {
         Streams.keepIn(f)
         assertEquals(3.0f, Streams.loudness("a"))
         assertEquals(-2.0f, Streams.loudness("b"))
-        assertEquals("c", Streams.recentFallback()) // d is too old, e worked with NewPipe again
+        assertEquals("c", Streams.recentFallback()) // d is too old, e worked with the direct path again
         Streams.putLoudness("b", -2.0f) // unchanged: no new line
         Streams.putLoudness("z", 4.0f)
         assertEquals("z L 4.0", f.readLines().last())

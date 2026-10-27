@@ -2890,6 +2890,12 @@ object YouTube {
         if (it is CancellationException) throw it
     }
 
+    /** The WEB client's raw `next` answer: a video's watch data, or a continuation of it (comments, replies). */
+    suspend fun nextJson(videoId: String?, continuation: String? = null): Result<kotlinx.serialization.json.JsonObject> =
+        runCatching {
+            innerTube.next(WEB, videoId, null, null, null, null, continuation).body<kotlinx.serialization.json.JsonObject>()
+        }
+
     /** Whether the signed-in user likes the video: true, false, or null when YouTube didn't say. */
     suspend fun likeStatus(videoId: String): Result<Boolean?> =
         runCatching {

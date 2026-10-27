@@ -1,5 +1,7 @@
 package roma.core
 
+import com.metrolist.innertube.YouTube
+import com.metrolist.innertube.models.response.PlayerResponse
 import com.metrolist.innertubex.InnerTubeLogger
 import com.metrolist.innertubex.cipher.PlayerConfigRepository
 import com.metrolist.innertubex.cipher.RemotePlayerConfigStore
@@ -11,20 +13,9 @@ import com.metrolist.innertubex.extraction.StreamResolveException
 import com.metrolist.innertubex.extraction.TokenProvider
 import com.metrolist.innertubex.extraction.YtConfigParserImpl
 import com.metrolist.innertubex.extraction.generateClientPlaybackNonce
-import com.metrolist.innertubex.models.YouTubeClient.Companion.WEB
+import com.metrolist.innertubex.models.YouTubeClient.Companion.VISIONOS
 import kotlinx.coroutines.runBlocking
-import okhttp3.OkHttpClient
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.schabi.newpipe.extractor.NewPipe
-import org.schabi.newpipe.extractor.ServiceList
-import org.schabi.newpipe.extractor.downloader.Downloader
-import org.schabi.newpipe.extractor.downloader.Request
-import org.schabi.newpipe.extractor.downloader.Response
-import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
-import org.schabi.newpipe.extractor.stream.AudioStream
-import org.schabi.newpipe.extractor.stream.StreamInfo
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 /** A playable audio URL for one video. */
 class AudioSource(val url: String, val mimeType: String, val bitrate: Int)
@@ -33,22 +24,16 @@ class AudioSource(val url: String, val mimeType: String, val bitrate: Int)
 class StreamException(message: String) : java.io.IOException(message)
 
 object Streams {
-    // The disk cache keeps YouTube's player script (about 1 MB, a versioned URL served for a year) between runs for
-    // the full path, which downloaded it again in every run. java.io.tmpdir is the app's cache folder on Android.
-    private val http = OkHttpClient.Builder().readTimeout(30, TimeUnit.SECONDS)
-        .cache(okhttp3.Cache(File(System.getProperty("java.io.tmpdir"), "streams_http"), 16L shl 20)).build()
-    private var started = false
-
     /**
      * Testing only, off in releases: acts as if YouTube refused the VISIONOS client, as it does for some songs on some
-     * networks. Both NewPipe paths are skipped (they use VISIONOS) and InnerTubeX doesn't ask it either.
+     * networks. The direct path is skipped and InnerTubeX doesn't ask that client either.
      */
     @Volatile var refuseVisionOs = false
 
     /** The path that last found a stream for each song, tried first next time. InnerTubeX ones are kept, see [keepIn]. */
     private val worked = java.util.concurrent.ConcurrentHashMap<String, Path>()
 
-    private enum class Path { FAST, FULL, INNERTUBEX }
+    private enum class Path { DIRECT, INNERTUBEX }
 
     /**
      * Songs every path refused just now, with the reason and when. The precache and the player both look a song up;
@@ -58,31 +43,21 @@ object Streams {
     private const val REFUSED_MS = 30_000L
     const val NO_CONNECTION = "No connection to YouTube."
 
-    @Synchronized
-    internal fun start() {
-        if (started) return
-        NewPipe.init(OkHttpDownloader(http))
-        started = true
-    }
-
     /**
-     * Blocking: call off the main thread. Tries, in order: NewPipe's fast path (the stream extractor alone, with the
-     * downloader answering the requests roma doesn't use itself, see [stub]; about 0.2 s), NewPipe's full StreamInfo
-     * lookup, then InnerTubeX's extractor ([InnerTubeXStreams]), which asks other clients with their own context.
-     * The path that worked for this song goes first next time. [full] (the last URL was refused) skips the fast path.
+     * Blocking: call off the main thread. Tries, in order: the direct path (one VISIONOS player request, whose audio
+     * URLs need no signature or n-parameter work; about 0.1 s), then InnerTubeX's extractor ([InnerTubeXStreams]),
+     * which asks other clients with their own context. The path that worked for this song goes first next time.
+     * [full] (the last URL was refused) skips the direct path.
      */
     fun audio(videoId: String, full: Boolean = false): AudioSource {
-        start()
         refused[videoId]?.let { (why, at) -> if (System.currentTimeMillis() - at < REFUSED_MS) throw StreamException(why) }
         val order = listOfNotNull(worked[videoId]) + Path.entries
         val failures = mutableListOf<Exception>()
         for (path in order.distinct()) {
-            if (path == Path.FAST && full) continue
-            if (path != Path.INNERTUBEX && refuseVisionOs) continue
+            if (path == Path.DIRECT && (full || refuseVisionOs)) continue
             try {
                 val a = when (path) {
-                    Path.FAST -> fast(videoId)
-                    Path.FULL -> best(videoId, StreamInfo.getInfo(ServiceList.YouTube, watchUrl(videoId)).audioStreams)
+                    Path.DIRECT -> direct(videoId)
                     Path.INNERTUBEX -> InnerTubeXStreams.audio(videoId, if (refuseVisionOs) setOf("VISIONOS") else emptySet())
                 }
                 val before = worked.put(videoId, path)
@@ -91,7 +66,6 @@ object Streams {
                 }
                 return a
             } catch (e: Exception) {
-                if (path == Path.FAST) visitor = null // perhaps refused; the next fast path asks for fresh visitor data
                 failures += e
             }
         }
@@ -101,23 +75,20 @@ object Streams {
         throw StreamException(why)
     }
 
-    private fun watchUrl(videoId: String) = "https://music.youtube.com/watch?v=$videoId"
-
-    private fun fast(videoId: String): AudioSource = try {
-        lean.set(true)
-        val e = ServiceList.YouTube.getStreamExtractor(watchUrl(videoId))
-        e.fetchPage()
-        best(videoId, e.audioStreams)
-    } finally {
-        lean.set(false)
+    // YouTube.visitorData goes with the request; without it YouTube answers "Sign in to confirm you're not a bot".
+    private fun direct(videoId: String): AudioSource = runBlocking {
+        val r = YouTube.player(videoId, client = VISIONOS).getOrThrow()
+        if (r.playabilityStatus.status != "OK") throw StreamException(r.playabilityStatus.reason ?: r.playabilityStatus.status)
+        r.playerConfig?.audioConfig?.loudnessDb?.let { putLoudness(videoId, it.toFloat()) }
+        best(videoId, r.streamingData?.adaptiveFormats.orEmpty())
     }
 
-    // Prefer the original track over dubbed ones, then the highest bitrate.
-    private fun best(videoId: String, streams: List<AudioStream>): AudioSource {
-        val best = streams.filter { it.content.isNotEmpty() }
-            .sortedWith(compareBy<AudioStream>({ it.audioTrackType != null && it.audioTrackType?.name != "ORIGINAL" }, { -it.averageBitrate }))
+    // Prefer the original track over dubbed ones (an original track's id ends in ".4"), then the highest bitrate.
+    internal fun best(videoId: String, formats: List<PlayerResponse.StreamingData.Format>): AudioSource {
+        val best = formats.filter { it.mimeType.startsWith("audio/") && it.url != null }
+            .sortedWith(compareBy({ it.audioTrack?.id?.endsWith(".4") == false }, { -(it.averageBitrate ?: it.bitrate) }))
             .firstOrNull() ?: error("No audio stream for $videoId")
-        return AudioSource(best.content, best.format?.mimeType ?: "audio/*", best.averageBitrate)
+        return AudioSource(best.url!!, best.mimeType.substringBefore(';'), best.averageBitrate ?: best.bitrate)
     }
 
     /**
@@ -150,8 +121,8 @@ object Streams {
     /**
      * Keeps two facts per song across starts, one line per change in [f]: its loudness, and that only InnerTubeX found
      * its stream. A song played to the end replays from the cache without a lookup, so without the first it would play
-     * at full loudness after a restart; without the second, the next start would first wait for the NewPipe paths
-     * YouTube refused (a second or more). An InnerTubeX mark lasts [FALLBACK_DAYS] days, so a song YouTube serves
+     * at full loudness after a restart; without the second, the next start would first wait for the direct path
+     * YouTube refused. An InnerTubeX mark lasts [FALLBACK_DAYS] days, so a song YouTube serves
      * again gets the fast path back. Blocking: reads the file (at most about 150 KB) and compacts it.
      */
     fun keepIn(f: File) {
@@ -194,69 +165,6 @@ object Streams {
 }
 
 private val loudnessDb = java.util.concurrent.ConcurrentHashMap<String, Float>()
-private val loudnessJson = Regex(""""loudnessDb":(-?[\d.]+)""")
-
-/** Set while [Streams.audio] takes its fast path, on that thread. */
-private val lean = ThreadLocal.withInitial { false }
-
-/**
- * The VISIONOS client's visitor data from its last real visitor_id answer, and when it came. NewPipe asks for new
- * visitor data before every player request; the fast path reuses it for an hour, which saves a round trip per song.
- */
-@Volatile private var visitor: Pair<String, Long>? = null
-private const val VISITOR_MS = 3600_000L
-private val visitorJson = Regex(""""visitorData":"([^"]+)"""")
-
-/**
- * The fast path's local answers. NewPipe 0.26.5 takes its streams from the VISIONOS client, which also checks
- * playability. It asks the ANDROID client too (its streams need a PoToken we don't send, so they go unused) and
- * the WEB client for metadata and `next`. A minimal answer leaves those fields blank; NewPipe rejects a JSON
- * answer shorter than 50 characters.
- */
-private fun stub(request: Request): String? {
-    // NewPipe reads the WEB client's version from sw.js before building a WEB request (and when that fails, from a
-    // 255 KB search page); the WEB requests are answered here anyway, so InnerTubeX's WEB version does.
-    if (request.url().startsWith("https://www.youtube.com/sw.js")) return """"INNERTUBE_CONTEXT_CLIENT_VERSION":"${WEB.clientVersion}""""
-    val body = request.dataToSend()?.let { String(it) } ?: return null
-    val client = Regex(""""clientName":"(\w+)"""").find(body)?.groupValues?.get(1)
-    val videoId = Regex(""""videoId":"([\w-]+)"""").find(body)?.groupValues?.get(1)
-    val v = visitor
-    return when {
-        client == "VISIONOS" && request.url().contains("/visitor_id") && v != null && System.currentTimeMillis() - v.second < VISITOR_MS ->
-            """{"responseContext": {"visitorData": "${v.first}"}}"""
-        client == "WEB" -> """{"responseContext": {}, "roma": "WEB metadata and next are not used"}"""
-        client == "ANDROID" && request.url().contains("/visitor_id") -> """{"responseContext": {"visitorData": "roma-skipped-android-client"}}"""
-        client == "ANDROID" && videoId != null ->
-            """{"playerResponse": {"playabilityStatus": {"status": "OK"}, "videoDetails": {"videoId": "$videoId"}}}"""
-        else -> null
-    }
-}
-
-private class OkHttpDownloader(private val http: OkHttpClient) : Downloader() {
-    override fun execute(request: Request): Response {
-        if (lean.get()) stub(request)?.let { return Response(200, "OK", emptyMap(), it, request.url()) }
-        val body = request.dataToSend()?.toRequestBody()
-        val builder = okhttp3.Request.Builder().url(request.url()).method(request.httpMethod(), body)
-        builder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0")
-        for ((name, values) in request.headers()) {
-            builder.removeHeader(name)
-            for (v in values) builder.addHeader(name, v)
-        }
-        http.newCall(builder.build()).execute().use { r ->
-            if (r.code == 429) throw ReCaptchaException("reCaptcha challenge requested", request.url())
-            val text = r.body.string()
-            if (r.isSuccessful && request.url().contains("/player")) {
-                val id = request.dataToSend()?.let { Regex(""""videoId":"([\w-]+)""").find(String(it)) }?.groupValues?.get(1)
-                val db = loudnessJson.find(text)?.groupValues?.get(1)?.toFloatOrNull()
-                if (id != null && db != null) Streams.putLoudness(id, db)
-            }
-            if (r.isSuccessful && request.url().contains("/visitor_id") && request.dataToSend()?.let { String(it) }?.contains(""""clientName":"VISIONOS"""") == true) {
-                visitorJson.find(text)?.let { visitor = it.groupValues[1] to System.currentTimeMillis() }
-            }
-            return Response(r.code, r.message, r.headers.toMultimap(), text, r.request.url.toString())
-        }
-    }
-}
 
 /**
  * The fallback: InnerTubeX's extractor, as Metrolist uses it. It rolls over its own client list (VISIONOS 0.1 with

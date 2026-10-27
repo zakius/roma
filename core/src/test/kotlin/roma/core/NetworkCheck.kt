@@ -7,21 +7,24 @@ import java.net.HttpURLConnection
 import java.net.URI
 
 // Step 0 check against the live services: ./gradlew :core:networkCheck
-// Searches YouTube Music through innertube, resolves the first song through NewPipeExtractor and reads 64 KB of audio,
+// Searches YouTube Music through innertube, resolves the first song through the direct path and reads 64 KB of audio,
 // then resolves it again through the InnerTubeX fallback alone.
 fun main() = runBlocking {
+    YouTube.visitorData = YouTube.visitorData().getOrThrow() // as the app does before a stream lookup
     val result = YouTube.search("YOASOBI 夜に駆ける", YouTube.SearchFilter.FILTER_SONG).getOrThrow()
     val song = result.items.first() as SongItem
     println("innertube: ${song.id} ${song.title} / ${song.artists.joinToString { it.name }}")
+    val t = System.currentTimeMillis()
     val audio = Streams.audio(song.id)
-    println("newpipe: ${audio.mimeType} ${audio.bitrate} bps")
+    check(Streams.audio("CXNv4_wQjKQ").url.isNotEmpty()) // Youngblood, refused for VISIONOS on some networks
+    println("direct: ${audio.mimeType} ${audio.bitrate} bps in ${System.currentTimeMillis() - t} ms")
     val c = URI(audio.url).toURL().openConnection() as HttpURLConnection
     c.setRequestProperty("Range", "bytes=0-65535")
     val n = c.inputStream.use { it.readAllBytes().size }
     println("stream: HTTP ${c.responseCode}, read $n bytes")
     check(n > 1000)
 
-    // The fallback alone (as when YouTube refuses NewPipe's client): the same song through InnerTubeX, read at the
+    // The fallback alone (as when YouTube refuses the direct path's client): the same song through InnerTubeX, read at the
     // start and past 1 MB, where a stream that needed a PoToken would be cut off. The JVM has no PoToken minter (it
     // needs a WebView), so this exercises InnerTubeX's token-free clients only.
     val t0 = System.currentTimeMillis()
@@ -43,7 +46,7 @@ fun main() = runBlocking {
         age.fold({ "${it.mimeType} ${it.bitrate} bps" }, { "refused: ${it.message}" }))
     YouTube.cookie = null
 
-    // Comments through NewPipe, two pages.
+    // Comments, two pages, and a thread of replies.
     val comments = Comments.of(song.id)
     println("comments: ${comments.comments.size}, next page ${comments.next?.invoke()?.comments?.size}, first: ${comments.comments.firstOrNull()?.text?.take(60)}")
     check(comments.comments.isNotEmpty())

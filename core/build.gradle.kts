@@ -22,8 +22,6 @@ dependencies {
     implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
     implementation("io.ktor:ktor-client-encoding:3.6.0")
-    // Stream URLs.
-    api("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
     // Japanese words and readings. The dictionary isn't in the jar: see sudachiDict below.
     implementation("com.worksap.nlp:sudachi:0.8.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")

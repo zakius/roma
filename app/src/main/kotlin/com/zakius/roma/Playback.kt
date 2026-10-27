@@ -25,7 +25,16 @@ import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.RenderersFactory
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.extractor.ExtractorsFactory
+import androidx.media3.extractor.mkv.MatroskaExtractor
+import androidx.media3.extractor.mp4.FragmentedMp4Extractor
+import androidx.media3.extractor.mp4.Mp4Extractor
+import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -44,6 +53,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
@@ -120,8 +130,14 @@ object Playback {
         // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays. It buffers
         // 50 s ahead, or with "Download songs ahead" the whole song (at most 10 min).
         val load = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 10 * 60_000, 500, 2_000).build()
-        player = ExoPlayer.Builder(c)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(source).setLoadErrorHandlingPolicy(WaitForNetwork))
+        // Audio only, in the containers YouTube serves (WebM, MP4): the default factories bring video, text and
+        // a dozen other containers that R8 can't remove.
+        val audio = RenderersFactory { handler, _, listener, _, _ ->
+            arrayOf(MediaCodecAudioRenderer(c, MediaCodecSelector.DEFAULT, handler, listener, DefaultAudioSink.Builder(c).build()))
+        }
+        val none = SubtitleParser.Factory.UNSUPPORTED
+        val containers = ExtractorsFactory { arrayOf(MatroskaExtractor(none), FragmentedMp4Extractor(none), Mp4Extractor(none)) }
+        player = ExoPlayer.Builder(c, audio, ProgressiveMediaSource.Factory(source, containers).setLoadErrorHandlingPolicy(WaitForNetwork))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -259,6 +275,7 @@ object Playback {
         synchronized(urls) {
             urls[id]?.let { (url, at) -> if (System.currentTimeMillis() - at < 5 * 3600_000) return url }
         }
+        runBlocking { Store.ensureVisitorData() } // without it YouTube refuses the direct path's client as a bot
         val a = Streams.audio(id, full = fullLookup.remove(id))
         synchronized(urls) { urls[id] = a.url to System.currentTimeMillis() }
         main.post { applyLoudness(id) }
@@ -1087,6 +1104,7 @@ object Playback {
         val duration = if (s.durationSec > 0) s.durationSec else (player.duration / 1000).toInt()
         if (scrobbled || !shouldScrobble(duration, playedHalfSeconds / 2)) return
         scrobbled = true
+        Store.played(s)
         if (Store.str("lastfm.session", "").isBlank()) return
         scrobbleQueue().add(scrobbleOf(s))
         flushScrobbles()

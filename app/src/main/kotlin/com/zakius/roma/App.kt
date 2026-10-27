@@ -165,9 +165,17 @@ object Store {
         // InnerTubeX sends the account cookies on browse and next calls (home, radio) only with this on; without it
         // Home is the anonymous one and never has the personal mixes. Metrolist turns it on too.
         YouTube.useLoginForBrowse = true
+        // English, as the app is: InnerTubeX would send the phone's language, and in Polish YouTube Music's Songs search
+        // leaves out the original "Youngblood" (5SOS) while English finds it first. The region stays the phone's.
+        YouTube.locale = com.metrolist.innertube.models.YouTubeLocale(gl = java.util.Locale.getDefault().country.ifEmpty { "US" }, hl = "en")
         prefs.getString("visitorData", null)?.let { YouTube.visitorData = it }
         prefs.getString("dataSyncId", null)?.let { YouTube.dataSyncId = it }
-        Startup.later { indexThread.execute { index.addAll(runCatching { json.decodeFromString<List<Song>>(File(cache, "index.json").readText()) }.getOrDefault(emptyList())) } }
+        Startup.later {
+            indexThread.execute {
+                index.addAll(runCatching { json.decodeFromString<List<Song>>(File(cache, "index.json").readText()) }.getOrDefault(emptyList()))
+                runCatching { File(files, "played.txt").forEachLine { played.add(it) } }
+            }
+        }
     }
 
     // Reading version subscribes the calling composable, so it redraws when set() changes a setting.
@@ -362,11 +370,13 @@ object Store {
         return lang != null && lang in (if (set == "device") listOf(java.util.Locale.getDefault().language, "en") else listOf(set))
     }
 
-    // ---- Local index: every song that entered the app, searchable by its Latin form ----
+    // ---- Local index: every song that entered the app; the played ones are searchable by their Latin form ----
 
     // The index is read, changed and saved only on its own thread, so a tap never waits for it: with 5000 songs, loading
     // took about 100 ms of app start and each save about 15 ms. Saves that queue up behind each other are written once.
     private val index = ArrayList<Song>()
+    // Ids of songs played past the scrobble point; "Seen before" shows only these. In filesDir: Android doesn't clear it.
+    private val played = HashSet<String>()
     private val indexThread = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     /**
@@ -441,9 +451,15 @@ object Store {
         }
     }
 
+    /** [song] was really listened to: it stays in the index, at the front, and shows under "Seen before". */
+    fun played(song: Song) {
+        remember(listOf(song))
+        indexThread.execute { if (played.add(song.id)) runCatching { File(files, "played.txt").appendText(song.id + "\n") } }
+    }
+
     /** Blocking: call it off the main thread. The stored Latin forms date from when each song was seen; the hits are
      *  romanized again so they follow today's rules. */
     fun searchLocal(q: String): List<Song> = indexThread.submit<List<Song>> {
-        index.mapNotNull { s -> matchDistance(s, q)?.let { s to it } }.sortedBy { it.second }.take(20).map { it.first }
+        index.mapNotNull { s -> if (s.id !in played) null else matchDistance(s, q)?.let { s to it } }.sortedBy { it.second }.take(20).map { it.first }
     }.get().map { romanizer.again(it) }
 }

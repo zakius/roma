@@ -17,8 +17,8 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 39
-        versionName = "0.1.38"
+        versionCode = 40
+        versionName = "0.1.39"
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.
         buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
@@ -48,8 +48,6 @@ android {
     }
 
     compileOptions {
-        // NewPipeExtractor uses java.nio APIs that need desugaring below API 33.
-        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
@@ -57,7 +55,9 @@ android {
     // Only the app's languages: libraries bring strings for about 80 locales.
     androidResources { localeFilters += setOf("en", "pl") }
     packaging {
-        resources { excludes += setOf("META-INF/*.md", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "kotlin/**", "DebugProbesKt.bin", "META-INF/*.version") }
+        resources { excludes += setOf("META-INF/*.md", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "kotlin/**", "DebugProbesKt.bin", "META-INF/*.version",
+            // Sudachi reads its part-of-speech table only in its command-line tool.
+            "pos.csv") }
         // Native libraries compressed in the APK and unpacked at install (extractNativeLibs), as in tennessine.
         jniLibs { useLegacyPackaging = true }
     }
@@ -65,7 +65,6 @@ android {
 
 dependencies {
     implementation(project(":core"))
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
 
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.ui:ui:1.12.1")

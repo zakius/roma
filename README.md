@@ -36,7 +36,6 @@ Get `roma-<version>.apk` from [Releases](https://github.com/zakius/roma/releases
 ## Credits
 
 - YouTube Music API: the `innertube` module from [Metrolist](https://github.com/MetrolistGroup/Metrolist).
-- Streams: [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor).
 - Playback: [Media3](https://developer.android.com/media/media3).
 - Japanese: [Sudachi](https://github.com/WorksApplications/Sudachi) and [SudachiDict](https://github.com/WorksApplications/SudachiDict).
 - Lyrics: LRCLIB, KuGou, NetEase and YouTube Music.
