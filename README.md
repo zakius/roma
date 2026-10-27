@@ -29,7 +29,7 @@ Requirements: JDK 21 and the Android SDK (compileSdk 37).
 
 The core tests and the dictionary app need SudachiDict: their first build downloads it (about 77 MB, checked against a pinned sha256) into the Gradle cache. Building roma itself doesn't.
 
-Release builds are made with `tools/release.sh`: R8 shrinking, Zopfli-recompressed, signed with a key that you supply in `keystore.properties` (not in the repository). A `v*` tag builds and publishes a GitHub release (`.github/workflows/release.yml`).
+Release builds are made with `tools/release.sh`: R8 shrinking, Zopfli-recompressed, signed with a key that you supply in `keystore.properties` (not in the repository). A merge to master that sets a new `versionName` builds and publishes it as a GitHub release (`.github/workflows/release.yml`); there's no tag to push.
 
 ## Install
 
