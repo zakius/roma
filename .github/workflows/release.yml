@@ -1,22 +1,40 @@
-# A v* tag builds and signs the release (tools/release.sh) and publishes it as a GitHub release. The dictionary app
-# gets its own release, dict-<version>, the first time its version is seen; roma downloads it from there. The app and
-# the dictionary build in parallel jobs, and the core tests (which need the slim dictionary) in a third; roma's release
-# is published only once its dictionary release exists and the tests pass.
-# A push to master runs the same jobs without signing or publishing: it tests the merge and saves the Gradle cache
-# (Gradle User Home, with SudachiDict and the slim dictionary), which setup-gradle only writes on the default branch and
-# which a tag run can only read from there.
+# Every push to master builds and tests. When app/build.gradle.kts has a versionName with no release yet, the run also
+# signs (tools/release.sh) and publishes it as a GitHub release, tagged v<version> on that commit: a merge that bumps the
+# version is the release. The dictionary app gets its own release, dict-<version>, the first time its version ships;
+# roma downloads it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
+# slim dictionary) in a third; roma's release is published only once its dictionary release exists and the tests pass.
+# Only master: setup-gradle saves the Gradle cache (with SudachiDict and the slim dictionary) on the default branch
+# alone, and a cache saved by a tag's run is visible to that tag only.
 # Secrets: KEYSTORE_BASE64 (the .jks, base64), STORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD.
 name: release
 on:
   push:
-    tags: ["v*"]
     branches: [master]
 permissions:
   contents: write
+# Merges in quick succession release one at a time, so a version can't be published twice.
+concurrency: { group: release, cancel-in-progress: false }
 # ubuntu-24.04, not ubuntu-latest: the image the release is built and tested on, changed on purpose rather than by GitHub.
 jobs:
-  app:
+  version:
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: New version?
+        id: check
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          v=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" > /dev/null 2>&1; then echo "release=" >> "$GITHUB_OUTPUT"; else echo "release=1" >> "$GITHUB_OUTPUT"; fi
+
+  app:
+    needs: version
+    runs-on: ubuntu-24.04
+    env: { RELEASE: "${{ needs.version.outputs.release }}" }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -27,7 +45,7 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
           sudo apt-get install -y pigz > /dev/null
       - name: Signing key
-        if: startsWith(github.ref, 'refs/tags/')
+        if: env.RELEASE
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
@@ -37,7 +55,7 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$RUNNER_TEMP/release.jks" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
       - run: tools/release.sh app
-      - if: startsWith(github.ref, 'refs/tags/')
+      - if: env.RELEASE
         uses: actions/upload-artifact@v7
         with: { name: app, path: dist/roma-*.apk }
 
@@ -52,7 +70,9 @@ jobs:
 
   # Built only when its version has no release yet; otherwise this job ends after one API call.
   dict:
+    needs: version
     runs-on: ubuntu-24.04
+    env: { RELEASE: "${{ needs.version.outputs.release }}" }
     steps:
       - uses: actions/checkout@v5
       - name: Dictionary already released?
@@ -73,7 +93,7 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
           sudo apt-get install -y pigz > /dev/null
       - name: Signing key
-        if: steps.check.outputs.build && startsWith(github.ref, 'refs/tags/')
+        if: steps.check.outputs.build && env.RELEASE
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
@@ -85,15 +105,15 @@ jobs:
       - if: steps.check.outputs.build
         run: tools/release.sh dict
       - name: Publish
-        if: steps.check.outputs.build && startsWith(github.ref, 'refs/tags/')
+        if: steps.check.outputs.build && env.RELEASE
         env: { GH_TOKEN: "${{ github.token }}", DICT: "${{ steps.check.outputs.tag }}" }
         run: |
           gh release create "$DICT" dist/roma-dict-*.apk.gz --target "$GITHUB_SHA" --latest=false --title "Japanese dictionary ${DICT#dict-}" \
             --notes "SudachiDict core ${DICT#dict-} as a companion app for roma, without what roma never reads (postal addresses, split and synonym data; duplicate cost rows merged). roma installs it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [app, dict, test]
+    if: needs.version.outputs.release
+    needs: [version, app, dict, test]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -101,12 +121,12 @@ jobs:
       - uses: actions/download-artifact@v8
         with: { name: app, path: dist }
       - name: Publish
-        env: { GH_TOKEN: "${{ github.token }}" }
+        env: { GH_TOKEN: "${{ github.token }}", V: "${{ needs.version.outputs.version }}" }
         run: |
-          # Notes: the version's own commit ("0.1.28: …"), which may sit below later fixes on the tag.
-          git log -1 --format=%B --grep "^${GITHUB_REF_NAME#v}:" "$GITHUB_REF_NAME" | grep -v '^Co-Authored-By' > "$RUNNER_TEMP/notes.md"
+          # Notes: the version's own commit ("0.1.28: …"), which may sit below later fixes in this push.
+          git log -1 --format=%B --grep "^$V:" "$GITHUB_SHA" | grep -v '^Co-Authored-By' > "$RUNNER_TEMP/notes.md"
           # javax.json ships in the APK under GPL 2 with the Classpath Exception, so its source goes with each release.
           json=dist/javax.json-1.1.4-sources.jar
           curl -sfL -o "$json" https://repo1.maven.org/maven2/org/glassfish/javax.json/1.1.4/javax.json-1.1.4-sources.jar
           echo "31d21d4721eb050616683bee90e3c7d126110dffdbf8bf4d3cc992891a60419b  $json" | sha256sum -c -
-          gh release create "$GITHUB_REF_NAME" dist/roma-${GITHUB_REF_NAME#v}.apk "$json" --title "roma ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          gh release create "v$V" dist/roma-$V.apk "$json" --target "$GITHUB_SHA" --title "roma $V" --notes-file "$RUNNER_TEMP/notes.md" --latest
