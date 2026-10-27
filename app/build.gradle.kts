@@ -4,7 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-// The Japanese dictionary is a separate app, :dict; roma needs its version and where to fetch it.
+// The Japanese dictionary is a separate app, :dict-app; roma needs its version and where to fetch it.
 evaluationDependsOn(":core")
 val dictVersion = project(":core").extra["dictRelease"] as String
 

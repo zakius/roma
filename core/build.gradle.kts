@@ -31,7 +31,7 @@ dependencies {
 }
 
 // SudachiDict "core", downloaded once into the Gradle cache (202 MB unpacked, too big for git). Its slim build ships as
-// an asset of the :dict companion app; the JVM tests read it from here. To update: change the version and the zip's sha256 (docs/design.md).
+// an asset of the :dict-app companion app; the JVM tests read it from here. To update: change the version and the zip's sha256 (docs/design.md).
 val sudachiVersion = "20261015"
 val sudachiSha256 = "5cf5cb7f1ea943a988e2fb5d285a9a8b3538861faefa7a2604c2cd18c387f503"
 val sudachiDir = File(gradle.gradleUserHomeDir, "caches/roma/sudachi-core-$sudachiVersion")
@@ -64,15 +64,15 @@ tasks.register("sudachiDict") {
     }
 }
 
-// The dictionary roma ships: SudachiDict core minus what roma never reads (:dictslim, docs/design.md). The renumbered
-// unknown-word definitions and config go into this module's resources; the dictionary into the :dict app.
+// The dictionary roma ships: SudachiDict core minus what roma never reads (:dict-tool, docs/design.md). The renumbered
+// unknown-word definitions and config go into this module's resources; the dictionary into :dict-app.
 val slimDir = File(sudachiDir, "slim")
 val slimDict = File(slimDir, "dict")
 val slimConfig = File(slimDir, "config")
 extra["sudachiSlimAssets"] = slimDict
 val sudachiSlim = tasks.register<JavaExec>("sudachiSlim") {
     dependsOn("sudachiDict")
-    classpath = project(":dictslim").extensions.getByType<SourceSetContainer>()["main"].runtimeClasspath
+    classpath = project(":dict-tool").extensions.getByType<SourceSetContainer>()["main"].runtimeClasspath
     mainClass = "SlimKt"
     maxHeapSize = "6g"
     args(File(sudachiDir, "assets/system_core.dic").path, slimDir.path + "/build", sudachiVersion)
@@ -88,11 +88,11 @@ val sudachiSlim = tasks.register<JavaExec>("sudachiSlim") {
         built.deleteRecursively()
     }
 }
-evaluationDependsOn(":dictslim")
-tasks.named("sudachiSlim") { dependsOn(":dictslim:classes") }
+evaluationDependsOn(":dict-tool")
+tasks.named("sudachiSlim") { dependsOn(":dict-tool:classes") }
 
 // The slim build's config files are committed in src/main/resources, so building roma never downloads or slims the
-// dictionary; only the tests and the :dict app need it. The tests check the committed copies are the current ones.
+// dictionary; only the tests and :dict-app need it. The tests check the committed copies are the current ones.
 tasks.test {
     useJUnitPlatform()
     dependsOn(sudachiSlim)
