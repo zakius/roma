@@ -17,17 +17,11 @@ data class SelectedClient(
     val client: YouTubeClient,
     val manifest: PlaybackClientManifest? = null,
     val score: Int = 0,
-    val reasons: List<String> = emptyList(),
-)
-
-data class RejectedClient(
-    val manifest: PlaybackClientManifest,
-    val reasons: List<String>,
+    val manualOverride: Boolean = false,
 )
 
 data class ClientSelectionResult(
     val candidates: List<SelectedClient>,
-    val rejected: List<RejectedClient> = emptyList(),
 )
 
 interface ClientFallbackStrategy {

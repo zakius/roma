@@ -33,9 +33,7 @@ class ContentAwareFallbackStrategy(
         request: ClientSelectionRequest,
         visitorDataAvailable: Boolean,
     ): ClientSelectionResult {
-        val rejected = mutableListOf<RejectedClient>()
         request.hints.playbackClientOverrideId?.let(catalog::findManifest)?.let { manifest ->
-            val rejectionReasons = hardRejectionReasons(manifest, request, checkContentSupport = false)
             if (
                 !manifest.isExcluded(
                     request.excludedClients,
@@ -49,16 +47,11 @@ class ContentAwareFallbackStrategy(
                                 client = manifest.client,
                                 manifest = manifest,
                                 score = Int.MAX_VALUE,
-                                reasons = listOf("manual override") + rejectionReasons.map { "ignored: $it" },
+                                manualOverride = true,
                             ),
                         ),
                 )
             }
-            rejected +=
-                RejectedClient(
-                    manifest,
-                    rejectionReasons.ifEmpty { listOf("manual override recently failed") },
-                )
         }
 
         val candidates = mutableListOf<SelectedClient>()
@@ -76,15 +69,11 @@ class ContentAwareFallbackStrategy(
             ) {
                 return@forEach
             }
-            val rejectionReasons = hardRejectionReasons(manifest, request)
-            if (rejectionReasons.isNotEmpty()) {
-                rejected += RejectedClient(manifest, rejectionReasons)
-                return@forEach
-            }
+            if (isHardRejected(manifest, request)) return@forEach
 
-            val (score, reasons, health) = score(manifest, request)
+            val (score, health) = score(manifest, request)
             if (health <= HEALTH_DEMOTION_THRESHOLD) healthDemoted += manifest.id
-            candidates += SelectedClient(manifest.client, manifest, score, reasons)
+            candidates += SelectedClient(manifest.client, manifest, score)
         }
 
         val orderedCandidates =
@@ -101,68 +90,37 @@ class ContentAwareFallbackStrategy(
                 }.thenByDescending { it.score }
                     .thenBy { it.manifest?.id },
             )
-        return ClientSelectionResult(
-            candidates = orderedCandidates,
-            rejected = rejected.distinctBy { it.manifest.id }.sortedBy { it.manifest.id },
-        )
+        return ClientSelectionResult(candidates = orderedCandidates)
     }
 
     private val kidsClients = setOf(YouTubeClient.ANDROID_KIDS, YouTubeClient.WEB_KIDS)
 
-    private fun hardRejectionReasons(
+    private fun isHardRejected(
         manifest: PlaybackClientManifest,
         request: ClientSelectionRequest,
-        checkContentSupport: Boolean = true,
-    ): List<String> =
-        buildList {
-            if (manifest.lifecycle == ClientLifecycle.BROKEN) {
-                add("client marked broken")
-            }
-            if (manifest.authentication == AuthenticationPolicy.REQUIRED && !request.authenticated) {
-                add("login required")
-            }
-
-            val contentSupport = manifest.content.supportFor(request.hints)
-            if (checkContentSupport && contentSupport == CapabilitySupport.UNSUPPORTED) {
-                add("content type unsupported")
-            }
-            if (checkContentSupport && manifest.id == "VISIONOS_0_1" && contentSupport != CapabilitySupport.SUPPORTED) {
-                add("legacy direct playback verified for normal and explicit audio only")
-            }
-
-            if (!request.javaScriptRuntimeAvailable && manifest.request.signatureCipher == JavaScriptRequirement.REQUIRED) {
-                add("signature transform unavailable")
-            }
-            if (!request.javaScriptRuntimeAvailable && manifest.request.nTransform == JavaScriptRequirement.REQUIRED) {
-                add("n-transform unavailable")
-            }
-            if (manifest.request.webView == WebViewRequirement.FULL_PLAYER && !request.webViewAvailable) {
-                add("full WebView runtime unavailable")
-            }
-
-            val missingTokenRules =
-                listOf("player" to manifest.poTokens.player, "GVS" to manifest.poTokens.gvs)
-                    .filter { (_, rule) ->
-                        rule.requirement == PoTokenRequirement.REQUIRED &&
-                            rule.providers.none { it in request.availablePoTokenProviders }
-                    }.map { it.first }
-            if (missingTokenRules.isNotEmpty()) {
-                add("${missingTokenRules.joinToString("+")} PO-token provider unavailable")
-            }
-
-            if (request.fastPathOnly) {
-                if (manifest.request.signatureTimestamp) add("watch config excluded from fast path")
-                val requiresToken =
-                    listOf(manifest.poTokens.player, manifest.poTokens.gvs).any { it.requirement == PoTokenRequirement.REQUIRED }
-                if (requiresToken) add("token generation excluded from fast path")
-                if (manifest.request.signatureCipher == JavaScriptRequirement.REQUIRED) {
-                    add("signature transform excluded from fast path")
-                }
-                if (manifest.request.nTransform == JavaScriptRequirement.REQUIRED) {
-                    add("n-transform excluded from fast path")
-                }
-            }
-        }
+    ): Boolean {
+        val contentSupport = manifest.content.supportFor(request.hints)
+        val tokenRules = listOf(manifest.poTokens.player, manifest.poTokens.gvs)
+        return manifest.lifecycle == ClientLifecycle.BROKEN ||
+            (manifest.authentication == AuthenticationPolicy.REQUIRED && !request.authenticated) ||
+            contentSupport == CapabilitySupport.UNSUPPORTED ||
+            (manifest.id == "VISIONOS_0_1" && contentSupport != CapabilitySupport.SUPPORTED) ||
+            (!request.javaScriptRuntimeAvailable && manifest.request.signatureCipher == JavaScriptRequirement.REQUIRED) ||
+            (!request.javaScriptRuntimeAvailable && manifest.request.nTransform == JavaScriptRequirement.REQUIRED) ||
+            (manifest.request.webView == WebViewRequirement.FULL_PLAYER && !request.webViewAvailable) ||
+            tokenRules.any { rule ->
+                rule.requirement == PoTokenRequirement.REQUIRED && rule.providers.none { it in request.availablePoTokenProviders }
+            } ||
+            (
+                request.fastPathOnly &&
+                    (
+                        manifest.request.signatureTimestamp ||
+                            tokenRules.any { it.requirement == PoTokenRequirement.REQUIRED } ||
+                            manifest.request.signatureCipher == JavaScriptRequirement.REQUIRED ||
+                            manifest.request.nTransform == JavaScriptRequirement.REQUIRED
+                    )
+            )
+    }
 
     private fun PlaybackClientManifest.isExcluded(
         excludedClients: Set<String>,
@@ -188,54 +146,49 @@ class ContentAwareFallbackStrategy(
     private fun score(
         manifest: PlaybackClientManifest,
         request: ClientSelectionRequest,
-    ): Triple<Int, List<String>, Int> {
+    ): Pair<Int, Int> {
         var score = manifest.priority
-        val reasons = mutableListOf("base=${manifest.priority}")
 
-        fun adjust(
-            value: Int,
-            reason: String,
-        ) {
+        fun adjust(value: Int) {
             score += value
-            reasons += "$reason=${if (value >= 0) "+" else ""}$value"
         }
 
         when (manifest.content.supportFor(request.hints)) {
-            CapabilitySupport.SUPPORTED -> adjust(25, "content")
-            CapabilitySupport.LIMITED -> adjust(-12, "content-limited")
-            CapabilitySupport.UNKNOWN -> adjust(-4, "content-unknown")
+            CapabilitySupport.SUPPORTED -> adjust(25)
+            CapabilitySupport.LIMITED -> adjust(-12)
+            CapabilitySupport.UNKNOWN -> adjust(-4)
             CapabilitySupport.UNSUPPORTED -> Unit
         }
 
         val restrictedContent = request.hints.isKidsContent == true || request.hints.isAgeRestricted == true
         if (restrictedContent && manifest.authentication == AuthenticationPolicy.OPTIONAL) {
-            adjust(if (request.authenticated) 18 else -18, if (request.authenticated) "authenticated" else "signed-out")
+            adjust(if (request.authenticated) 18 else -18)
         }
-        if (manifest.authentication == AuthenticationPolicy.REQUIRED) adjust(8, "auth-specialist")
+        if (manifest.authentication == AuthenticationPolicy.REQUIRED) adjust(8)
 
 
         when (manifest.lifecycle) {
             ClientLifecycle.STABLE -> Unit
-            ClientLifecycle.CANARY -> adjust(-15, "canary")
-            ClientLifecycle.EXPERIMENTAL -> adjust(-10, "experimental")
-            ClientLifecycle.UNRELEASED -> adjust(-5, "unreleased")
-            ClientLifecycle.DEPRECATED -> adjust(-20, "deprecated")
-            ClientLifecycle.BROKEN -> adjust(-100, "broken")
+            ClientLifecycle.CANARY -> adjust(-15)
+            ClientLifecycle.EXPERIMENTAL -> adjust(-10)
+            ClientLifecycle.UNRELEASED -> adjust(-5)
+            ClientLifecycle.DEPRECATED -> adjust(-20)
+            ClientLifecycle.BROKEN -> adjust(-100)
         }
 
         val tokenRules = listOf(manifest.poTokens.player, manifest.poTokens.gvs)
         val requiredTokenCount = tokenRules.count { it.requirement == PoTokenRequirement.REQUIRED }
         val optionalTokenCount = tokenRules.count { it.requirement == PoTokenRequirement.OPTIONAL }
-        if (requiredTokenCount > 0) adjust(-12 * requiredTokenCount, "required-token")
-        if (optionalTokenCount > 0) adjust(-4 * optionalTokenCount, "optional-token")
+        if (requiredTokenCount > 0) adjust(-12 * requiredTokenCount)
+        if (optionalTokenCount > 0) adjust(-4 * optionalTokenCount)
 
-        if (manifest.request.nTransform == JavaScriptRequirement.RESPONSE_DEPENDENT) adjust(-4, "possible-n-transform")
-        if (manifest.request.signatureCipher == JavaScriptRequirement.RESPONSE_DEPENDENT) adjust(-3, "possible-cipher")
+        if (manifest.request.nTransform == JavaScriptRequirement.RESPONSE_DEPENDENT) adjust(-4)
+        if (manifest.request.signatureCipher == JavaScriptRequirement.RESPONSE_DEPENDENT) adjust(-3)
         when (manifest.request.webView) {
             WebViewRequirement.NONE -> Unit
-            WebViewRequirement.OPTIONAL_TOKEN_MINTING -> adjust(-2, "optional-web-runtime")
-            WebViewRequirement.REQUIRED_TOKEN_MINTING -> adjust(-8, "token-web-runtime")
-            WebViewRequirement.FULL_PLAYER -> adjust(-25, "full-webview")
+            WebViewRequirement.OPTIONAL_TOKEN_MINTING -> adjust(-2)
+            WebViewRequirement.REQUIRED_TOKEN_MINTING -> adjust(-8)
+            WebViewRequirement.FULL_PLAYER -> adjust(-25)
         }
 
         val healthAdjustment =
@@ -243,8 +196,8 @@ class ContentAwareFallbackStrategy(
                 manifest.id,
                 ClientHealthScope.from(request.hints, request.authenticated),
             )
-        if (healthAdjustment != 0) adjust(healthAdjustment, "runtime-health")
-        return Triple(score, reasons, healthAdjustment)
+        if (healthAdjustment != 0) adjust(healthAdjustment)
+        return score to healthAdjustment
     }
 }
 

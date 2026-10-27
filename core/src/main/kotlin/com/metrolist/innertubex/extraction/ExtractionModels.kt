@@ -54,23 +54,10 @@ public class ExtractedStream(
     val profileId: String,
 )
 
-public data class StreamAttemptDiagnostic(
-    val clientName: String,
-    val profileId: String?,
-    val userAgent: String,
-    val outcome: String,
-)
-
-public data class StreamDiagnostics(
-    val attempts: List<StreamAttemptDiagnostic>,
-    val usedAuthenticatedWatchPage: Boolean,
-)
-
 public class StreamResolveException(
     public val reason: Reason,
     message: String,
     cause: Throwable? = null,
-    public val diagnostics: StreamDiagnostics? = null,
 ) : IllegalStateException(message, cause) {
     public enum class Reason {
         NO_PLAYABLE_STREAM,

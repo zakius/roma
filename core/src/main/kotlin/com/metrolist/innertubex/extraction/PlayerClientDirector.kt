@@ -55,8 +55,8 @@ internal class PlayerClientDirector(
         private val N_PARAMETER_REGEX = Regex("[?&]n=[^&]+", RegexOption.IGNORE_CASE)
         private val UNSAFE_PROFILE_CHARACTERS = Regex("[^A-Za-z0-9_.-]")
         private val DYNAMIC_WEB_VERSION_CLIENT_NAMES = setOf("WEB", "WEB_EMBEDDED_PLAYER")
-        private val TRANSPORT_PROBE_CLIENT_NAMES =
-            setOf("IOS_MUSIC", "ANDROID_KIDS", "ANDROID_PRODUCER", "MEDIA_CONNECT_FRONTEND")
+        // InnerTubeX's transport probes; roma's catalog has only ANDROID_KIDS of them.
+        private val TRANSPORT_PROBE_CLIENT_NAMES = setOf("ANDROID_KIDS")
     }
 
     internal val usesAutomaticCatalog: Boolean = fallbackStrategy is ContentAwareFallbackStrategy
@@ -127,16 +127,7 @@ internal class PlayerClientDirector(
             } else {
                 fallbackStrategy.selectClients(selectionRequest)
             }
-        val attempts =
-            selection.rejected
-                .mapTo(mutableListOf<StreamAttemptDiagnostic>()) { rejected ->
-                    StreamAttemptDiagnostic(
-                        clientName = rejected.manifest.client.clientName,
-                        profileId = rejected.manifest.id,
-                        userAgent = rejected.manifest.client.userAgent,
-                        outcome = "selection:${rejected.reasons.joinToString("+")}",
-                    )
-                }
+        var sawNonGateAttempt = false
         val clients =
             selection.candidates.filterNot { it.isExcluded(excludedClients) }
         val playableResults = mutableListOf<ClientResult>()
@@ -225,46 +216,13 @@ internal class PlayerClientDirector(
                         }
                     }
                 }
-            attempts +=
-                StreamAttemptDiagnostic(
-                    clientName = client.clientName,
-                    profileId = attempt?.let { selectedClient.profileId(it.usedPoToken) },
-                    userAgent = client.userAgent,
-                    outcome =
-                        when {
-                            attempt != null && client.clientName in TRANSPORT_PROBE_CLIENT_NAMES -> {
-                                responseTransportOutcome(attempt.response)
-                            }
-
-                            attempt != null -> {
-                                "playable_response"
-                            }
-
-                            attemptResult.observedResponse != null && client.clientName in TRANSPORT_PROBE_CLIENT_NAMES -> {
-                                responseTransportOutcome(attemptResult.observedResponse)
-                            }
-
-                            attemptResult.budgetExhausted -> {
-                                "request_budget_exhausted"
-                            }
-
-                            attemptResult.tokenUnavailable -> {
-                                "po_token_unavailable"
-                            }
-
-                            attemptResult.failure?.status != null -> {
-                                "playability:${attemptResult.failure.status}"
-                            }
-
-                            attemptResult.requestFailure != null -> {
-                                "request:${attemptResult.requestFailure::class.simpleName ?: "unknown"}"
-                            }
-
-                            else -> {
-                                "no_playable_response"
-                            }
-                        },
-                )
+            // Only a refusal at the playability gate lets the extractor cache the verdict. A transport probe's observed
+            // response counts as more than that.
+            val gateOnly =
+                attempt == null && attemptResult.failure?.status != null && !attemptResult.budgetExhausted &&
+                    !attemptResult.tokenUnavailable &&
+                    !(attemptResult.observedResponse != null && client.clientName in TRANSPORT_PROBE_CLIENT_NAMES)
+            if (!gateOnly) sawNonGateAttempt = true
             if (attempt != null) {
                 val result =
                     ClientResult(
@@ -283,11 +241,11 @@ internal class PlayerClientDirector(
                 playableResults += result
 
                 if (acceptCipherOnlyResponse) {
-                    return PlayerResponseBatch(listOf(result), failures, requestFailures, attempts)
+                    return PlayerResponseBatch(listOf(result), failures, requestFailures, sawNonGateAttempt)
                 }
 
                 if (hasPlaybackReadyDirectAudioUrl(attempt.response)) {
-                    return PlayerResponseBatch(listOf(result), failures, requestFailures, attempts)
+                    return PlayerResponseBatch(listOf(result), failures, requestFailures, sawNonGateAttempt)
                 }
 
             } else {
@@ -297,14 +255,14 @@ internal class PlayerClientDirector(
         }
 
         if (playableResults.isNotEmpty()) {
-            return PlayerResponseBatch(playableResults, failures, requestFailures, attempts)
+            return PlayerResponseBatch(playableResults, failures, requestFailures, sawNonGateAttempt)
         }
 
         return PlayerResponseBatch(
             emptyList(),
             failures,
             requestFailures,
-            attempts,
+            sawNonGateAttempt,
             onlyAccountGateFailures = onlyAccountGateFailures && failures.isNotEmpty(),
             onlyUnavailableFailures = onlyUnavailableFailures && failures.isNotEmpty(),
             onlyBootstrapIndependentFailures = onlyBootstrapIndependentFailures && failures.isNotEmpty(),
@@ -722,7 +680,7 @@ internal class PlayerClientDirector(
     private fun SelectedClient.canUsePoTokens(): Boolean = tokenPlan().canMint
 
     private fun SelectedClient.allowsUntokenizedPlayback(authenticated: Boolean): Boolean =
-        ("manual override" in reasons && !canUsePoTokens()) ||
+        (manualOverride && !canUsePoTokens()) ||
             manifest?.let {
                 it.poTokens.player.requirement != PoTokenRequirement.REQUIRED &&
                     it.poTokens.gvs.requirement != PoTokenRequirement.REQUIRED
@@ -798,36 +756,6 @@ internal class PlayerClientDirector(
         val tokenUnavailable: Boolean = false,
         val observedResponse: PlayerResponse? = null,
     )
-
-    private fun responseTransportOutcome(response: PlayerResponse): String {
-        val adaptiveFormats = response.streamingData?.adaptiveFormats.orEmpty()
-        val progressiveFormats = response.streamingData?.formats.orEmpty()
-        return buildString {
-            append("response_shape:")
-            append("adaptive_direct=")
-            append(if (adaptiveFormats.any { it.url?.isNotBlank() == true }) "present" else "absent")
-            append(",adaptive_cipher=")
-            append(
-                if (adaptiveFormats.any { !it.signatureCipher.isNullOrBlank() || !it.cipher.isNullOrBlank() }) {
-                    "present"
-                } else {
-                    "absent"
-                },
-            )
-            append(",progressive_direct=")
-            append(if (progressiveFormats.any { it.url?.isNotBlank() == true }) "present" else "absent")
-            append(",progressive_cipher=")
-            append(
-                if (progressiveFormats.any { !it.signatureCipher.isNullOrBlank() || !it.cipher.isNullOrBlank() }) {
-                    "present"
-                } else {
-                    "absent"
-                },
-            )
-            append(",hls=")
-            append(if (!response.streamingData?.hlsManifestUrl.isNullOrBlank()) "present" else "absent")
-        }
-    }
 
     private class PlayerRequestTimeoutException(
         clientName: String,

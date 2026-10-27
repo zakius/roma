@@ -31,7 +31,7 @@ internal data class PlayerResponseBatch(
     val playableResponses: List<ClientResult>,
     val failures: List<PlayabilityFailure>,
     val requestFailures: List<Throwable>,
-    val attempts: List<StreamAttemptDiagnostic>,
+    val sawNonGateAttempt: Boolean,
     val onlyAccountGateFailures: Boolean = false,
     val onlyUnavailableFailures: Boolean = false,
     val onlyBootstrapIndependentFailures: Boolean = false,

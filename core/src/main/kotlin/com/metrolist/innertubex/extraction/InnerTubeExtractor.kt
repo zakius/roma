@@ -130,7 +130,7 @@ class InnerTubeExtractor internal constructor(
         if (innerTube.sessionSnapshot().generation != key.generation || diagnostics.sawPlayableResponse ||
             (reason == StreamResolveException.Reason.UNAVAILABLE && !diagnostics.unavailable) ||
             diagnostics.requestFailures.isNotEmpty() || diagnostics.requestBudget.terminalFailureReason() != reason ||
-            diagnostics.attempts.any { !it.outcome.startsWith("selection:") && !it.outcome.startsWith("playability:") }
+            diagnostics.sawNonGateAttempt
         ) {
             return
         }
@@ -212,23 +212,15 @@ class InnerTubeExtractor internal constructor(
                 reason = StreamResolveException.Reason.NO_PLAYABLE_STREAM,
                 message = "Extraction time budget exhausted.",
                 cause = e,
-                diagnostics = diagnostics.snapshot(),
             )
         } catch (e: StreamResolveException) {
             terminalKey?.let { cacheTerminalVerdict(it, diagnostics, e.reason) }
-            if (e.diagnostics != null) throw e
-            throw StreamResolveException(
-                reason = e.reason,
-                message = "Unable to resolve stream data.",
-                cause = e,
-                diagnostics = diagnostics.snapshot(),
-            )
+            throw e
         } catch (e: Exception) {
             throw StreamResolveException(
                 reason = StreamResolveException.Reason.NETWORK,
                 message = "Unable to fetch stream data from YouTube.",
                 cause = e,
-                diagnostics = diagnostics.snapshot(),
             )
         }
     }
@@ -451,7 +443,6 @@ class InnerTubeExtractor internal constructor(
                             StreamResolveException.Reason.AGE_RESTRICTED -> "This track is age-restricted."
                             else -> "This track is unavailable."
                         },
-                    diagnostics = diagnostics.snapshot(),
                 )
             }
             diagnostics.requestFailures.lastOrNull()?.let { failure ->
@@ -459,14 +450,12 @@ class InnerTubeExtractor internal constructor(
                     reason = StreamResolveException.Reason.NETWORK,
                     message = "Unable to fetch stream data from YouTube.",
                     cause = failure,
-                    diagnostics = diagnostics.snapshot(),
                 )
             }
         }
         throw StreamResolveException(
             reason = StreamResolveException.Reason.NO_PLAYABLE_STREAM,
             message = "No playable stream found for this track.",
-            diagnostics = diagnostics.snapshot(),
         )
     }
 
@@ -489,8 +478,6 @@ class InnerTubeExtractor internal constructor(
                     null
                 }
         if (cachedConfig != null) {
-            diagnostics.usedAuthenticatedWatchPage =
-                diagnostics.usedAuthenticatedWatchPage || cachedConfig.usedLoginCookies
             val nonGatePassesBefore = diagnostics.nonGatePasses
             val failuresBefore = diagnostics.failures.size
             val cachedStream =
@@ -518,8 +505,6 @@ class InnerTubeExtractor internal constructor(
         diagnostics.ensureSessionCurrent()
         val freshCachedConfig = fetchPlayerConfig(videoId, useLoginCookies, cachedConfig, diagnostics.session)
         diagnostics.ensureSessionCurrent()
-        diagnostics.usedAuthenticatedWatchPage =
-            diagnostics.usedAuthenticatedWatchPage || freshCachedConfig.usedLoginCookies
         return extractWithConfig(
             videoId = videoId,
             hints = hints,
@@ -617,7 +602,7 @@ class InnerTubeExtractor internal constructor(
         if (batch.onlyUnavailableFailures) diagnostics.unavailable = true
         diagnostics.failures += batch.failures
         diagnostics.requestFailures += batch.requestFailures
-        diagnostics.attempts += batch.attempts
+        if (batch.sawNonGateAttempt) diagnostics.sawNonGateAttempt = true
         val results = batch.playableResponses
         if (results.isNotEmpty()) diagnostics.sawPlayableResponse = true
         if (results.isEmpty()) {
@@ -807,18 +792,11 @@ class InnerTubeExtractor internal constructor(
         val requestBudget = PlayerRequestBudget(maxPlayerRequests, extractionTimeBudgetMs.milliseconds)
         val failures = mutableListOf<PlayabilityFailure>()
         val requestFailures = mutableListOf<Throwable>()
-        val attempts = mutableListOf<StreamAttemptDiagnostic>()
+        var sawNonGateAttempt = false
         var nonGatePasses = 0
         var unavailable = false
         var sawPlayableResponse = false
-        var usedAuthenticatedWatchPage = false
         var triedPublicConfigBeforeLogin = false
-
-        fun snapshot() =
-            StreamDiagnostics(
-                attempts = attempts.takeLast(32),
-                usedAuthenticatedWatchPage = usedAuthenticatedWatchPage,
-            )
     }
 
     private fun String.hasNParameter(): Boolean = N_PARAMETER_REGEX.containsMatchIn(this)
