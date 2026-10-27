@@ -271,6 +271,8 @@ fun parseLrc(text: String): List<Line> {
         val words = ArrayList<Word>()
         val marks = WORD_TIME.findAll(rest).toList()
         if (marks.isNotEmpty()) {
+            // Text before the first word stamp starts with the line.
+            rest.substring(0, marks[0].range.first).takeIf { it.isNotBlank() }?.let { words.add(Word(stamps[0], -1, it)) }
             for ((i, m) in marks.withIndex()) {
                 val end = marks.getOrNull(i + 1)?.range?.first ?: rest.length
                 val w = rest.substring(m.range.last + 1, end)
@@ -316,7 +318,8 @@ private fun krcTranslations(text: String): List<String?> {
 /** NetEase YRC: [lineStart,lineDur](wordStart,dur,0)word, word starts absolute. */
 fun parseYrc(text: String): List<Line> {
     val head = Regex("""^\[(\d+),(\d+)]""")
-    val word = Regex("""\((\d+),(\d+),\d+\)([^(]*)""")
+    // A word runs to the next stamp, so "(oh)" in the lyrics stays part of its word.
+    val word = Regex("""\((\d+),(\d+),\d+\)(.*?)(?=\(\d+,\d+,\d+\)|$)""")
     val lines = ArrayList<Line>()
     for (raw in text.lines()) {
         val h = head.find(raw) ?: continue
@@ -443,12 +446,17 @@ object KuGou : LyricsProvider {
         inflater.setInput(data)
         val out = java.io.ByteArrayOutputStream()
         val buf = ByteArray(8192)
-        while (!inflater.finished()) {
-            val n = inflater.inflate(buf)
-            if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break
-            out.write(buf, 0, n)
+        try {
+            while (!inflater.finished()) {
+                val n = inflater.inflate(buf)
+                if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break
+                out.write(buf, 0, n)
+            }
+        } finally {
+            inflater.end()
         }
-        return out.toString(Charsets.UTF_8).removePrefix("﻿")
+        // decodeToString, not toString(Charset): that one is API 33, and core isn't lint-checked for Android.
+        return out.toByteArray().decodeToString().removePrefix("﻿")
     }
 }
 

@@ -88,6 +88,8 @@ object Dictionary {
                 id = installer.createSession(params)
                 installer.openSession(id).use { session ->
                     val conn = URL(BuildConfig.DICT_URL).openConnection() as HttpURLConnection
+                    conn.connectTimeout = 15_000
+                    conn.readTimeout = 30_000 // a stalled download fails instead of keeping the install busy for good
                     check(conn.responseCode == 200) { "The download answered HTTP ${conn.responseCode}" }
                     val total = conn.contentLengthLong
                     var read = 0L

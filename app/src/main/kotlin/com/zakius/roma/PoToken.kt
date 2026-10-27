@@ -14,6 +14,7 @@ import com.metrolist.innertubex.extraction.TokenProvider
 import com.metrolist.innertubex.extraction.TokenProviderCapabilities
 import com.metrolist.innertubex.extraction.strategy.PoTokenProviderKind
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -63,6 +64,11 @@ class PoTokens(context: Context) : TokenProvider {
             null
         } catch (_: BadWebViewException) {
             broken = true
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            reset() // BotGuard failed or the page is gone: no token for this song (null, not a thrown lookup)
             null
         }
     }
@@ -269,7 +275,8 @@ private class PoTokenView private constructor(context: Context, private val read
                     }
                 }
             } catch (e: Exception) {
-                created?.let { it.started.set(true); withContext(Dispatchers.Main) { it.close() } }
+                // Not withContext: when an outer timeout cancelled us it would throw at once and leak the WebView.
+                created?.let { it.started.set(true); it.close() }
                 throw if (e is TimeoutCancellationException) PoTokenException("PoToken WebView didn't start") else e
             }
         }

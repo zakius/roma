@@ -30,6 +30,15 @@ class LyricsTest {
         assertEquals(2000L, yrc[0].words[1].endMs)
     }
 
+    @Test fun bracketsInWordsAndTextBeforeTheFirstWordStamp() {
+        val yrc = parseYrc("[0,3000](0,500,0)Hello (500,400,0)(oh)")
+        assertEquals(listOf("Hello ", "(oh)"), yrc[0].words.map { it.text })
+        assertEquals("Hello (oh)", yrc[0].text)
+        val lrc = parseLrc("[00:01.00]Hello <00:01.50>world")
+        assertEquals("Hello world", lrc[0].text)
+        assertEquals(1000L to 1500L, lrc[0].words[0].let { it.startMs to it.endMs })
+    }
+
     @Test fun translationMerge() {
         val l = withTranslation(parseLrc("[00:01.00]君の声"), "[00:01.00]your voice")
         assertEquals("your voice", l[0].translation)

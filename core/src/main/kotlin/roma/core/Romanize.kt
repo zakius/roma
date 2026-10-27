@@ -546,7 +546,7 @@ class Romanizer(
             var r = table[lower] ?: c.toString()
             // English style writes е as "ye" at the start of a word and after a vowel.
             if (table === ENGLISH && lower == 'е' && (i == 0 || s[i - 1].lowercaseChar() in VOWELS_CYR || !s[i - 1].isLetter())) r = "ye"
-            out.append(if (c.isUpperCase()) capitalize(r, s.getOrNull(i + 1)?.isUpperCase() == true) else r)
+            out.append(if (c.isUpperCase()) capitalize(r, allCaps(s, i)) else r)
         }
         return out.toString()
     }
@@ -578,7 +578,7 @@ class Romanizer(
                 else -> table[lower] ?: c.toString()
             }
             if (c.isUpperCase()) {
-                r = capitalize(r, s.getOrNull(i + 1)?.isUpperCase() == true)
+                r = capitalize(r, allCaps(s, i))
                 if (lang == "kk" && r.startsWith('I') && lower != 'і') r = "İ" + r.drop(1) // и й: İ, і: I
             }
             out.append(r)
@@ -609,7 +609,7 @@ class Romanizer(
                 out.append(Normalizer.normalize(last.toString() + "́", Normalizer.Form.NFC))
                 continue
             }
-            if (c.isUpperCase()) r = capitalize(r, next?.isUpperCase() == true && s[i + 1].isUpperCase())
+            if (c.isUpperCase()) r = capitalize(r, allCaps(s, i))
             out.append(r)
         }
         return out.toString()
@@ -743,6 +743,12 @@ class Romanizer(
             val out = latin.firstOrNull { it.isLetter() } ?: return latin
             if (cp < 0 || Character.UnicodeScript.of(cp) == Character.UnicodeScript.LATIN || Character.UnicodeScript.of(out.code) != Character.UnicodeScript.LATIN) return latin
             return capitalize(latin, false)
+        }
+
+        // The capital at [i] is part of an all-caps word: the next letter is a capital too, or it ends one ("ПЛАЩ").
+        private fun allCaps(s: String, i: Int): Boolean {
+            val next = s.getOrNull(i + 1)
+            return next?.isUpperCase() == true || (next == null || !next.isLetter()) && s.getOrNull(i - 1)?.isUpperCase() == true
         }
 
         // Uppercases the first letter, wherever it is: "~anata" → "~Anata".

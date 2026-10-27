@@ -66,6 +66,7 @@ class LastFm(private val apiKey: String, private val secret: String) {
 
 /** Scrobbles waiting to be sent, kept in a file so they survive being offline and app restarts. */
 class ScrobbleQueue(private val file: File) {
+    private val flushing = java.util.concurrent.locks.ReentrantLock() // not `this`: add() mustn't wait for the network
     @Synchronized fun add(s: Scrobble) = save(load() + s)
 
     @Synchronized fun load(): List<Scrobble> = if (file.exists()) runCatching { Json.decodeFromString<List<Scrobble>>(file.readText()) }.getOrDefault(emptyList()) else emptyList()
@@ -74,6 +75,12 @@ class ScrobbleQueue(private val file: File) {
 
     /** Sends everything in batches of 50, dropping each batch once Last.fm accepted it. Stops at the first failure. */
     fun flush(send: (List<Scrobble>) -> Unit) {
+        // Two flushes at once would send a batch twice; the running one also sends what was added meanwhile.
+        if (!flushing.tryLock()) return
+        try { flushOnce(send) } finally { flushing.unlock() }
+    }
+
+    private fun flushOnce(send: (List<Scrobble>) -> Unit) {
         while (true) {
             val batch = synchronized(this) { load().take(50) }
             if (batch.isEmpty()) return

@@ -181,6 +181,8 @@ object Playback {
 
             override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
                 error = null
+                // After an error the player is idle, and a seek alone (Next, a queue tap) doesn't start it again.
+                if (player.playerError != null) player.prepare()
                 val e = current() ?: return
                 if (Store.radioSettings().skipBanned && Store.bans().banned(e.song)) {
                     main.post { if (player.hasNextMediaItem()) player.seekToNextMediaItem() }
@@ -210,7 +212,7 @@ object Playback {
 
             override fun onPlayerError(e: PlaybackException) {
                 val id = current()?.song?.id
-                urls.remove(id) // the URL may have expired; a retry resolves it again
+                synchronized(urls) { urls.remove(id) } // the URL may have expired; a retry resolves it again
                 // A refused stream URL (403, seen once after a seek) gets one silent retry through the full lookup,
                 // from the same position. A second failure within a minute shows the error.
                 val refused = (e.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode in setOf(403, 410)
@@ -470,6 +472,7 @@ object Playback {
     private fun switchTo(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
         mixId = mix
         mixContinuation = mixNext
+        radioJob?.cancel() // the old queue's top-up would add its songs to this one
         radioSeed = songs[start]
         radioContinuation = null
         related = null
@@ -511,6 +514,7 @@ object Playback {
     fun startRadio(s: Song) {
         if (current()?.song?.id != s.id) return play(listOf(s))
         mixId = null
+        radioJob?.cancel()
         radioSeed = s
         radioContinuation = null
         related = null
@@ -535,8 +539,10 @@ object Playback {
         radioJob = scope.launch {
             val settings = Store.radioSettings()
             val already = entries().map { it.song } // read on the main thread: ExoPlayer is single-threaded
+            var rel = related
+            var continuation = radioContinuation
             val added = withContext(Dispatchers.IO) {
-                if (related == null) related = if (settings.leash == "free") emptySet() else relatedArtists(seed)
+                val r = rel ?: (if (settings.leash == "free") emptySet() else relatedArtists(seed)).also { rel = it }
                 var fresh = emptyList<Song>()
                 // A page can be all filtered out; try a few continuations before giving up.
                 repeat(4) {
@@ -544,14 +550,17 @@ object Playback {
                     val endpoint = WatchEndpoint(videoId = seed.id, playlistId = "RDAMVM${seed.id}")
                     // A continuation saved before a restart may have expired: start the radio's pages over (the
                     // songs already queued are filtered out).
-                    val page = YouTube.next(endpoint, radioContinuation).getOrNull() ?: run { radioContinuation = null; return@repeat }
-                    radioContinuation = page.continuation
+                    val page = YouTube.next(endpoint, continuation).getOrNull() ?: run { continuation = null; return@repeat }
+                    continuation = page.continuation
                     val candidates = page.items.map { Store.romanizer.song(it) }
-                    fresh = filterRadio(candidates, seed, related!!, already, Store.bans(), settings)
-                    if (radioContinuation == null) return@repeat
+                    fresh = filterRadio(candidates, seed, r, already, Store.bans(), settings)
+                    if (continuation == null) return@repeat
                 }
                 fresh
             }
+            if (radioSeed !== seed) return@launch // another radio or queue started meanwhile
+            related = rel
+            radioContinuation = continuation
             Store.remember(added)
             player.addMediaItems(added.map { mediaItem(Entry(it, "radio")) })
         }
@@ -1099,15 +1108,16 @@ object Playback {
         scrobbled = true
         Store.played(s)
         if (Store.str("lastfm.session", "").isBlank()) return
-        scrobbleQueue().add(scrobbleOf(s))
+        scrobbleQueue.add(scrobbleOf(s))
         flushScrobbles()
     }
 
-    fun scrobbleQueue() = ScrobbleQueue(File(appContext.filesDir, "scrobbles.json"))
+    // One instance: its lock is what keeps an add and a flush from losing or repeating scrobbles.
+    val scrobbleQueue by lazy { ScrobbleQueue(File(appContext.filesDir, "scrobbles.json")) }
 
     fun flushScrobbles() {
         val (fm, sk) = lastFm() ?: return
-        scope.launch(Dispatchers.IO) { runCatching { scrobbleQueue().flush { fm.scrobble(sk, it) } } }
+        scope.launch(Dispatchers.IO) { runCatching { scrobbleQueue.flush { fm.scrobble(sk, it) } } }
     }
 }
 

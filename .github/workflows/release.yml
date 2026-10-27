@@ -82,7 +82,7 @@ jobs:
         if: steps.check.outputs.build
         env: { GH_TOKEN: "${{ github.token }}", DICT: "${{ steps.check.outputs.tag }}" }
         run: |
-          gh release create "$DICT" dist/roma-dict-*.apk.gz --title "Japanese dictionary ${DICT#dict-}" \
+          gh release create "$DICT" dist/roma-dict-*.apk.gz --target "$GITHUB_SHA" --latest=false --title "Japanese dictionary ${DICT#dict-}" \
             --notes "SudachiDict core ${DICT#dict-} as a companion app for roma, without what roma never reads (postal addresses, split and synonym data; duplicate cost rows merged). roma installs it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
 
   publish:
