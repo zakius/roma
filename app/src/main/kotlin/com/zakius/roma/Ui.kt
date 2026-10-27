@@ -500,8 +500,12 @@ fun OutlinedTextField(
     val s = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(4.dp)
+    // Text set from outside (a picked search suggestion) puts the caret at its end; the String BasicTextField kept it
+    // at the old offset, somewhere inside the new text.
+    var edited by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(value, androidx.compose.ui.text.TextRange(value.length))) }
+    if (edited.text != value) edited = androidx.compose.ui.text.input.TextFieldValue(value, androidx.compose.ui.text.TextRange(value.length))
     BasicTextField(
-        value, onValueChange, modifier.onFocusChanged { focused = it.isFocused },
+        edited, { edited = it; if (it.text != value) onValueChange(it.text) }, modifier.onFocusChanged { focused = it.isFocused },
         singleLine = singleLine,
         textStyle = MaterialTheme.typography.bodyLarge.copy(color = s.onSurface),
         cursorBrush = SolidColor(s.primary),
