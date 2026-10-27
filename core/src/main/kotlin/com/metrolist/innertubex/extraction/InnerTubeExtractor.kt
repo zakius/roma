@@ -87,8 +87,9 @@ class InnerTubeExtractor internal constructor(
         private val N_PARAMETER_REGEX = Regex("(?:[?&]|%26)n(?:=|%3[dD])", RegexOption.IGNORE_CASE)
         private val CODECS_REGEX = Regex("codecs=\"([^\"]+)\"")
 
-        // Allow a cached-config pass and a fresh-config pass, plus native probes.
-        private val MAX_PLAYER_REQUESTS_PER_EXTRACTION = PlaybackClientCatalog.automaticManifests.size * 4 + 2
+        // Allow a cached-config pass and a fresh-config pass, plus native probes: 4 per automatic client plus 2, for
+        // InnerTubeX's 12 (roma's catalog keeps the 6 it can select).
+        private const val MAX_PLAYER_REQUESTS_PER_EXTRACTION = 50
     }
 
     private data class CachedPlayerConfig(

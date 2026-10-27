@@ -132,7 +132,6 @@ data class ClientRequestCapabilities(
 
 data class PlaybackClientManifest(
     val id: String,
-    val displayName: String,
     val client: YouTubeClient,
     val lifecycle: ClientLifecycle,
     val selectionMode: ClientSelectionMode,
@@ -141,44 +140,8 @@ data class PlaybackClientManifest(
     val poTokens: ClientPoTokenCapabilities = ClientPoTokenCapabilities(),
     val request: ClientRequestCapabilities = ClientRequestCapabilities(),
     val content: ClientContentCapabilities = ClientContentCapabilities(),
-    val benchmarkContent: ClientContentCapabilities = content,
     val priority: Int,
-    val evidence: Set<String> = emptySet(),
-    val notes: String? = null,
 ) {
-    init {
-        require(id.matches(Regex("[A-Z0-9_]+"))) { "Client manifest ID must be stable and uppercase: $id" }
-        require(transports.isNotEmpty() || selectionMode == ClientSelectionMode.API_ONLY) {
-            "Playback client $id must declare at least one transport"
-        }
-        require((PlaybackTransport.SABR in transports) == client.useSabr) {
-            "Client $id disagrees with its SABR request profile"
-        }
-        require((authentication != AuthenticationPolicy.UNSUPPORTED) == client.loginSupported) {
-            "Client $id disagrees with its login request profile"
-        }
-        require((authentication == AuthenticationPolicy.REQUIRED) == client.loginRequired) {
-            "Client $id disagrees with its required-login request profile"
-        }
-        require(request.signatureTimestamp == client.useSignatureTimestamp) {
-            "Client $id disagrees with its signature timestamp request profile"
-        }
-        require(request.embedded == client.isEmbedded) {
-            "Client $id disagrees with its embedded request profile"
-        }
-        require(!request.encryptedHostFlags || request.embedded) {
-            "Client $id requests encrypted host flags without an embedded player context"
-        }
-    }
-
     val isAutomatic: Boolean
         get() = selectionMode == ClientSelectionMode.AUTOMATIC
-
-    val isPlaybackClient: Boolean
-        get() = selectionMode != ClientSelectionMode.API_ONLY
-
-    fun supportsProvider(kinds: Set<PoTokenProviderKind>): Boolean {
-        val requiredRules = listOf(poTokens.player, poTokens.gvs).filter { it.requirement == PoTokenRequirement.REQUIRED }
-        return requiredRules.all { rule -> rule.providers.any { it in kinds } }
-    }
 }

@@ -60,7 +60,8 @@ internal class PlayerClientDirector(
         private const val PO_TOKEN_FETCH_TIMEOUT_MS = 18_000L
         private const val DEFAULT_PLAYER_REQUEST_TIMEOUT_MS = 8_000L
         private const val DEFAULT_VISITOR_DATA_FETCH_TIMEOUT_MS = 8_000L
-        private val DEFAULT_MAX_PLAYER_REQUESTS = PlaybackClientCatalog.automaticManifests.size * 2
+        // Twice InnerTubeX's 12 automatic clients (roma's catalog keeps the 6 it can select).
+        private const val DEFAULT_MAX_PLAYER_REQUESTS = 24
         private const val MAX_PLAYER_RESPONSE_BYTES = 4 * 1024 * 1024
         private const val MAX_PLAYER_FORMATS = 2048
         private val N_PARAMETER_REGEX = Regex("[?&]n=[^&]+", RegexOption.IGNORE_CASE)

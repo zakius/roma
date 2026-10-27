@@ -26,7 +26,7 @@ class ContentAwareFallbackStrategy(
     override fun selectClients(request: ClientSelectionRequest): ClientSelectionResult = selectClients(request, premiumHighQuality = false)
 
     internal fun includesVisitorBackedLegacy(excludedClients: Set<String>): Boolean =
-        catalog.find("VISIONOS_0_1")?.manifest?.let {
+        catalog.findManifest("VISIONOS_0_1")?.let {
             it.selectionMode == ClientSelectionMode.PROBE_ONLY &&
                 !it.isExcluded(excludedClients, emptySet(), premiumEntitlement = false)
         } == true
@@ -37,21 +37,21 @@ class ContentAwareFallbackStrategy(
         visitorDataAvailable: Boolean = false,
     ): ClientSelectionResult {
         val rejected = mutableListOf<RejectedClient>()
-        request.hints.playbackClientOverrideId?.let(catalog::find)?.let { option ->
-            val rejectionReasons = hardRejectionReasons(option.manifest, request, checkContentSupport = false)
+        request.hints.playbackClientOverrideId?.let(catalog::findManifest)?.let { manifest ->
+            val rejectionReasons = hardRejectionReasons(manifest, request, checkContentSupport = false)
             if (
-                !option.isExcluded(
+                !manifest.isExcluded(
                     request.excludedClients,
                     request.availablePoTokenProviders,
-                    option.manifest.hasUsablePremiumEntitlement(request),
+                    manifest.hasUsablePremiumEntitlement(request),
                 )
             ) {
                 return ClientSelectionResult(
                     candidates =
                         listOf(
                             SelectedClient(
-                                client = option.client,
-                                manifest = option.manifest,
+                                client = manifest.client,
+                                manifest = manifest,
                                 score = Int.MAX_VALUE,
                                 reasons = listOf("manual override") + rejectionReasons.map { "ignored: $it" },
                             ),
@@ -60,7 +60,7 @@ class ContentAwareFallbackStrategy(
             }
             rejected +=
                 RejectedClient(
-                    option.manifest,
+                    manifest,
                     rejectionReasons.ifEmpty { listOf("manual override recently failed") },
                 )
         }
@@ -68,7 +68,7 @@ class ContentAwareFallbackStrategy(
         val candidates = mutableListOf<SelectedClient>()
         val healthDemoted = mutableSetOf<String>()
         val visitorBackedLegacy =
-            catalog.find("VISIONOS_0_1")?.manifest?.takeIf {
+            catalog.findManifest("VISIONOS_0_1")?.takeIf {
                 visitorDataAvailable && it.selectionMode == ClientSelectionMode.PROBE_ONLY
             }
         (catalog.automaticManifests + listOfNotNull(visitorBackedLegacy)).forEach { manifest ->
@@ -228,12 +228,6 @@ class ContentAwareFallbackStrategy(
                 }
             }
         }
-
-    private fun PlaybackClientOption.isExcluded(
-        excludedClients: Set<String>,
-        availablePoTokenProviders: Set<PoTokenProviderKind>,
-        premiumEntitlement: Boolean,
-    ): Boolean = manifest.isExcluded(excludedClients, availablePoTokenProviders, premiumEntitlement)
 
     private fun PlaybackClientManifest.isExcluded(
         excludedClients: Set<String>,
