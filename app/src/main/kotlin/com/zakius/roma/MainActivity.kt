@@ -318,7 +318,7 @@ private fun NavBar(tab: Int, loaded: Boolean) {
             NavItem("Search", Icons.Default.Search, tab == TAB_SEARCH, true) { Nav.tab = TAB_SEARCH; Nav.stacks[TAB_SEARCH].clear() }
             NavItem("Player", Icons.Default.PlayArrow, tab == TAB_PLAYER, loaded) { Nav.tab = TAB_PLAYER }
             NavItem("Library", Icons.AutoMirrored.Filled.List, tab == TAB_LIBRARY, true) { Nav.tab = TAB_LIBRARY; Nav.stacks[TAB_LIBRARY].clear() }
-            NavItem("Settings", Icons.Default.Settings, tab == TAB_SETTINGS, true) { Nav.tab = TAB_SETTINGS; Nav.stacks[TAB_SETTINGS].clear() }
+            NavItem("Settings", Icons.Default.Settings, tab == TAB_SETTINGS, true, dot = Update.available != null) { Nav.tab = TAB_SETTINGS; Nav.stacks[TAB_SETTINGS].clear() }
         }
 }
 
@@ -334,7 +334,7 @@ fun FixedRowsFont(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, enabled: Boolean, dot: Boolean = false, onClick: () -> Unit) {
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     androidx.compose.foundation.layout.Column(
         Modifier.weight(1f).fillMaxHeight()
@@ -343,7 +343,11 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, i
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
     ) {
-        Icon(icon, null, Modifier.size(22.dp), tint = color)
+        androidx.compose.foundation.layout.Box {
+            Icon(icon, null, Modifier.size(22.dp), tint = color)
+            // Something waits there (an update): a dot, no count, nothing that moves.
+            if (dot) androidx.compose.foundation.layout.Box(Modifier.align(androidx.compose.ui.Alignment.TopEnd).size(6.dp).background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.CircleShape))
+        }
         Text(label, fontSize = 10.sp, lineHeight = 12.sp, color = color, maxLines = 1)
     }
 }
