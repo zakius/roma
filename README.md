@@ -2,7 +2,7 @@
 
 An Android client for YouTube Music. It romanizes every non-Latin title, artist and lyric line, and its controls stay in the same place.
 
-Tiny and fast: the whole app is a 2.1 MB download; romanizing Japanese needs an optional dictionary, downloaded separately. Install it and tap around; that shows the speed better than a benchmark.
+Tiny and fast: the whole app is a 2.0 MB download; romanizing Japanese needs an optional dictionary, downloaded separately. Install it and tap around; that shows the speed better than a benchmark.
 
 - **Romanization everywhere:** lists, player, queue, search, lyrics, notification.
   - Japanese: [Sudachi](https://github.com/WorksApplications/Sudachi) with SudachiDict core, Hepburn.
