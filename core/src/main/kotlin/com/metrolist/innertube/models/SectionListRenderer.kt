@@ -6,33 +6,9 @@ import kotlinx.serialization.json.JsonNames
 
 @Serializable
 class SectionListRenderer(
-    val header: Header?,
     val contents: List<Content>?,
     val continuations: List<Continuation>?,
 ) {
-    @Serializable
-    class Header(
-        val chipCloudRenderer: ChipCloudRenderer?,
-    ) {
-        @Serializable
-        class ChipCloudRenderer(
-            val chips: List<Chip>,
-        ) {
-            @Serializable
-            class Chip(
-                val chipCloudChipRenderer: ChipCloudChipRenderer,
-            ) {
-                @Serializable
-                class ChipCloudChipRenderer(
-                    val navigationEndpoint: NavigationEndpoint? = null,
-                    val onDeselectedCommand: NavigationEndpoint? = null,
-                    // The close button doesn't have the following two fields
-                    val text: Runs?,
-                )
-            }
-        }
-    }
-
     @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     class Content(

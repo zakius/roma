@@ -9,7 +9,6 @@ class SearchSuggestionsSectionRenderer(
     @Serializable
     class Content(
         val searchSuggestionRenderer: SearchSuggestionRenderer?,
-        val musicResponsiveListItemRenderer: MusicResponsiveListItemRenderer?,
     ) {
         @Serializable
         class SearchSuggestionRenderer(

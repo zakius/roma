@@ -84,7 +84,6 @@ class BrowseResponse(
         @Serializable
         class MusicImmersiveHeaderRenderer(
             val title: Runs,
-            val description: Runs?,
             val thumbnail: ThumbnailRenderer?,
             val playButton: Button?,
             val startRadioButton: Button?,
@@ -107,7 +106,6 @@ class BrowseResponse(
         class MusicVisualHeaderRenderer(
             val title: Runs,
             val foregroundThumbnail: ThumbnailRenderer,
-            val subscriptionButton: SubscriptionButton?,
         )
 
         @Serializable

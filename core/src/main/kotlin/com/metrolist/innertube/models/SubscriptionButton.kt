@@ -8,7 +8,6 @@ class SubscriptionButton(
 ) {
     @Serializable
     class SubscribeButtonRenderer(
-        val subscribed: Boolean,
         val longSubscriberCountText: Runs? = null,
         val shortSubscriberCountText: Runs? = null,
     )

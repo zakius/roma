@@ -13,10 +13,7 @@ class MusicCarouselShelfRenderer(
     ) {
         @Serializable
         class MusicCarouselShelfBasicHeaderRenderer(
-            val strapline: Runs?,
             val title: Runs,
-            val thumbnail: ThumbnailRenderer?,
-            val moreContentButton: Button?,
         )
     }
 
