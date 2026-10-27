@@ -907,8 +907,9 @@ fun PageScreen(p: Page) {
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val list = rememberLazyListState()
     Loader("${p.kind}:${p.id}", { partial -> loadDetail(p, partial) }, list, ::detailRows, Detail.serializer()) { d ->
-        // Play and the first row are the likely taps.
-        LaunchedEffect(d.songs.firstOrNull()?.id) { Playback.prepare(d.songs.take(1)) }
+        // Play and the first row are the likely taps; not while another page covers this one.
+        val shown = LocalTabShown.current
+        LaunchedEffect(d.songs.firstOrNull()?.id, shown) { if (shown) Playback.prepare(d.songs.take(1)) }
         Box {
         LazyColumn(Modifier.fillMaxSize(), list) {
             item {

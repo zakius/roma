@@ -95,6 +95,10 @@ class MainActivity : ComponentActivity() {
     override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
         Touch.down = e.actionMasked != android.view.MotionEvent.ACTION_UP && e.actionMasked != android.view.MotionEvent.ACTION_CANCEL
         Touch.last = e.eventTime
+        // A frame while the finger is down wakes the GPU, which sleeps after about 80 ms without frames: waking it took
+        // 7 to 12 ms of the frame that answered the tap (Snapdragon 8 Gen 2, 2026-10-27). A press that draws nothing
+        // of its own (a list row) then left all of that to the tap's frame.
+        if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN) window.decorView.invalidate()
         return super.dispatchTouchEvent(e)
     }
 
@@ -221,11 +225,30 @@ private fun accentScheme(s: ColorScheme, seed: Int, dark: Boolean): ColorScheme 
     else s.copy(primary = tone(sat, 0.38f), onPrimary = tone(sat, 0.98f), secondaryContainer = tone(sat * 0.6f, 0.88f), onSecondaryContainer = tone(sat, 0.15f), inversePrimary = tone(sat, 0.8f))
 }
 
-/** Whether the tab this screen is in is the one on screen (Root keeps visited tabs composed). */
-val LocalTabShown = androidx.compose.runtime.staticCompositionLocalOf { true }
+/** Whether this screen is the one on screen: Root keeps visited tabs, and the screens under a tab's top page, composed;
+ *  the player keeps its visited views. Not static: a change then recomposes only the screens that read it, instead of
+ *  both tabs' whole trees on every switch (5.0 to 3.7 ms per switch on the phone, 2026-10-27). */
+val LocalTabShown = androidx.compose.runtime.compositionLocalOf { true }
 
-// Composed but taking no space and never placed: not measured, drawn or touched, and no semantics for accessibility.
-private fun Modifier.hidden() = clearAndSetSemantics {}.layout { _, c -> layout(c.minWidth, c.minHeight) {} }
+// Composed and measured at the size it would be shown at, but taking no space and never placed: not drawn or touched,
+// and no semantics for accessibility. Measured, a lazy list has its rows composed and laid out, so showing it costs
+// only placing and drawing.
+fun Modifier.hidden() = clearAndSetSemantics {}.layout { m, c ->
+    if (c.hasBoundedWidth && c.hasBoundedHeight) m.measure(androidx.compose.ui.unit.Constraints.fixed(c.maxWidth, c.maxHeight))
+    layout(c.minWidth, c.minHeight) {}
+}
+
+/**
+ * Adds [ahead] to [visited] one at a time, once start-up is over and while nothing touches the screen: the screens
+ * are built hidden before they're first opened, so opening one costs what a return to it does.
+ */
+suspend fun <T> buildAhead(visited: MutableList<T>, ahead: List<T>) {
+    for (v in ahead) {
+        kotlinx.coroutines.delay(500)
+        Touch.awaitIdle()
+        if (v !in visited) visited += v
+    }
+}
 
 @Composable
 fun Root() {
@@ -244,29 +267,38 @@ fun Root() {
     }
     val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     // Tabs stay composed once visited, so switching back only lays out and draws: rebuilding Home took 10 to 14 ms of
-    // the main thread on the phone (2026-10-26). A hidden tab isn't measured, drawn, touched or read by accessibility
-    // services; its screens check LocalTabShown to pause their own work and Back handling.
+    // the main thread on the phone (2026-10-26); most are built ahead (buildAhead). So do the tab's own screen and the pages under its top page: Back
+    // shows the one below as it was. A hidden screen isn't measured, drawn, touched or read by accessibility
+    // services; it checks LocalTabShown to pause its own work and Back handling.
     val visited = androidx.compose.runtime.remember { mutableStateListOf(tab) }
     if (tab !in visited) visited += tab
+    // Library isn't built ahead: building it loads the library from the network.
+    androidx.compose.runtime.LaunchedEffect(Unit) { buildAhead(visited, listOf(TAB_PLAYER, TAB_HOME, TAB_SEARCH, TAB_SETTINGS)) }
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Box(Modifier.weight(1f)) {
             for (t in visited) androidx.compose.runtime.key(t) {
-                val shown = t == tab
-                Box(if (shown) Modifier.fillMaxSize() else Modifier.hidden()) {
-                    androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides shown) {
-                        val tabStack = Nav.stacks[t]
-                        val page = tabStack.lastOrNull()
-                        // Each tab and page keeps its saved state (scroll position, search text) while another one is
-                        // shown, so going back lands where it was. ponytail: states of closed pages stay until the app
-                        // ends; small.
-                        saved.SaveableStateProvider(if (page != null) "$t/${tabStack.size}/${page.kind}/${page.id}" else "$t") {
-                            when {
-                                page != null -> PageScreen(page)
-                                t == TAB_HOME -> HomeScreen()
-                                t == TAB_SEARCH -> SearchScreen()
-                                t == TAB_LIBRARY -> LibraryScreen()
-                                t == TAB_PLAYER -> PlayerScreen()
-                                else -> SettingsScreen()
+                Box(if (t == tab) Modifier.fillMaxSize() else Modifier.hidden()) {
+                    val tabStack = Nav.stacks[t]
+                    for (level in 0..tabStack.size) {
+                        val page = tabStack.getOrNull(level - 1)
+                        androidx.compose.runtime.key(level, page) {
+                            val top = level == tabStack.size
+                            Box(if (top) Modifier.fillMaxSize() else Modifier.hidden()) {
+                                androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (t == tab && top)) {
+                                    // Each tab and page keeps its saved state (scroll position, search text) while another
+                                    // one is shown, so going back lands where it was. ponytail: states of closed pages stay
+                                    // until the app ends; small.
+                                    saved.SaveableStateProvider(if (page != null) "$t/$level/${page.kind}/${page.id}" else "$t") {
+                                        when {
+                                            page != null -> PageScreen(page)
+                                            t == TAB_HOME -> HomeScreen()
+                                            t == TAB_SEARCH -> SearchScreen()
+                                            t == TAB_LIBRARY -> LibraryScreen()
+                                            t == TAB_PLAYER -> PlayerScreen()
+                                            else -> SettingsScreen()
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
