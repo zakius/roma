@@ -23,17 +23,13 @@ import com.metrolist.innertube.models.splitBySeparator
 class ArtistSection(
     val title: String,
     val items: List<YTItem>,
-    val moreEndpoint: BrowseEndpoint?,
 )
 
 class ArtistPage(
     val artist: ArtistItem,
     val sections: List<ArtistSection>,
-    val description: String?,
     val subscriberCountText: String?,
     val monthlyListenerCount: String? = null,
-    val descriptionRuns: List<Run>? = null,
-    val isSubscribed: Boolean = false,
 ) {
     companion object {
         fun fromSectionListRendererContent(content: SectionListRenderer.Content): ArtistSection? {
@@ -50,7 +46,6 @@ class ArtistPage(
                 items = renderer.contents?.getItems()?.mapNotNull {
                     fromMusicResponsiveListItemRenderer(it)
                 }?.ifEmpty { null } ?: return null,
-                moreEndpoint = renderer.title?.runs?.firstOrNull()?.navigationEndpoint?.browseEndpoint
             )
         }
 
@@ -64,7 +59,6 @@ class ArtistPage(
                         fromMusicResponsiveListItemRenderer(listItemRenderer)
                     }
                 }.ifEmpty { null } ?: return null,
-                moreEndpoint = renderer.header.musicCarouselShelfBasicHeaderRenderer.moreContentButton?.buttonRenderer?.navigationEndpoint?.browseEndpoint
             )
         }
 

@@ -132,16 +132,6 @@ object YouTube {
                                 ?.runs
                                 ?.joinToString(separator = "") { it.text }
                         }.orEmpty(),
-                recommendedItems =
-                    response.contents
-                        ?.getOrNull(1)
-                        ?.searchSuggestionsSectionRenderer
-                        ?.contents
-                        ?.mapNotNull {
-                            it.musicResponsiveListItemRenderer?.let { renderer ->
-                                SearchSuggestionPage.fromMusicResponsiveListItemRenderer(renderer)
-                            }
-                        }.orEmpty(),
             )
         }
 
@@ -189,7 +179,6 @@ object YouTube {
 
             SearchResult(
                 items = searchItems.distinctBy { it.id },
-                continuation = searchContinuation,
                 correctedQuery = correction?.correctedQuery?.runs?.joinToString("") { it.text },
                 autoCorrected = autoCorrected,
                 originalParams = correction?.originalQueryEndpoint?.searchEndpoint?.params,
@@ -257,7 +246,6 @@ object YouTube {
                                 AlbumPage.getSong(it, albumItem)
                             }!!
                             .toMutableList(),
-                    otherVersions = emptyList(),
                 )
             } else {
                 val playlistId =
@@ -353,17 +341,6 @@ object YouTube {
                 return@runCatching AlbumPage(
                     album = resolvedAlbum,
                     songs = albumSongsList,
-                    otherVersions =
-                        response.contents.twoColumnBrowseResultsRenderer.secondaryContents
-                            ?.sectionListRenderer
-                            ?.contents
-                            ?.getOrNull(
-                                1,
-                            )?.musicCarouselShelfRenderer
-                            ?.contents
-                            ?.mapNotNull { it.musicTwoRowItemRenderer }
-                            ?.mapNotNull(NewReleaseAlbumPage::fromMusicTwoRowItemRenderer)
-                            .orEmpty(),
                 )
             }
         }
@@ -434,48 +411,6 @@ object YouTube {
     suspend fun artist(browseId: String): Result<ArtistPage> =
         runCatching {
             val response = innerTube.browse(WEB_REMIX, browseId).body<BrowseResponse>()
-
-            fun mapRuns(runs: List<Run>?): List<Run>? =
-                runs?.map { run ->
-                    Run(
-                        text = run.text,
-                        navigationEndpoint = run.navigationEndpoint,
-                    )
-                }
-
-            val descriptionRuns =
-                response.contents
-                    ?.sectionListRenderer
-                    ?.contents
-                    ?.firstOrNull { it.musicDescriptionShelfRenderer != null }
-                    ?.musicDescriptionShelfRenderer
-                    ?.description
-                    ?.runs
-                    ?.let(::mapRuns)
-                    ?: response.header
-                        ?.musicImmersiveHeaderRenderer
-                        ?.description
-                        ?.runs
-                        ?.let(::mapRuns)
-
-            // Check subscription state from multiple locations:
-            // 1. musicImmersiveHeaderRenderer.subscriptionButton (regular artists)
-            // 2. musicVisualHeaderRenderer.subscriptionButton (podcast channels)
-            val immersiveSubscribed =
-                response.header
-                    ?.musicImmersiveHeaderRenderer
-                    ?.subscriptionButton
-                    ?.subscribeButtonRenderer
-                    ?.subscribed
-            val visualSubscribed =
-                response.header
-                    ?.musicVisualHeaderRenderer
-                    ?.subscriptionButton
-                    ?.subscribeButtonRenderer
-                    ?.subscribed
-            val isSubscribed = immersiveSubscribed ?: visualSubscribed ?: false
-
-            // Also extract channelId from visual header if not in immersive header
 
             ArtistPage(
                 artist =
@@ -556,7 +491,6 @@ object YouTube {
                         ?.sectionListRenderer
                         ?.contents
                         ?.mapNotNull(ArtistPage::fromSectionListRendererContent)!!,
-                description = descriptionRuns?.joinToString(separator = "") { it.text },
                 subscriberCountText =
                     response.header
                         ?.musicImmersiveHeaderRenderer
@@ -589,8 +523,6 @@ object YouTube {
                         ?.runs
                         ?.firstOrNull()
                         ?.text,
-                descriptionRuns = descriptionRuns,
-                isSubscribed = isSubscribed,
             )
         }
 
@@ -827,13 +759,6 @@ object YouTube {
                     val mergedContinuations = twoColContinuations ?: singleColContinuations
                     mergedContents?.getContinuation() ?: mergedContinuations?.getContinuation()
                 },
-                continuation =
-                    response.contents
-                        ?.twoColumnBrowseResultsRenderer
-                        ?.secondaryContents
-                        ?.sectionListRenderer
-                        ?.continuations
-                        ?.getContinuation(),
             )
         }
 
@@ -936,14 +861,7 @@ object YouTube {
                         HomePage.Section.fromMusicCarouselShelfRenderer(it)
                     }.toMutableList()
             Timber.d("home() sections parsed: ${sections.size}")
-            val chips =
-                sectionListRender
-                    ?.header
-                    ?.chipCloudRenderer
-                    ?.chips
-                    ?.mapNotNull { HomePage.Chip.fromChipCloudChipRenderer(it) }
-            Timber.d("home() chips: ${chips?.size ?: 0}")
-            HomePage(chips, sections, continuation)
+            HomePage(sections, continuation)
         }
 
     private suspend fun homeContinuation(continuation: String): Result<HomePage> =
@@ -956,7 +874,6 @@ object YouTube {
                     ?.continuations
                     ?.getContinuation()
             HomePage(
-                null,
                 response.continuationContents
                     ?.sectionListContinuation
                     ?.contents
@@ -1071,7 +988,7 @@ object YouTube {
                 }
 
                 else -> LibraryPage(items = emptyList(), continuation = null)
-            }.copy(isUploaded = isUploaded)
+            }
         }
 
     suspend fun libraryContinuation(
@@ -1490,7 +1407,6 @@ object YouTube {
                         ?.let { it to content.playlistPanelVideoRenderer.selected }
                 }
             val songs = items.map { it.first }
-            val currentIndex = items.indexOfFirst { it.second }.takeIf { it != -1 }
 
             // load automix items
             playlistPanelRenderer.contents
@@ -1515,25 +1431,12 @@ object YouTube {
                                     )?.tabRenderer
                                     ?.endpoint
                                     ?.browseEndpoint,
-                            relatedEndpoint =
-                                response.contents.singleColumnMusicWatchNextResultsRenderer
-                                    ?.tabbedRenderer
-                                    ?.watchNextTabbedResultsRenderer
-                                    ?.tabs
-                                    ?.getOrNull(
-                                        2,
-                                    )?.tabRenderer
-                                    ?.endpoint
-                                    ?.browseEndpoint,
-                            currentIndex = currentIndex,
-                            endpoint = watchPlaylistEndpoint,
                         )
                     }
                 }
             NextResult(
                 title = title,
                 items = songs,
-                currentIndex = currentIndex,
                 lyricsEndpoint =
                     response.contents.singleColumnMusicWatchNextResultsRenderer
                         ?.tabbedRenderer
@@ -1544,18 +1447,7 @@ object YouTube {
                         )?.tabRenderer
                         ?.endpoint
                         ?.browseEndpoint,
-                relatedEndpoint =
-                    response.contents.singleColumnMusicWatchNextResultsRenderer
-                        ?.tabbedRenderer
-                        ?.watchNextTabbedResultsRenderer
-                        ?.tabs
-                        ?.getOrNull(
-                            2,
-                        )?.tabRenderer
-                        ?.endpoint
-                        ?.browseEndpoint,
                 continuation = playlistPanelRenderer.continuations?.getContinuation(),
-                endpoint = endpoint,
             )
         }
 

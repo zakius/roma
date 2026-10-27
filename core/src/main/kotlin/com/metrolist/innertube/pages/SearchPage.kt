@@ -16,7 +16,6 @@ import com.metrolist.innertube.utils.parseTime
 
 class SearchResult(
     val items: List<YTItem>,
-    val continuation: String? = null,
     // roma: the service's spelling correction. When autoCorrected, items are for correctedQuery and
     // originalParams searches the query as typed; otherwise correctedQuery is only a "did you mean".
     val correctedQuery: String? = null,

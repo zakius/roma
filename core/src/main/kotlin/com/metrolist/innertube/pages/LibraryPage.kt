@@ -14,10 +14,9 @@ import com.metrolist.innertube.models.oddElements
 import com.metrolist.innertube.models.splitBySeparator
 import com.metrolist.innertube.utils.parseTime
 
-data class LibraryPage(
+class LibraryPage(
     val items: List<YTItem>,
     val continuation: String?,
-    val isUploaded: Boolean = false,
 ) {
     companion object {
         fun fromMusicTwoRowItemRenderer(renderer: MusicTwoRowItemRenderer): YTItem? {

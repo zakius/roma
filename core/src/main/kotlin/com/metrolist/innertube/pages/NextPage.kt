@@ -11,11 +11,8 @@ import com.metrolist.innertube.utils.parseTime
 data class NextResult(
     val title: String? = null,
     val items: List<SongItem>,
-    val currentIndex: Int? = null,
     val lyricsEndpoint: BrowseEndpoint? = null,
-    val relatedEndpoint: BrowseEndpoint? = null,
     val continuation: String?,
-    val endpoint: WatchEndpoint, // current or continuation next endpoint
 )
 
 object NextPage {

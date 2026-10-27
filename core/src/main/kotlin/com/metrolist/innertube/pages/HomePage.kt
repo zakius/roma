@@ -19,31 +19,11 @@ import com.metrolist.innertube.utils.parseTime
 import timber.log.Timber
 
 class HomePage(
-    val chips: List<Chip>?,
     val sections: List<Section>,
     val continuation: String? = null,
 ) {
-    class Chip(
-        val title: String,
-        val endpoint: BrowseEndpoint?,
-        val deselectEndPoint: BrowseEndpoint?,
-    ) {
-        companion object {
-            fun fromChipCloudChipRenderer(renderer: SectionListRenderer.Header.ChipCloudRenderer.Chip): Chip? {
-                return Chip(
-                    title = renderer.chipCloudChipRenderer.text?.runs?.firstOrNull()?.text ?: return null,
-                    endpoint = renderer.chipCloudChipRenderer.navigationEndpoint?.browseEndpoint,
-                    deselectEndPoint = renderer.chipCloudChipRenderer.onDeselectedCommand?.browseEndpoint,
-                )
-            }
-        }
-    }
-
     class Section(
         val title: String,
-        val label: String?,
-        val thumbnail: String?,
-        val endpoint: BrowseEndpoint?,
         val items: List<YTItem>,
     ) {
         companion object {
@@ -90,9 +70,6 @@ class HomePage(
 
                 return Section(
                     title = title,
-                    label = renderer.header.musicCarouselShelfBasicHeaderRenderer.strapline?.runs?.firstOrNull()?.text,
-                    thumbnail = renderer.header.musicCarouselShelfBasicHeaderRenderer.thumbnail?.getThumbnailUrl(),
-                    endpoint = renderer.header.musicCarouselShelfBasicHeaderRenderer.moreContentButton?.buttonRenderer?.navigationEndpoint?.browseEndpoint,
                     items = items
                 )
             }

@@ -14,7 +14,6 @@ class PlaylistPage(
     val playlist: PlaylistItem,
     val songs: List<SongItem>,
     val songsContinuation: String?,
-    val continuation: String?,
 ) {
     companion object {
         fun ownerFromDetailSubtitle(runs: List<Run>?): Artist? = ownerFromByline(runs?.splitBySeparator()?.getOrNull(1))
