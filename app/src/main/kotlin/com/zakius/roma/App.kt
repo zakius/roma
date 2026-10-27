@@ -210,7 +210,7 @@ object Store {
             Playback.romanizationChanged() // the notification's title follows
             romanizer.retryDictionary() // Japanese read as written doesn't load the dictionary; romanized again, it does
         }
-        if (key == "cookie") cookie = value as String?
+        if (key == "cookie") { cookie = value as String?; File(cache, "mixes.json").delete() } // the mixes are the account's
         if (key.startsWith("rom.") || key == "cookie") dataChanged()
         version++
         if (key == "play.ahead" && value == true && Playback.player.isPlaying) Playback.downloadAhead()
@@ -247,7 +247,7 @@ object Store {
 
     fun <T> writePage(key: String, value: T, serializer: KSerializer<T>) = pageThread.execute {
         pages.mkdirs()
-        pageFile(key).writeText(json.encodeToString(serializer, value))
+        runCatching { pageFile(key).writeText(json.encodeToString(serializer, value)) } // a full disk only loses the copy
     }
 
     /** What pages hold changed (account, romanization): the disk copies go, and open pages load again. */
@@ -302,8 +302,13 @@ object Store {
     }
 
     fun setOverrides(list: List<Override>) {
+        // Written beside and renamed over: a full disk or a kill mid-write keeps the old corrections.
+        val tmp = File(overridesFile.path + ".tmp")
+        if (runCatching { tmp.writeText(json.encodeToString(list)) }.isFailure || !tmp.renameTo(overridesFile)) {
+            android.widget.Toast.makeText(context, "Couldn't save the correction: storage is full or not writable", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         romanizer.overrides = list
-        overridesFile.writeText(json.encodeToString(list))
         Playback.romanizationChanged()
         dataChanged()
         version++
@@ -456,7 +461,7 @@ object Store {
                 saveQueued = true
                 indexThread.execute {
                     saveQueued = false
-                    File(cache, "index.json").writeText(json.encodeToString(index.toList()))
+                    runCatching { File(cache, "index.json").writeText(json.encodeToString(index.toList())) }
                 }
             }
         }

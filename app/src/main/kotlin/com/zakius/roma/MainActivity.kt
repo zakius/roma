@@ -120,7 +120,7 @@ class MainActivity : ComponentActivity() {
                 requestPermissions(arrayOf(notify), 0)
             }
         }
-        handleLastFm(intent)
+        if (savedInstanceState == null) handleLastFm(intent) // a re-created activity would send the used token again
         Home.start() // before the first frame, so Home's request and its disk copy are on their way
         setContent { Theme { Root() } }
         // The first frame is drawn: the start-up work that waited for it runs.

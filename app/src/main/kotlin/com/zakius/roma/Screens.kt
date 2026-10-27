@@ -527,7 +527,8 @@ object Home {
             account = Store.cookie
             if (job != null) {
                 sections = emptyList()
-                mixes = Store.mixes
+                mixes = null // Store.set dropped the other account's mixes from disk
+                gridFor = 0
                 waiting.clear()
                 mixJob?.cancel()
                 updating = emptySet()
@@ -633,6 +634,7 @@ object Home {
                 }
             }
             val (next, shelves) = result.getOrElse { failed = plainError(it); fetchedAt = 0; return@coroutineScope }
+            if (account != Store.cookie) return@coroutineScope // loaded for the account before a switch: not shown or saved
             page++
             cont = next
             more = next != null
@@ -1026,7 +1028,9 @@ fun SettingsScreen() {
     Store.version
     val context = LocalContext.current
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        uri?.let { context.contentResolver.openOutputStream(it)?.use { o -> o.write(Store.exportOverrides().toByteArray()) } }
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching { context.contentResolver.openOutputStream(uri)!!.use { o -> o.write(Store.exportOverrides().toByteArray()) } }
+            .onFailure { Toast.makeText(context, "Couldn't export: ${it.message}", Toast.LENGTH_LONG).show() }
     }
     val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
@@ -1141,7 +1145,7 @@ fun SettingsScreen() {
         item {
             val connected = Store.str("lastfm.session", "").isNotBlank()
             // A file read: off the main thread, so a switch on this page doesn't wait for it.
-            val waiting by produceState(0, connected, Store.version) { value = withContext(Dispatchers.IO) { if (connected) Playback.scrobbleQueue().load().size else 0 } }
+            val waiting by produceState(0, connected, Store.version) { value = withContext(Dispatchers.IO) { if (connected) Playback.scrobbleQueue.load().size else 0 } }
             val ready = Store.str("lastfm.key", "").isNotBlank() && Store.str("lastfm.secret", "").isNotBlank()
             Row1(if (connected) "Connected: scrobbling" else "Connect", if (connected) "Tap to disconnect · $waiting waiting" else "Opens the browser to allow access", ready || connected) {
                 if (connected) Store.set("lastfm.session", null)

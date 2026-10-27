@@ -139,6 +139,9 @@ class RomanizeTest {
         assertEquals("Jewgienij", pl.machine("Евгений"))
         assertEquals("Szczedrin", pl.machine("Щедрин"))
         assertEquals("Ałła", pl.machine("Алла"))
+        assertEquals("SZUM", pl.machine("ШУМ"))
+        assertEquals("PŁASZCZ", pl.machine("ПЛАЩ"))
+        assertEquals("PLASHCH", r.machine("ПЛАЩ"))
         assertEquals("Žanna", Romanizer(jvmIcu, RomanizeSettings(cyrillic = "iso9")).machine("Жанна"))
     }
 
