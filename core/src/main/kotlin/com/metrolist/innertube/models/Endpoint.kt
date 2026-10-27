@@ -81,24 +81,3 @@ class BrowseEndpoint(
 class SearchEndpoint(
     val params: String?,
 ) : Endpoint()
-
-@Serializable
-class FeedbackEndpoint(
-    val feedbackToken: String
-) : Endpoint()
-
-@Serializable
-class DefaultServiceEndpoint(
-    var subscribeEndpoint: SubscribeEndpoint?,
-    var feedbackEndpoint: FeedbackEndpoint?
-) : Endpoint() {
-    @Serializable
-    class SubscribeEndpoint(
-        val channelIds: List<String>,
-    ) : Endpoint()
-}
-
-@Serializable
-class ToggledServiceEndpoint(
-    var feedbackEndpoint: FeedbackEndpoint?
-) : Endpoint()

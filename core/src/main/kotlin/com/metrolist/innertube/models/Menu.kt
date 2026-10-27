@@ -14,18 +14,11 @@ class Menu(
         @Serializable
         class Item(
             val menuNavigationItemRenderer: MenuNavigationItemRenderer?,
-            val toggleMenuServiceItemRenderer: ToggleMenuServiceRenderer?,
         ) {
             @Serializable
             class MenuNavigationItemRenderer(
                 val icon: Icon,
                 val navigationEndpoint: NavigationEndpoint,
-            )
-            @Serializable
-            class ToggleMenuServiceRenderer(
-                val defaultIcon: Icon,
-                val defaultServiceEndpoint: DefaultServiceEndpoint,
-                val toggledServiceEndpoint: ToggledServiceEndpoint?,
             )
         }
 

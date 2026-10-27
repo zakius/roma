@@ -8,5 +8,4 @@ class MusicMultiRowListItemRenderer(
     val subtitle: Runs?,
     val thumbnail: ThumbnailRenderer?,
     val onTap: NavigationEndpoint?,
-    val menu: Menu?,
 )

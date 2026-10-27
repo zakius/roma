@@ -21,30 +21,9 @@ class MusicResponsiveHeaderRenderer(
 
 @Serializable
 class AvatarStackViewModel(
-    val avatars: List<Avatar>?,
     val text: AvatarText?,
     val rendererContext: RendererContext?,
 ) {
-    @Serializable
-    class Avatar(
-        val avatarViewModel: AvatarViewModel?,
-    )
-
-    @Serializable
-    class AvatarViewModel(
-        val image: AvatarImage?,
-    )
-
-    @Serializable
-    class AvatarImage(
-        val sources: List<ImageSource>?,
-    )
-
-    @Serializable
-    class ImageSource(
-        val url: String?,
-    )
-
     @Serializable
     class AvatarText(
         val content: String?,
