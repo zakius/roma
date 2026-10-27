@@ -33,7 +33,8 @@ if [ ! -f keystore.properties ]; then
   echo "No keystore.properties: built, not signed"; exit 0
 fi
 source <(sed 's/^\([a-zA-Z]*\)=\(.*\)$/\1="\2"/' keystore.properties)
-sign() { "$tools/apksigner" sign --ks "$storeFile" --ks-pass "pass:$storePassword" --ks-key-alias "$keyAlias" --key-pass "pass:$keyPassword" --out "$2" "$1"; rm -f "$2.idsig"; }
+# Android 7+ checks only the v2/v3 signatures; the JAR (v1) signature files would add about 6 KB.
+sign() { "$tools/apksigner" sign --v1-signing-enabled false --ks "$storeFile" --ks-pass "pass:$storePassword" --ks-key-alias "$keyAlias" --key-pass "pass:$keyPassword" --out "$2" "$1"; rm -f "$2.idsig"; }
 mkdir -p dist
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
