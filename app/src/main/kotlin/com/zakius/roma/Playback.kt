@@ -572,7 +572,8 @@ object Playback {
         scope.launch {
             val page = withContext(Dispatchers.IO) { YouTube.playlist(id.removePrefix("VL")).getOrNull() }
             if (page == null) { error = "Couldn't load this playlist."; return@launch }
-            val songs = withContext(Dispatchers.IO) { filterMix(page.songs.map { Store.romanizer.song(it) }, emptyList(), Store.bans(), Store.radioSettings()) }
+            // Liked music plays as liked: the mix filters (versions, bans) are for what YouTube picks.
+            val songs = withContext(Dispatchers.IO) { page.songs.map { Store.romanizer.song(it) }.let { if (id == "LM") it else filterMix(it, emptyList(), Store.bans(), Store.radioSettings()) } }
             play(songs, 0, id.removePrefix("VL"), page.songsContinuation)
         }
     }

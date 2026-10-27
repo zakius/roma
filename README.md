@@ -37,6 +37,7 @@ Get `roma-<version>.apk` from [Releases](https://github.com/zakius/roma/releases
 
 - YouTube Music API: the `innertube` module from [Metrolist](https://github.com/MetrolistGroup/Metrolist).
 - Playback: [Media3](https://developer.android.com/media/media3).
+- Skipping ASUS's font rebuild at start: [AndroidHiddenApiBypass](https://github.com/LSPosed/AndroidHiddenApiBypass).
 - Japanese: [Sudachi](https://github.com/WorksApplications/Sudachi) and [SudachiDict](https://github.com/WorksApplications/SudachiDict).
 - Lyrics: LRCLIB, KuGou, NetEase and YouTube Music.
 

@@ -28,31 +28,35 @@ import java.nio.channels.FileChannel
 import kotlin.concurrent.thread
 
 class App : Application() {
-    @android.annotation.SuppressLint("MissingSuperCall") // called on the fonts thread
-    override fun onCreate() {
-        // Set-up the first frame would otherwise wait for, done beside the rest of start-up: the RenderThread, which
-        // adding the window waited for (8 to 10 ms on the phone, 2026-10-26), and ICU's locale-key data, which the
-        // first line break loaded (11 ms); text itself would race the font swap below, so a locale name does it.
-        // Where the activity waits for ASUS's fonts (35 ms), also the GPU context, which the first draw waited for,
-        // through a 1x1 surface that is never drawn to. Without that wait the window would come while it is still
-        // being made, and adding the window then waits for it instead.
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        // Set-up the first frame would otherwise wait for, started as early as an app can: the RenderThread, which
+        // adding the window waited for (8 to 10 ms on the phone, 2026-10-26), the GPU context, through a 1x1 surface
+        // that is never drawn to (Vulkan's set-up takes about 25 ms; the window waited 7 to 15 ms for it when it started
+        // from onCreate), and ICU's locale-key data, which the first line break loaded (11 ms); text itself would race
+        // ASUS's font swap, so a locale name does it.
         thread(name = "hwui") {
             if (android.os.Build.VERSION.SDK_INT >= 29) {
                 val renderer = android.graphics.HardwareRenderer()
-                val reader = if (android.provider.Settings.Global.getString(contentResolver, "flipfont_settings_path") == null) null
-                    else android.media.ImageReader.newInstance(1, 1, android.graphics.PixelFormat.RGBA_8888, 1,
-                        android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
-                reader?.let { renderer.setSurface(it.surface) }
+                val reader = android.media.ImageReader.newInstance(1, 1, android.graphics.PixelFormat.RGBA_8888, 1,
+                    android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT)
+                renderer.setSurface(reader.surface)
                 renderer.destroy()
-                reader?.close()
+                reader.close()
             }
             java.util.Locale.forLanguageTag(java.util.Locale.getDefault().toLanguageTag() + "-u-lb-normal").getDisplayName()
         }
+    }
+
+    @android.annotation.SuppressLint("MissingSuperCall") // maybe called on the fonts thread
+    override fun onCreate() {
         // Android's own Application.onCreate is empty. ASUS's applies its FlipFont font theme, and rebuilds the system
-        // font map while at it, theme or not (its "already applied" check never matches in a new process): 25 to 40 ms
-        // on the phone. Here it runs beside the rest of start-up; Activity.onCreate makes the same call under the same
-        // lock, so the activity waits for it there.
-        thread(name = "fonts") { superOnCreate() }
+        // font map while at it, theme or not: 25 to 40 ms on the phone, which Activity.onCreate waits for under the same
+        // lock. With the default font roma marks it applied (skipFlipFont) and the rebuild never runs; with another
+        // font, it runs on its own thread beside the rest of start-up.
+        val flipFont = android.provider.Settings.Global.getString(contentResolver, "flipfont_settings_path")
+        val fontWait = flipFont != null && !(flipFont == "default" && skipFlipFont())
+        if (fontWait) thread(name = "fonts") { superOnCreate() } else super.onCreate()
         Store.init(this)
         Images.init(this)
         if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME) Home.preload()
@@ -70,6 +74,19 @@ class App : Application() {
     }
 
     private fun superOnCreate() = super.onCreate()
+
+    /**
+     * ASUS's "already applied" check compares Typeface.FlipFontPath with the chosen font's path, but a new process starts
+     * with "" there, so it never matches. Set to the default font's ("default", no file name), it matches and the rebuild
+     * is skipped: the process already has the default fonts. A blocked hidden API, reached through HiddenApiBypass;
+     * false if that fails.
+     */
+    private fun skipFlipFont(): Boolean = android.os.Build.VERSION.SDK_INT >= 28 && runCatching {
+        val f = org.lsposed.hiddenapibypass.HiddenApiBypass.getStaticFields(android.graphics.Typeface::class.java).first { it.name == "FlipFontPath" }
+        f.isAccessible = true
+        f.set(null, "default")
+        f.get(null) == "default"
+    }.getOrDefault(false)
 }
 
 /** Work the first frame doesn't need waits until it is drawn, so it doesn't compete with it for the CPU or the main thread. */

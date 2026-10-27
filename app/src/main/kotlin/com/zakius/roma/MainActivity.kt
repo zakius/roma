@@ -80,7 +80,24 @@ object Nav {
     }
 }
 
+/** Whether a finger is on the screen, and when one last was: Home changes its tiles only when it isn't. */
+object Touch {
+    @Volatile var down = false
+    @Volatile var last = 0L
+
+    /** Returns once nothing has touched the screen for a second. */
+    suspend fun awaitIdle() {
+        while (down || android.os.SystemClock.uptimeMillis() - last < 1_000) kotlinx.coroutines.delay(250)
+    }
+}
+
 class MainActivity : ComponentActivity() {
+    override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
+        Touch.down = e.actionMasked != android.view.MotionEvent.ACTION_UP && e.actionMasked != android.view.MotionEvent.ACTION_CANCEL
+        Touch.last = e.eventTime
+        return super.dispatchTouchEvent(e)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // The splash goes the moment roma's first frame is ready, instead of after Android's fade-out (about 130 ms).

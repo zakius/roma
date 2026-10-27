@@ -147,9 +147,9 @@ fun ThumbPx(
 ) {
     // Keyed on the picture: a row reused for another song never shows the previous one's cover.
     val state = remember(url, px) { mutableStateOf(url?.let { Images.peek(it, px, exact) } ?: placeholder) }
-    LaunchedEffect(url, px) {
-        if (url != null && Images.peek(url, px, exact) == null) Images.load(url, px, exact)?.let { state.value = it }
-    }
+    // Also when the picture arrived in memory after the first composition: a decode started at launch may finish
+    // between composing this and running the effect, and the box then stayed empty until something recomposed it.
+    LaunchedEffect(url, px) { if (url != null) Images.load(url, px, exact)?.let { state.value = it } }
     val b = state.value
     if (b == null) Box(modifier) else Image(remember(b) { b.asImageBitmap() }, null, modifier, contentScale = contentScale, alpha = alpha)
 }

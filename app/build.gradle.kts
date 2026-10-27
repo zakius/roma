@@ -17,8 +17,8 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 41
-        versionName = "0.1.40"
+        versionCode = 42
+        versionName = "0.1.41"
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.
         buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
@@ -76,4 +76,5 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.11.1") // only for its player icons
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2") // ASUS FlipFont skip, App.kt
 }

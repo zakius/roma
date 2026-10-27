@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,6 +49,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
@@ -88,6 +90,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlin.math.roundToInt
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -464,7 +469,7 @@ class Section(val title: roma.core.Text, val items: List<Item>)
 private const val MIX_PAGES = 10
 
 /**
- * Home: the pinned "Your mixes" row, then YouTube's shelves. Signed in, the first [MIX_PAGES] pages load at once
+ * Home: the pinned "Your mixes" tiles, then YouTube's shelves. Signed in, the first [MIX_PAGES] pages load at once
  * to collect the mixes; after that a page loads when the user nears the end.
  *
  * The state lives here rather than in the screen, so going back to Home shows it at once, where it was, and the
@@ -472,7 +477,7 @@ private const val MIX_PAGES = 10
  * kept on disk and shows at once on the next start. It loads again after 30 minutes or a romanization change, and
  * the fresh shelves never move what is on screen: a shelf gets its new contents only if they hold the same items or
  * the shelf is off-screen (otherwise once it scrolls off), new shelves go at the bottom, and nothing is reordered or
- * removed. The mixes row follows the same rule. Signing in or out starts Home over.
+ * removed. The mixes follow the same rule. Signing in or out starts Home over.
  */
 object Home {
     var sections by mutableStateOf(listOf<Section>())
@@ -481,6 +486,12 @@ object Home {
     var mixes by mutableStateOf<List<Item>?>(null)
         private set
     var mixesRead by mutableStateOf(false)
+        private set
+    /** Mixes whose tiles are being changed: dimmed and not tappable until their new picture and title are in. */
+    var updating by mutableStateOf(emptySet<String>())
+        private set
+    /** How many mixes the grid holds this run: mixes found meanwhile go in the row below it, so no tile moves. */
+    var gridFor = 0
         private set
     var more by mutableStateOf(true)
         private set
@@ -498,16 +509,19 @@ object Home {
     private var page = 0
     private val found = ArrayList<Item>()
     private var looking = false
-    // This run's shelves: what the disk copy becomes.
+    // This run's shelves: what the disk copy becomes, with the shelves of the last copy this run hasn't fetched again.
+    // Otherwise a start closed after its first page left a one-page copy, and the next start showed only that.
     private val fresh = ArrayList<Section>()
-    // New contents for shelves that were on screen, by shelf index, and for the mixes row.
+    private var saved = emptyList<Section>()
+    // New contents for shelves that were on screen, by shelf index.
     private val waiting = HashMap<Int, Section>()
-    private var waitingMixes: List<Item>? = null
+    private var mixJob: Job? = null
 
     /** Loads Home unless it is loading or fresh. Call it whenever Home may be shown. */
     fun start() {
         val stale = System.currentTimeMillis() - fetchedAt > 30 * 60_000 || dataVersion != Store.dataVersion
         if (job != null && failed == null && !stale) return
+        if (dataVersion != Store.dataVersion || account != Store.cookie) saved = emptyList()
         dataVersion = Store.dataVersion
         if (account != Store.cookie) {
             account = Store.cookie
@@ -515,7 +529,8 @@ object Home {
                 sections = emptyList()
                 mixes = Store.mixes
                 waiting.clear()
-                waitingMixes = null
+                mixJob?.cancel()
+                updating = emptySet()
             }
         }
         if (failed == null) {
@@ -541,30 +556,64 @@ object Home {
         kotlin.concurrent.thread(name = "home") { read.run() }
     }
 
-    // The pictures of the first screen (the mixes row and the first cards of the first shelves), decoded into the memory
-    // cache now so the first frame has them instead of the next few. Not earlier: decoding them during ASUS's font
-    // rebuild (App) slowed that, and the first frame waits for it.
-    private fun decodeFirstPictures(c: android.content.Context, mixes: List<Item>?, shelves: List<Section>?) {
-        val px = (128 * c.resources.displayMetrics.density).roundToInt()
-        (mixes.orEmpty().take(4) + shelves.orEmpty().take(4).flatMap { it.items.take(4) }).forEach { item ->
-            thumbAt(item.thumb, px)?.let { Images.prefetch(it, px) }
+    // The pictures of the first screen, the mix tiles, decoded into the memory cache now so the first frame has them
+    // instead of the next few.
+    private fun decodeFirstPictures(c: android.content.Context, mixes: List<Item>?) {
+        if (mixes.isNullOrEmpty()) return
+        val (_, shown, _) = mixGrid(c.resources.configuration, mixes.size)
+        val px = tilePx(mixes.size)
+        mixes.take(shown - 1).forEach { item -> thumbAt(item.thumb, px)?.let { Images.prefetch(it, px) } }
+    }
+
+    private fun tilePx(n: Int) = Store.context.resources.let { (mixGrid(it.configuration, n).third.value * it.displayMetrics.density).roundToInt() }
+
+    private fun showMixes(m: List<Item>?) {
+        mixes = m
+        if (gridFor == 0 && !m.isNullOrEmpty()) gridFor = m.size
+    }
+
+    /**
+     * Fresh mixes into the tiles without changing anything under a finger. Known mixes keep their place (one YouTube
+     * dropped stays until the next start) and new ones go after them. A tile whose picture or title changed waits for
+     * a second without touches, is dimmed and locked while its new picture loads, then shows it with the new title.
+     */
+    private fun updateMixes(m: List<Item>) {
+        val old = mixes.orEmpty()
+        fun key(i: Item) = i.id.removePrefix("VL")
+        val byKey = m.associateBy(::key)
+        val merged = old.map { byKey[key(it)] ?: it } + m.filter { n -> old.none { key(it) == key(n) } }
+        Store.mixes = merged.filter { key(it) in byKey }
+        val changed = merged.filter { n -> old.any { key(it) == key(n) && (it.thumb != n.thumb || it.title.original != n.title.original) } }
+        mixJob?.cancel()
+        if (changed.isEmpty()) return showMixes(merged)
+        mixJob = scope.launch {
+            Touch.awaitIdle()
+            updating = changed.map { it.id }.toSet()
+            val px = tilePx(gridFor.takeIf { it > 0 } ?: merged.size)
+            // ponytail: 5 s, then the tiles change anyway and a picture still missing loads as usual.
+            withTimeoutOrNull(5_000) {
+                changed.map { i -> async { thumbAt(i.thumb, px)?.let { Images.load(it, px) } } }.awaitAll()
+            }
+            showMixes(merged)
+            delay(300) // a tap already on its way when the tile changed is not taken for one on the new mix
+            updating = emptySet()
         }
     }
 
     private suspend fun load() = coroutineScope {
         if (sections.isEmpty()) launch {
-            val (saved, disk) = withContext(Dispatchers.IO) {
+            val (savedMixes, disk) = withContext(Dispatchers.IO) {
                 val pre = preloaded?.get()?.also { preloaded = null }
-                pre?.let { decodeFirstPictures(Store.context, it.first, it.second) }
+                pre?.let { decodeFirstPictures(Store.context, it.first) }
                 pre ?: (Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())))
             }
-            if (!mixesRead) { if (mixes == null) mixes = saved; mixesRead = true }
+            if (!mixesRead) { if (mixes == null) showMixes(savedMixes); mixesRead = true }
+            if (disk != null) saved = disk
             if (sections.isEmpty() && disk != null) sections = disk
         }
         // Waiting contents go in as their shelf leaves the screen. This runs only when the list scrolls.
         launch {
             snapshotFlow { list.layoutInfo.visibleItemsInfo.map { it.index }.toSet() }.collect { on ->
-                if (waitingMixes != null && 0 !in on) { mixes = waitingMixes; waitingMixes = null }
                 val off = waiting.keys.filter { it + 1 !in on }
                 if (off.isNotEmpty()) sections = sections.toMutableList().also { l -> off.forEach { l[it] = waiting.remove(it)!! } }
             }
@@ -592,16 +641,13 @@ object Home {
             // The mixes live in the pinned row only.
             val add = shelves.map { Section(it.title, it.items.filterNot { i -> i.kind == "playlist" && isPersonalMix(i.id) }) }.filter { it.items.isNotEmpty() }
             fresh += add
-            Store.writePage("home", fresh.toList(), ListSerializer(Section.serializer()))
+            Store.writePage("home", fresh + saved.filter { s -> fresh.none { it.title.original == s.title.original } }, ListSerializer(Section.serializer()))
             merge(add)
             // The mixes are spread over several pages (the numbered ones often come after the Supermix), so the
             // row waits for the first MIX_PAGES pages; mixes on pages after those still join it.
             if (looking && (page >= MIX_PAGES || !more) || !looking && found.size > before) {
                 looking = false
-                val m = personalMixes(found)
-                Store.mixes = m
-                val old = mixes
-                if (old == null || sameItems(old, m) || 0 !in visible()) mixes = m else waitingMixes = m
+                updateMixes(personalMixes(found))
             }
         }
     }
@@ -632,42 +678,84 @@ object Home {
 @Composable
 fun HomeScreen() {
     LaunchedEffect(Store.dataVersion) { Home.start() }
-    LazyColumn(Modifier.fillMaxSize(), Home.list) {
-        item(key = "mixes") { MixesRow(Home.mixes, Home.mixesRead) }
-        items(Home.sections) { sec ->
-            Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
-            LazyRow { items(sec.items) { item -> Card(item) { openItem(item) } } }
-        }
-        item(key = "end") {
-            val f = Home.failed
-            when {
-                f != null -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Couldn't load Home.", textAlign = TextAlign.Center)
-                    Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
-                    TextButton(onClick = { Home.start() }) { Text("Retry") }
+    // The first frame holds the mixes only, the reason Home is opened; the shelves (YouTube's, which change from start
+    // to start) and their pictures come in the frame after.
+    var shelves by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { Startup.later { shelves = true } }
+    // The mixes take at least the first screen, so the shelves begin below it even when there are few mixes.
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val height = maxHeight
+        LazyColumn(Modifier.fillMaxSize(), Home.list) {
+            item(key = "mixes") { Column(Modifier.heightIn(min = height)) { Mixes(Home.mixes, Home.mixesRead) } }
+            if (!shelves) return@LazyColumn
+            items(Home.sections) { sec ->
+                Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
+                LazyRow { items(sec.items) { item -> Card(item) { openItem(item) } } }
+            }
+            item(key = "end") {
+                val f = Home.failed
+                when {
+                    f != null -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Couldn't load Home.", textAlign = TextAlign.Center)
+                        Text(f, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                        TextButton(onClick = { Home.start() }) { Text("Retry") }
+                    }
+                    Home.more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 }
-                Home.more -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             }
         }
     }
 }
 
-/** Always first on Home and never gone: signed out or with no mixes it holds a dimmed hint instead. */
+/**
+ * The mixes' grid: three columns, every mix and then the Liked music tile, as (columns, tiles shown, tile side).
+ * Titles get three lines whatever they say, so a tile's height never depends on its text.
+ */
+private fun mixGrid(c: android.content.res.Configuration, n: Int): Triple<Int, Int, Dp> =
+    Triple(3, n + 1, ((c.screenWidthDp - 16 * 2 - 12 * 2) / 3).dp)
+
+/**
+ * Always first on Home and never gone: the mixes as tiles (see [mixGrid]), any found during the run in a row below.
+ * Signed out or with no mixes it holds a dimmed hint instead.
+ */
 @Composable
-private fun MixesRow(mixes: List<Item>?, read: Boolean) {
+private fun Mixes(mixes: List<Item>?, read: Boolean) {
     Text("Your mixes", Modifier.padding(start = 16.dp, top = 16.dp), style = MaterialTheme.typography.titleMedium)
     @Composable
     fun Hint(text: String) = Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).dim(0.5f), style = MaterialTheme.typography.bodyMedium)
     if (!Store.signedIn) return Hint("Sign in to see your mixes")
-    // Signed in, the row keeps a card's height while it loads or is empty, so the shelves below never jump.
-    Box(Modifier.height(212.dp)) {
-        when {
-            mixes == null && !read -> {}
-            mixes == null -> Hint("Looking for your mixes…")
-            mixes.isEmpty() -> Hint("No mixes yet")
-            else -> LazyRow { items(mixes) { m -> Card(m) { Playback.playMix(m.id); Nav.tab = TAB_PLAYER } } }
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val list = mixes.orEmpty()
+    fun play(m: Item) { Playback.playMix(m.id); Nav.tab = TAB_PLAYER }
+    val (cols, fit, side) = mixGrid(config, Home.gridFor.takeIf { it > 0 } ?: list.size)
+    val shown = minOf(fit - 1, list.size) // mixes in the grid; Liked music is the last tile
+    val textStyle = MaterialTheme.typography.bodySmall
+    @Composable
+    fun Tile(title: String, locked: Boolean, onClick: () -> Unit, picture: @Composable () -> Unit) =
+        Column(Modifier.width(side).dim(if (locked) 0.35f else 1f).clickable(enabled = !locked, onClick = onClick)) {
+            picture()
+            Spacer(Modifier.height(4.dp))
+            Text(title, Modifier.height(with(androidx.compose.ui.platform.LocalDensity.current) { (textStyle.lineHeight * 3).toDp() }), style = textStyle, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        }
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (line in (list.take(shown) + listOf<Item?>(null)).chunked(cols)) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            for (m in line) {
+                if (m == null) Tile("Liked music", false, { Playback.playMix("LM"); Nav.tab = TAB_PLAYER }) {
+                    Box(Modifier.size(side).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.ThumbUp, null, Modifier.size(side / 3), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                    }
+                } else Tile(Store.shown(m.title), m.id in Home.updating, { play(m) }) {
+                    Thumb(shownThumb(m.thumb, side), side, Modifier.size(side).clip(RoundedCornerShape(8.dp)))
+                }
+            }
         }
     }
+    when {
+        mixes == null && !read -> {}
+        mixes == null -> Hint("Looking for your mixes…")
+        mixes.isEmpty() -> Hint("No mixes yet")
+    }
+    if (list.size > shown) LazyRow { items(list.drop(shown)) { m -> Card(m) { play(m) } } }
 }
 
 // ---------------------------------------------------------------- Search
