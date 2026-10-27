@@ -27,6 +27,19 @@ class RomanizeTest {
         assertEquals("fan", r.kana("ファン"))
     }
 
+    @Test fun namesInWords() {
+        // The furigana layout: each word with its slice of the title-cased Latin form.
+        val t = r.text("夜に駆ける")
+        assertEquals(t.original, t.pieces.joinToString(""))
+        assertEquals("Yoru ni Kakeru", t.pieceLatin.joinToString(""))
+        assertTrue(t.pieces.size > 1)
+        // A Latin form that spells something else gets no words.
+        assertEquals(emptyList(), r.pieced("夜に駆ける", "Racing into the Night").pieces)
+        val both = Text.join(listOf(r.text("君の声"), Text("Anri", "Anri")), ", ")
+        assertEquals("Kimi no Koe, Anri", both.pieceLatin.joinToString(""))
+        assertEquals("君の声, Anri", both.pieces.joinToString(""))
+    }
+
     @Test fun sentenceCase() {
         // Lyric lines: only the first letter is capitalized.
         assertEquals("Shizumu yō ni", r.machine("沈むように", sentence = true))

@@ -39,6 +39,11 @@ class LyricsTest {
         assertEquals(1000L to 1500L, lrc[0].words[0].let { it.startMs to it.endMs })
     }
 
+    @Test fun htmlEntities() {
+        assertEquals("rock an' roll \"A & B\" <3 it's", unescapeHtml("rock an&apos; roll &quot;A &amp; B&quot; &lt;3 it&#39;s"))
+        assertEquals("&amp x &#xZZ;", unescapeHtml("&amp x &#xZZ;"))
+    }
+
     @Test fun translationMerge() {
         val l = withTranslation(parseLrc("[00:01.00]君の声"), "[00:01.00]your voice")
         assertEquals("your voice", l[0].translation)
