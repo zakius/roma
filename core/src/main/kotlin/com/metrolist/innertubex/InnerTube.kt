@@ -101,10 +101,8 @@ import kotlin.time.TimeSource
 class InnerTube(
     val httpClient: HttpClient,
     private val retryDelay: suspend (kotlin.time.Duration) -> Unit = { delay(it) },
-    private val logger: InnerTubeLogger = InnerTubeLogger.NONE,
 ) {
     private companion object {
-        private const val TAG = "InnerTube"
         private const val ORIGIN_WWW = "https://www.youtube.com"
         private const val REFERER_WWW = "$ORIGIN_WWW/"
         private const val API_BASE_WWW = "$ORIGIN_WWW/youtubei/v1"
@@ -234,7 +232,7 @@ class InnerTube(
         set(value) = updateSession { it.copy(regionOverrideActive = value) }
 
     fun createIsolatedSession(includeAccount: Boolean): InnerTube =
-        InnerTube(httpClient, retryDelay, logger).also { isolated ->
+        InnerTube(httpClient, retryDelay).also { isolated ->
             isolated.locale = locale
             isolated.regionOverrideActive = regionOverrideActive
             sessionSnapshot().let { current ->
@@ -588,9 +586,6 @@ class InnerTube(
                 val retryableStatus =
                     response.status.value in TRANSIENT_STATUS_CODES && (response.status.value != 429 || retryAfterMs != null)
                 if (!retryTransientFailures || !retryableStatus || attempt + 1 >= maxAttempts) {
-                    if (attempt > 0 && response.status.isSuccess()) {
-                        logger.w(TAG, "$operation succeeded on retry ${attempt + 1}/$maxAttempts")
-                    }
                     if (requireSuccess && response.status.value !in 200..299) {
                         response.bodyAsChannel().cancel(null)
                         throw InnerTubeHttpException(operation, response.status)
@@ -599,10 +594,6 @@ class InnerTube(
                 }
                 response.bodyAsChannel().cancel(null)
                 attempt++
-                logger.w(
-                    TAG,
-                    "$operation returned HTTP ${response.status.value} on attempt $attempt/$maxAttempts, retrying in ${retryAfterMs ?: currentDelay}ms",
-                )
                 retryDelay((retryAfterMs ?: currentDelay).milliseconds)
                 currentDelay = (currentDelay * factor).toLong()
             } catch (e: CancellationException) {
@@ -612,13 +603,8 @@ class InnerTube(
             } catch (e: Exception) {
                 attempt++
                 if (!retryTransientFailures || (e !is IOException && e !is HttpRequestTimeoutException) || attempt >= maxAttempts) {
-                    logger.w(TAG, "$operation failed after $attempt attempts (${e.logType()})")
                     throw e
                 }
-                logger.w(
-                    TAG,
-                    "$operation failed on attempt $attempt/$maxAttempts (${e.logType()}), retrying in ${currentDelay}ms",
-                )
                 retryDelay(currentDelay.milliseconds)
                 currentDelay = (currentDelay * factor).toLong()
             }
@@ -792,7 +778,6 @@ class InnerTube(
                         false,
                     ).also {
                         playerFieldMaskEnabled = false
-                        logger.w(TAG, "player field mask rejected, disabled for this instance")
                     }
                 }
             }
@@ -826,11 +811,7 @@ class InnerTube(
         client: YouTubeClient,
         block: () -> T,
     ): T {
-        val startTime = Clock.System.now().toEpochMilliseconds()
-        val result = block()
-        val elapsed = Clock.System.now().toEpochMilliseconds() - startTime
-        logger.d(TAG, "player response client=${client.clientName} elapsed=${elapsed}ms")
-        return result
+        return block()
     }
 
     private fun HttpRequestBuilder.playerRequest(
@@ -845,14 +826,6 @@ class InnerTube(
     ) {
         val visitorDataForRequest = requestVisitorData ?: requestSession.visitorData
         val requestClient = client.withLanguage(requestSession.locale.hl)
-        logger.d(
-            TAG,
-            "player request client=${client.clientName} version=${client.clientVersion} " +
-                "poToken=${poToken != null} sts=${signatureTimestamp != null} " +
-                "loginSupported=${client.loginSupported} loginRequired=${client.loginRequired} " +
-                "hasCookie=${!requestSession.cookie.isNullOrBlank()} hasSapisid=${!requestSession.sapisid.isNullOrBlank()} " +
-                "authEligible=${client.loginSupported} hasDataSync=${!requestSession.dataSyncId.isNullOrBlank()}",
-        )
         ytClient(requestClient, requestSession, setLogin = true, visitorData = visitorDataForRequest)
         setBody(
             buildPlayerBody(
@@ -1930,8 +1903,6 @@ class InnerTube(
 
     private suspend fun fetchFreshVisitorDataNetwork(requestSession: SessionSnapshot): String? =
         try {
-            val startTime = Clock.System.now().toEpochMilliseconds()
-            logger.d(TAG, "fetchFreshVisitorData start")
             // The service worker gets its own deadline so a stall still leaves time for the homepage fallback.
             val serviceWorkerData =
                 withTimeoutOrNull(SERVICE_WORKER_VISITOR_TIMEOUT_MS) {
@@ -1956,7 +1927,6 @@ class InnerTube(
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {
-                        logger.d(TAG, "service-worker visitor data unavailable (${error.logType()})")
                         null
                     }
                 }
@@ -1966,16 +1936,10 @@ class InnerTube(
             if (!data.isNullOrBlank()) {
                 publishSession(requestSession, requestSession.copy(visitorData = data))
             }
-            val elapsed = Clock.System.now().toEpochMilliseconds() - startTime
-            logger.d(
-                TAG,
-                "fetchFreshVisitorData success hasVisitorData=${!data.isNullOrBlank()} source=${if (serviceWorkerData != null) "service-worker" else "homepage"} elapsed=${elapsed}ms",
-            )
             data
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            logger.w(TAG, "fetchFreshVisitorData failed (${e.logType()})")
             null
         }
 
@@ -2021,7 +1985,6 @@ class InnerTubeHttpException(
     val status: HttpStatusCode,
 ) : IllegalStateException("$operation failed with HTTP ${status.value}")
 
-private fun Throwable.logType(): String = this::class.simpleName ?: "Exception"
 
 private fun injectPrefCookie(
     cookie: String?,

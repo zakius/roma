@@ -1,10 +1,5 @@
 package com.metrolist.innertubex.sabr
 
-import com.metrolist.innertubex.InnerTubeLogger
-import com.metrolist.innertubex.d
-import com.metrolist.innertubex.e
-import com.metrolist.innertubex.i
-import com.metrolist.innertubex.w
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpResponseRedirectEvent
 import io.ktor.client.request.header
@@ -44,7 +39,6 @@ class SabrAudioStream(
     private val onResponse: ((SabrResponseDiagnostics) -> Unit)? = null,
     private val requestRetryDelay: suspend (Long) -> Unit = { delay(it) },
     private val initialPlayerTimeMs: Long = 0,
-    private val logger: InnerTubeLogger = InnerTubeLogger.NONE,
 ) {
     private val delegate =
         SabrMediaStream(
@@ -56,7 +50,6 @@ class SabrAudioStream(
             onResponse = onResponse,
             requestRetryDelay = requestRetryDelay,
             initialPlayerTimeMs = initialPlayerTimeMs,
-            logger = logger,
         )
 
     fun bytes(): Flow<ByteArray> = chunks().map { it.data }
@@ -74,7 +67,6 @@ class SabrVideoStream(
     onResponse: ((SabrResponseDiagnostics) -> Unit)? = null,
     requestRetryDelay: suspend (Long) -> Unit = { delay(it) },
     initialPlayerTimeMs: Long = 0,
-    logger: InnerTubeLogger = InnerTubeLogger.NONE,
 ) {
     private val delegate =
         SabrMediaStream(
@@ -86,7 +78,6 @@ class SabrVideoStream(
             onResponse = onResponse,
             requestRetryDelay = requestRetryDelay,
             initialPlayerTimeMs = initialPlayerTimeMs,
-            logger = logger,
         )
 
     fun bytes(): Flow<ByteArray> = chunks().map { it.data }
@@ -103,7 +94,6 @@ private class SabrMediaStream(
     private val onResponse: ((SabrResponseDiagnostics) -> Unit)?,
     private val requestRetryDelay: suspend (Long) -> Unit,
     private val initialPlayerTimeMs: Long,
-    private val logger: InnerTubeLogger,
 ) {
     private val selectedFormat =
         when (mediaType) {
@@ -128,17 +118,6 @@ private class SabrMediaStream(
         var lastRequestPlayerTimeMs = initialPlayerTimeMs
         var lastObservedPlaybackPositionMs: Long? = null
         return channelFlow {
-            logger.i(
-                tag,
-                buildString {
-                    append("Opened SABR $mediaLabel stream itag=${selectedFormat.itag}")
-                    append(", duration=${bootstrap.durationMs}ms")
-                    append(", poToken=${if (bootstrap.poToken == null) "missing" else "present"}")
-                    append(", clientVersion=${bootstrap.clientVersion}.")
-                },
-                mediaId = bootstrap.videoId,
-                details = bootstrap.logDetails(selectedFormat, mediaType),
-            )
             var streamingUrl = requireAllowedSabrUrl(bootstrap.serverAbrStreamingUrl)
             var playerTimeMs = initialPlayerTimeMs.coerceIn(0L, (bootstrap.durationMs - 1L).coerceAtLeast(0L))
             var initialized = false
@@ -239,21 +218,6 @@ private class SabrMediaStream(
                                 ) {
                                     consecutiveTransientFailures++
                                     transientRetryCount++
-                                    logger.w(
-                                        tag,
-                                        buildString {
-                                            append("SABR HTTP ${response.status.value} is transient; ")
-                                            append("retry $consecutiveTransientFailures/$MAX_TRANSIENT_RETRIES.")
-                                        },
-                                        mediaId = bootstrap.videoId,
-                                        details =
-                                            buildMap {
-                                                put("http", response.status.value.toString())
-                                                put("transientRetry", "$consecutiveTransientFailures/$MAX_TRANSIENT_RETRIES")
-                                                if (responseDetails.isNotEmpty()) put("responseHeaders", responseDetails)
-                                                putAll(bootstrap.logDetails(selectedFormat, mediaType))
-                                            },
-                                    )
                                     val retryDelayMs =
                                         response.headers[HttpHeaders.RetryAfter]
                                             ?.toLongOrNull()
@@ -617,7 +581,7 @@ private class SabrMediaStream(
                             }
 
                             // Diagnostics are snapshots for observers; skip building them when nobody consumes them.
-                            if (onResponse != null || logger !== InnerTubeLogger.NONE) {
+                            if (onResponse != null) {
                                 val diagnostics =
                                     SabrResponseDiagnostics(
                                         requestNumber = currentRequestNumber,
@@ -648,7 +612,6 @@ private class SabrMediaStream(
                                         protectionMaxRetries = responseProtectionMaxRetries,
                                     )
                                 onResponse?.invoke(diagnostics)
-                                logResponse(diagnostics)
                             }
 
                             // ponytail: allow at most five responses while an omitted allowance is pending per stream;
@@ -700,20 +663,6 @@ private class SabrMediaStream(
                 downloadedDurationMs = playerTimeMs,
                 emittedBytes = cumulativeStreamBytes,
             )
-            logger.i(
-                tag,
-                "SABR $mediaLabel stream finished after $requestNumber UMP requests, " +
-                    "$cumulativeSegmentCount segments, $cumulativeMediaBytes bytes.",
-                mediaId = bootstrap.videoId,
-                details =
-                    mapOf(
-                        "requestCount" to requestNumber.toString(),
-                        "segments" to cumulativeSegmentCount.toString(),
-                        "mediaBytes" to cumulativeMediaBytes.toString(),
-                        "transientRetries" to transientRetryCount.toString(),
-                        "protectionRetries" to protectionRetryCount.toString(),
-                    ) + bootstrap.logDetails(selectedFormat, mediaType),
-            )
         }.buffer(0).catch { error ->
             if (error is CancellationException) throw error
             onResponse?.invoke(
@@ -740,20 +689,6 @@ private class SabrMediaStream(
                     failureMessage = "SABR stream failed",
                 ),
             )
-            logger.e(
-                tag,
-                "SABR $mediaLabel stream failed",
-                mediaId = bootstrap.videoId,
-                details =
-                    bootstrap.logDetails(selectedFormat, mediaType) +
-                        buildMap {
-                            put("failureType", error::class.simpleName ?: "Throwable")
-                            error.findSabrProtocolException()?.let { failure ->
-                                put("sabrKind", failure.kind.name)
-                                failure.httpStatusCode?.let { put("httpStatus", it.toString()) }
-                            }
-                        },
-            )
             throw error
         }
     }
@@ -777,37 +712,6 @@ private class SabrMediaStream(
         }
     }
 
-    private fun logResponse(diagnostics: SabrResponseDiagnostics) {
-        if (logger === InnerTubeLogger.NONE) return
-        val notable =
-            (diagnostics.protectionStatus ?: 0) >= PROTECTION_ATTESTATION_PENDING ||
-                diagnostics.selectedSegmentCount == 0 ||
-                diagnostics.transientRetryCount > 0 ||
-                diagnostics.noProgressRequestCount > 0 ||
-                diagnostics.backoffTimeMs > 0L
-        val message =
-            buildString {
-                append("SABR UMP request #${diagnostics.requestNumber}")
-                append(": playerTime=${diagnostics.requestPlayerTimeMs}ms")
-                append(", segments=${diagnostics.selectedSegmentCount}")
-                append(" (total ${diagnostics.cumulativeSegmentCount})")
-                append(", mediaBytes=${diagnostics.selectedMediaBytes}")
-                append(", responseBytes=${diagnostics.responseBytes}")
-                if (diagnostics.receivedSequences.isNotEmpty()) {
-                    append(", sequences=${diagnostics.receivedSequences.joinToString()}")
-                }
-                diagnostics.protectionStatus?.let { append(", protection=$it") }
-                if (diagnostics.backoffTimeMs > 0L) append(", backoff=${diagnostics.backoffTimeMs}ms")
-                if (diagnostics.noProgressRequestCount > 0) {
-                    append(", noProgressRequests=${diagnostics.noProgressRequestCount}")
-                }
-            }
-        if (notable) {
-            logger.w(tag, message, details = diagnostics.logDetails())
-        } else {
-            logger.d(tag, message, details = diagnostics.logDetails())
-        }
-    }
 
     private suspend fun awaitReadaheadCapacity(
         downloadedPositionMs: Long,

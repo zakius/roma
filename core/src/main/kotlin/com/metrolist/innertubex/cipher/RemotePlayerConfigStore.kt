@@ -1,8 +1,5 @@
 package com.metrolist.innertubex.cipher
 
-import com.metrolist.innertubex.InnerTubeLogger
-import com.metrolist.innertubex.d
-import com.metrolist.innertubex.w
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
@@ -29,26 +26,17 @@ import kotlin.time.Clock
  * rejection. Both failure paths are single-flight and rate-limited so a bad
  * player rotation cannot create a request storm.
  */
-class RemotePlayerConfigStore private constructor(
+class RemotePlayerConfigStore internal constructor(
     private val httpClient: HttpClient,
     internal val repository: PlayerConfigRepository,
-    private val logger: InnerTubeLogger,
     private val nowMs: () -> Long,
 ) {
     constructor(
         httpClient: HttpClient,
         repository: PlayerConfigRepository,
-        logger: InnerTubeLogger = InnerTubeLogger.NONE,
-    ) : this(httpClient, repository, logger, { Clock.System.now().toEpochMilliseconds() })
-
-    internal constructor(
-        httpClient: HttpClient,
-        repository: PlayerConfigRepository,
-        nowMs: () -> Long,
-    ) : this(httpClient, repository, InnerTubeLogger.NONE, nowMs)
+    ) : this(httpClient, repository, { Clock.System.now().toEpochMilliseconds() })
 
     private companion object {
-        private const val TAG = "RemotePlayerConfigStore"
         private const val REFRESH_TTL_MS = 6 * 60 * 60 * 1000L
         private const val FAILURE_RETRY_MS = 60 * 1000L
         private const val FAILURE_REFRESH_COOLDOWN_MS = 5 * 60 * 1000L
@@ -243,7 +231,6 @@ class RemotePlayerConfigStore private constructor(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    logger.w(TAG, "Remote player config refresh failed (${e.logType()})")
                     null
                 }
 
@@ -264,11 +251,9 @@ class RemotePlayerConfigStore private constructor(
                     repository.cachedAtMs = fetchedAt
                     if (!responseEtag.isNullOrBlank()) repository.cachedEtag = responseEtag
                     ensureLoadedFromCache(sourceUrl)
-                    logger.d(TAG, "Remote player configs unchanged (304)")
                     return@stateLock RefreshResult(false, true)
                 }
                 if (status !in 200..299) {
-                    logger.w(TAG, "Remote player configs HTTP $status")
                     ensureLoadedFromCache(sourceUrl)
                     return@stateLock RefreshResult(false, true)
                 }
@@ -281,15 +266,10 @@ class RemotePlayerConfigStore private constructor(
                         repository.cachedAtMs = nowMs()
                         repository.cachedSourceUrl = sourceUrl
                         responseEtag?.let { repository.cachedEtag = it }
-                        logger.d(
-                            TAG,
-                            "Remote player configs applied (${result.configs.size} entries) changed=$changed epoch=$configEpoch",
-                        )
                         return@stateLock RefreshResult(changed, true)
                     }
 
                     is RemotePlayerConfigParser.ParseResult.Failure -> {
-                        logger.w(TAG, "Remote player configs rejected: ${result.reason}")
                         ensureLoadedFromCache(sourceUrl)
                         return@stateLock RefreshResult(false, true)
                     }
@@ -402,9 +382,7 @@ class RemotePlayerConfigStore private constructor(
                 applyConfigs(sourceUrl, result.configs)
             }
 
-            is RemotePlayerConfigParser.ParseResult.Failure -> {
-                logger.w(TAG, "Cached remote player configs rejected: ${result.reason}")
-            }
+            is RemotePlayerConfigParser.ParseResult.Failure -> {}
         }
     }
 
@@ -439,7 +417,6 @@ class RemotePlayerConfigStore private constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logger.d(TAG, "Legacy player config timestamp unavailable hash=$playerHash type=${e.logType()}")
                 null
             }
 
@@ -493,5 +470,4 @@ class RemotePlayerConfigStore private constructor(
                     }
             }
 
-    private fun Throwable.logType(): String = this::class.simpleName ?: "Exception"
 }

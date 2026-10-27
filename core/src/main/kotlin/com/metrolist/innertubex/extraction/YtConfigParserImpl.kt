@@ -1,13 +1,10 @@
 package com.metrolist.innertubex.extraction
 
 import com.metrolist.innertubex.InnerTube
-import com.metrolist.innertubex.InnerTubeLogger
 import com.metrolist.innertubex.cipher.RemotePlayerConfigStore
 import com.metrolist.innertubex.cipher.YouTubeCipherService
 import com.metrolist.innertubex.cipher.getTextWithoutRedirects
-import com.metrolist.innertubex.d
 import com.metrolist.innertubex.models.YouTubeClient
-import com.metrolist.innertubex.w
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
@@ -22,7 +19,6 @@ public class YtConfigParserImpl(
     private val httpClient: HttpClient,
     private val innerTube: InnerTube,
     private val remotePlayerConfigStore: RemotePlayerConfigStore? = null,
-    private val logger: InnerTubeLogger = InnerTubeLogger.NONE,
     /** When set, the signature-timestamp fallback reuses the cipher service's player download. */
     private val cipherService: YouTubeCipherService? = null,
 ) : YtConfigParser {
@@ -105,11 +101,6 @@ public class YtConfigParserImpl(
                 throw error
             } catch (error: Exception) {
                 if (cookie == null) throw error
-                logger.w(
-                    TAG,
-                    "authenticated config page unavailable; retrying without cookies",
-                    details = mapOf("exceptionType" to (error::class.simpleName ?: "Exception")),
-                )
                 fetchHtml(null)
             }
         val playerUrl =
@@ -119,12 +110,6 @@ public class YtConfigParserImpl(
         val resolvedSts = sts ?: remotePlayerConfigStore?.getSignatureTimestamp(playerUrl) ?: fetchPlayerSignatureTimestamp(playerUrl)
         val visitorData = extractVisitorData(html)
         val encryptedHostFlags = extractEncryptedHostFlags(html).takeIf { pageKind == "embed" }
-        logger.d(
-            TAG,
-            "fetchConfig parsed page=$pageKind htmlSize=${html.length} " +
-                "hasSts=${resolvedSts != null} hasVisitorData=${visitorData != null} " +
-                "hasEncryptedHostFlags=${encryptedHostFlags != null}",
-        )
         return PlayerConfig(playerUrl, resolvedSts, visitorData, extractClientVersion(html), encryptedHostFlags)
     }
 
@@ -143,7 +128,6 @@ public class YtConfigParserImpl(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            logger.d(TAG, "player JS timestamp unavailable type=${error::class.simpleName ?: "Exception"}")
             null
         }
 
@@ -162,7 +146,6 @@ public class YtConfigParserImpl(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            logger.d(TAG, "iframe player URL unavailable type=${error::class.simpleName ?: "Exception"}")
             null
         }
 
@@ -260,7 +243,6 @@ public class YtConfigParserImpl(
         host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtube-nocookie.com" || host.endsWith(".youtube-nocookie.com")
 
     private companion object {
-        private const val TAG = "YtConfigParser"
         private const val PAGE_TIMEOUT_MS = 10_000L
         private const val PLAYER_TIMEOUT_MS = 8_000L
         private const val PAGE_MAX_BYTES = 4 * 1024 * 1024

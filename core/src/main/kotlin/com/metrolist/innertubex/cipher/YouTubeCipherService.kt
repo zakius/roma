@@ -1,12 +1,10 @@
 package com.metrolist.innertubex.cipher
 
-import com.metrolist.innertubex.InnerTubeLogger
 import com.metrolist.innertubex.ResponseTooLargeException
 import com.metrolist.innertubex.extraction.ExtractionCipherService
 import com.metrolist.innertubex.models.response.PlayerResponse.StreamingData.Format
 import com.metrolist.innertubex.utils.decodeQueryComponent
 import com.metrolist.innertubex.utils.encodeQueryComponent
-import com.metrolist.innertubex.w
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
 import io.ktor.http.HttpHeaders
@@ -35,7 +33,6 @@ import kotlin.time.TimeSource
 class YouTubeCipherService(
     private val httpClient: HttpClient,
     private val remotePlayerConfigStore: RemotePlayerConfigStore? = null,
-    private val logger: InnerTubeLogger = InnerTubeLogger.NONE,
 ) : ExtractionCipherService {
     private class PlayerScriptHttpException(
         status: Int,
@@ -43,7 +40,6 @@ class YouTubeCipherService(
     ) : IllegalStateException("Player script request failed with HTTP $status")
 
     private companion object {
-        private const val TAG = "YouTubeCipherService"
         private const val OKHTTP_USER_AGENT = "okhttp/5.4.0"
         private const val MAX_PLAYER_CACHE_ENTRIES = 4
         private val COMPILE_FAILURE_COOLDOWN = 60.seconds
@@ -231,12 +227,6 @@ class YouTubeCipherService(
             } else {
                 null
             }
-        logger.w(
-            TAG,
-            "Kotlin player unavailable player=${RemotePlayerConfigParser.extractPlayerHash(
-                playerUrl,
-            ) ?: "unknown"} type=${error::class.simpleName}${reason?.let { " reason=$it" }.orEmpty()}",
-        )
     }
 
     private suspend fun programFor(playerUrl: String): PlayerProgram? {

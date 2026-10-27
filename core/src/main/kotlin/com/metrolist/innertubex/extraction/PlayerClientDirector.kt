@@ -1,9 +1,7 @@
 package com.metrolist.innertubex.extraction
 
 import com.metrolist.innertubex.InnerTube
-import com.metrolist.innertubex.InnerTubeLogger
 import com.metrolist.innertubex.bodyAsTextLimited
-import com.metrolist.innertubex.d
 import com.metrolist.innertubex.extraction.strategy.CapabilitySupport
 import com.metrolist.innertubex.extraction.strategy.ClientFailureKind
 import com.metrolist.innertubex.extraction.strategy.ClientFallbackStrategy
@@ -16,12 +14,10 @@ import com.metrolist.innertubex.extraction.strategy.PlaybackTransportPreference
 import com.metrolist.innertubex.extraction.strategy.PoTokenRequirement
 import com.metrolist.innertubex.extraction.strategy.PoTokenRule
 import com.metrolist.innertubex.extraction.strategy.SelectedClient
-import com.metrolist.innertubex.i
 import com.metrolist.innertubex.models.PoTokenBinding
 import com.metrolist.innertubex.models.YouTubeClient
 import com.metrolist.innertubex.models.response.PlayerResponse
 import com.metrolist.innertubex.sabr.hasSabrBootstrapPrerequisites
-import com.metrolist.innertubex.w
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -33,7 +29,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.MissingFieldException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -55,7 +50,6 @@ internal class PlayerClientDirector(
     private val fallbackStrategy: ClientFallbackStrategy,
     private val tokenProvider: TokenProvider,
     private val clientHealthMonitor: ClientHealthMonitor = ClientHealthMonitor.NONE,
-    private val logger: InnerTubeLogger = InnerTubeLogger.NONE,
     private val playerRequestTimeoutMs: Long = DEFAULT_PLAYER_REQUEST_TIMEOUT_MS,
     private val visitorDataFetchTimeoutMs: Long = DEFAULT_VISITOR_DATA_FETCH_TIMEOUT_MS,
     private val maxPlayerRequests: Int = DEFAULT_MAX_PLAYER_REQUESTS,
@@ -63,7 +57,6 @@ internal class PlayerClientDirector(
     private val json = Json { ignoreUnknownKeys = true }
 
     private companion object {
-        private const val TAG = "PlayerClientDirector"
         private const val PO_TOKEN_FETCH_TIMEOUT_MS = 18_000L
         private const val DEFAULT_PLAYER_REQUEST_TIMEOUT_MS = 8_000L
         private const val DEFAULT_VISITOR_DATA_FETCH_TIMEOUT_MS = 8_000L
@@ -142,7 +135,6 @@ internal class PlayerClientDirector(
         prefetchedPoToken: PoTokenPrefetch?,
         tvBearerCredential: TvBearerCredential?,
     ): PlayerResponseBatch {
-        val startTime = Clock.System.now().toEpochMilliseconds()
         val initialSession = innerTube.sessionSnapshot()
         // Embed-page encryptedHostFlags are only honoured with the visitor that fetched that page.
         val embedVisitorData = playerConfig.visitorData?.takeIf { it.isNotBlank() && !playerConfig.encryptedHostFlags.isNullOrBlank() }
@@ -198,27 +190,6 @@ internal class PlayerClientDirector(
                     premiumEntitlement = selected.hasUsablePremiumEntitlement(authenticated, hints.premium),
                 )
             }
-        logger.d(
-            TAG,
-            "player client selection",
-            details =
-                mapOf(
-                    "candidateCount" to clients.size.toString(),
-                    "rejectedCount" to selection.rejected.size.toString(),
-                    "wantVideo" to hints.wantVideo.toString(),
-                ),
-        )
-        logger.d(
-            TAG,
-            "player response batch started",
-            details =
-                mapOf(
-                    "candidateCount" to clients.size.toString(),
-                    "excludedCount" to excludedClients.size.toString(),
-                    "directAudioOnly" to directAudioOnlyClients.toString(),
-                    "wantVideo" to wantVideo.toString(),
-                ),
-        )
         val playableResults = mutableListOf<ClientResult>()
         val failures = mutableListOf<PlayabilityFailure>()
         val requestFailures = mutableListOf<Throwable>()
@@ -388,18 +359,11 @@ internal class PlayerClientDirector(
                         useSabr = client.useSabr,
                     )
                 if (result.profileId in excludedClients) {
-                    logger.d(
-                        TAG,
-                        "client response skipped",
-                        details = mapOf("client" to client.clientName, "profile" to result.profileId),
-                    )
                     continue
                 }
                 playableResults += result
 
                 if (acceptCipherOnlyResponse && (!wantVideo || hasUsableVideoTransport(attempt.response))) {
-                    val elapsed = Clock.System.now().toEpochMilliseconds() - startTime
-                    logger.d(TAG, "player response selected", details = mapOf("elapsedMs" to elapsed.toString()))
                     return PlayerResponseBatch(listOf(result), failures, requestFailures, attempts)
                 }
 
@@ -415,17 +379,6 @@ internal class PlayerClientDirector(
                     // direct video URLs without a poToken, attached by the extractor after cipher resolution.
                     val preferDirect = !wantVideo || attempt.usedPoToken || playableResults.none { it.usedPoToken }
                     if (preferDirect) {
-                        logger.i(
-                            TAG,
-                            "playback-ready client response",
-                            details =
-                                mapOf(
-                                    "client" to client.clientName,
-                                    "profile" to result.profileId,
-                                    "transport" to if (client.useSabr) "SABR" else "Direct",
-                                    "tokenPresent" to attempt.usedPoToken.toString(),
-                                ),
-                        )
                         val selectedResults =
                             if (acceptCipherOnlyResponse) {
                                 if (wantVideo) {
@@ -436,63 +389,21 @@ internal class PlayerClientDirector(
                             } else {
                                 listOf(result)
                             }
-                        val elapsed = Clock.System.now().toEpochMilliseconds() - startTime
-                        logger.d(
-                            TAG,
-                            "player response batch completed",
-                            details =
-                                mapOf(
-                                    "resultCount" to selectedResults.size.toString(),
-                                    "elapsedMs" to elapsed.toString(),
-                                ),
-                        )
                         return PlayerResponseBatch(selectedResults, failures, requestFailures, attempts)
                     }
-                    logger.d(
-                        TAG,
-                        "client response deferred",
-                        details =
-                            mapOf(
-                                "client" to client.clientName,
-                                "tokenPresent" to attempt.usedPoToken.toString(),
-                            ),
-                    )
                 }
 
-                logger.d(
-                    TAG,
-                    "client response requires processing",
-                    details =
-                        mapOf(
-                            "client" to client.clientName,
-                            "cipherOnly" to acceptCipherOnlyResponse.toString(),
-                        ),
-                )
             } else {
                 attemptResult.failure?.let(failures::add)
                 attemptResult.requestFailure?.let(requestFailures::add)
-                logger.w(
-                    TAG,
-                    "client response unavailable",
-                    details =
-                        buildMap {
-                            put("client", client.clientName)
-                            put("profilePresent", (!selectedClient.manifest?.id.isNullOrBlank()).toString())
-                            put("tokenUnavailable", attemptResult.tokenUnavailable.toString())
-                            put("requestFailure", (attemptResult.requestFailure != null).toString())
-                            put("failurePresent", (attemptResult.failure != null).toString())
-                        },
-                )
                 if (client == YouTubeClient.ANDROID_VR_1_43_32 &&
                     attemptResult.failure?.status == "UNPLAYABLE"
                 ) {
                     forceTokenizedTvHtml5 = true
-                    logger.d(TAG, "tokenized fallback required", details = mapOf("client" to client.clientName))
                 }
             }
         }
 
-        val elapsed = Clock.System.now().toEpochMilliseconds() - startTime
         if (playableResults.isNotEmpty()) {
             // For video, order poToken clients first so the extractor can attach the GVS poToken.
             val orderedResults =
@@ -501,19 +412,9 @@ internal class PlayerClientDirector(
                 } else {
                     playableResults
                 }
-            logger.d(
-                TAG,
-                "player response batch completed",
-                details =
-                    mapOf(
-                        "resultCount" to orderedResults.size.toString(),
-                        "elapsedMs" to elapsed.toString(),
-                    ),
-            )
             return PlayerResponseBatch(orderedResults, failures, requestFailures, attempts)
         }
 
-        logger.d(TAG, "player response batch completed", details = mapOf("resultCount" to "0", "elapsedMs" to elapsed.toString()))
         return PlayerResponseBatch(
             emptyList(),
             failures,
@@ -672,7 +573,6 @@ internal class PlayerClientDirector(
                 return ClientAttemptResult(null, null, tokenUnavailable = true)
             }
             if ((forcePoToken || tokenPlan.playerRequired) && tokenPlan.canMint) {
-                logger.d(TAG, "tokenized request selected", details = mapOf("client" to client.clientName))
                 return tryTokenizedPlayer(
                     selectedClient = selectedClient,
                     tokenPlan = tokenPlan,
@@ -725,16 +625,6 @@ internal class PlayerClientDirector(
         } catch (_: PlayerRequestBudgetExhaustedException) {
             ClientAttemptResult(null, null, budgetExhausted = true)
         } catch (e: Exception) {
-            logger.w(
-                TAG,
-                "player request failed",
-                details =
-                    mapOf(
-                        "client" to selectedClient.client.clientName,
-                        "profilePresent" to (!selectedClient.manifest?.id.isNullOrBlank()).toString(),
-                        "exceptionType" to (e::class.simpleName ?: "unknown"),
-                    ),
-            )
             ClientAttemptResult(attempt = null, failure = null, requestFailure = e)
         }
 
@@ -766,12 +656,8 @@ internal class PlayerClientDirector(
         val initialFailure = initialResponse.playabilityStatus.toFailure()
         if (initialPlayable) {
             if (!tokenPlan.tokenRequired || allowUntokenizedWebPoClient) {
-                if (tokenPlan.canMint && allowUntokenizedWebPoClient) {
-                    logger.d(TAG, "untokenized response accepted", details = mapOf("client" to client.clientName))
-                }
                 return ClientAttemptResult(ClientAttempt(initialResponse, usedPoToken = false), null)
             }
-            logger.d(TAG, "token required for playback stability", details = mapOf("client" to client.clientName))
         }
 
         if (!tokenPlan.canMint) {
@@ -793,11 +679,7 @@ internal class PlayerClientDirector(
                 tokenCanChangeRequest &&
                 (hints.isUploaded == true || hints.isAgeRestricted == true)
         if (!initialPlayable && !retryRestrictedWithPoToken) {
-            logger.d(TAG, "token fetch skipped", details = mapOf("client" to client.clientName, "playable" to "false"))
             return ClientAttemptResult(null, initialFailure, observedResponse = initialResponse)
-        }
-        if (retryRestrictedWithPoToken) {
-            logger.d(TAG, "token fetch retried", details = mapOf("client" to client.clientName, "restrictedContent" to "true"))
         }
 
         return tryTokenizedPlayer(
@@ -825,18 +707,15 @@ internal class PlayerClientDirector(
         prefetchedPoToken: PoTokenPrefetch?,
     ): ClientAttemptResult {
         val client = selectedClient.client
-        val tokenStart = Clock.System.now().toEpochMilliseconds()
         val tokenRequestSession =
             if (requestSession.visitorData.isNullOrBlank()) {
                 if (requestBudget.visitorUnavailable) return ClientAttemptResult(null, fallbackFailure, tokenUnavailable = true)
-                logger.d(TAG, "visitor data requested", details = mapOf("client" to client.clientName))
                 val visitorData =
                     withTimeoutOrNull(requestBudget.timeLeft(visitorDataFetchTimeoutMs.milliseconds)) {
                         innerTube.fetchFreshVisitorData(requestSession)
                     }
                 if (visitorData.isNullOrBlank()) {
                     requestBudget.visitorUnavailable = true
-                    logger.d(TAG, "visitor data unavailable", details = mapOf("client" to client.clientName))
                     return ClientAttemptResult(null, fallbackFailure, tokenUnavailable = true)
                 }
                 innerTube.sessionSnapshotWithVisitorData(requestSession, visitorData)
@@ -872,17 +751,6 @@ internal class PlayerClientDirector(
             } catch (_: Exception) {
                 null
             }?.also { requestBudget.rememberToken(tokenKey, it) }
-        val tokenElapsed = Clock.System.now().toEpochMilliseconds() - tokenStart
-        logger.d(
-            TAG,
-            "token fetch completed",
-            details =
-                mapOf(
-                    "client" to client.clientName,
-                    "tokenPresent" to (token != null).toString(),
-                    "elapsedMs" to tokenElapsed.toString(),
-                ),
-        )
         val playerRequestPoToken = tokenPlan.playerBinding?.let { binding -> token?.tokenFor(binding) }
         val streamingDataPoToken = tokenPlan.gvsBinding?.let { binding -> token?.tokenFor(binding) }
         val missingRequiredToken =
@@ -898,7 +766,6 @@ internal class PlayerClientDirector(
             )
         }
         if (token.visitorData != visitorData || missingRequiredToken || noUsableToken) {
-            logger.w(TAG, "token binding rejected", details = mapOf("client" to client.clientName))
             return ClientAttemptResult(null, fallbackFailure, tokenUnavailable = true)
         }
 
@@ -935,7 +802,6 @@ internal class PlayerClientDirector(
                 null,
             )
         } else {
-            logger.d(TAG, "tokenized response unavailable", details = mapOf("client" to client.clientName))
             ClientAttemptResult(
                 attempt = null,
                 failure = tokenizedResponse.playabilityStatus.toFailure(),
@@ -968,7 +834,6 @@ internal class PlayerClientDirector(
                 null
             }
         if (key != null && requestBudget.hasResponse(key)) {
-            logger.d(TAG, "player response reused", details = mapOf("client" to client.clientName))
             return requestBudget.response(key)
         }
         requestBudget.consume()
@@ -1007,7 +872,6 @@ internal class PlayerClientDirector(
         encryptedHostFlags: String?,
         bearerToken: String? = null,
     ): PlayerResponse? {
-        val startTime = Clock.System.now().toEpochMilliseconds()
         val payload =
             if (bearerToken != null) {
                 innerTube.playerWithTvBearerSessionBound(
@@ -1030,7 +894,7 @@ internal class PlayerClientDirector(
                 )
             }
         return withContext(Dispatchers.Default) {
-            parsePlayerResponse(payload, videoId, client, startTime, bearerToken != null)
+            parsePlayerResponse(payload, videoId, bearerToken != null)
         }
     }
 
@@ -1038,8 +902,6 @@ internal class PlayerClientDirector(
     private fun parsePlayerResponse(
         payload: String,
         videoId: String,
-        client: YouTubeClient,
-        startTime: Long,
         bearerAuthenticated: Boolean = false,
     ): PlayerResponse? {
         val parsedRoot =
@@ -1049,7 +911,6 @@ internal class PlayerClientDirector(
                 null
             }
         if (bearerAuthenticated && parsedRoot?.let(::containsKnownDrmMarker) == true) {
-            logger.w(TAG, "bearer player response rejected", details = mapOf("client" to client.clientName, "reason" to "drm"))
             return null
         }
         val decoded =
@@ -1061,78 +922,17 @@ internal class PlayerClientDirector(
                 }
             }
         val response = decoded.getOrNull()
-        if (response == null) {
-            val elapsed = Clock.System.now().toEpochMilliseconds() - startTime
-            val details =
-                mapOf(
-                    "client" to client.clientName,
-                    "httpStatus" to "200",
-                    "elapsedMs" to elapsed.toString(),
-                )
-            // Classified from the decode error instead of re-parsing the payload into a second, possibly huge, tree.
-            val error = decoded.exceptionOrNull()
-            when {
-                error is MissingFieldException && "playabilityStatus" in error.missingFields -> {
-                    logger.d(TAG, "player response missing status", details = details)
-                }
-
-                else -> {
-                    logger.w(TAG, "player response decode failed", details = details)
-                }
-            }
-            return null
-        }
+        if (response == null) return null
         if (!response.matchesRequestedVideo(videoId)) {
-            logger.w(TAG, "player response rejected", details = mapOf("client" to client.clientName, "reason" to "video_identity"))
             return null
         }
 
-        val elapsed = Clock.System.now().toEpochMilliseconds() - startTime
         val formatCount =
             (response.streamingData?.formats?.size ?: 0) +
                 response.streamingData
                     ?.adaptiveFormats
                     .orEmpty()
                     .size
-        val transportDiagnostics =
-            if (client.clientName in TRANSPORT_PROBE_CLIENT_NAMES) {
-                val adaptiveFormats = response.streamingData?.adaptiveFormats.orEmpty()
-                val progressiveFormats = response.streamingData?.formats.orEmpty()
-                mapOf(
-                    "adaptiveFormatCount" to adaptiveFormats.size.toString(),
-                    "adaptiveDirectCount" to adaptiveFormats.count { it.url?.isNotBlank() == true }.toString(),
-                    "adaptiveCipherCount" to
-                        adaptiveFormats.count { !it.signatureCipher.isNullOrBlank() || !it.cipher.isNullOrBlank() }.toString(),
-                    "progressiveFormatCount" to progressiveFormats.size.toString(),
-                    "progressiveDirectCount" to progressiveFormats.count { it.url?.isNotBlank() == true }.toString(),
-                    "progressiveCipherCount" to
-                        progressiveFormats.count { !it.signatureCipher.isNullOrBlank() || !it.cipher.isNullOrBlank() }.toString(),
-                    "hlsPresent" to (!response.streamingData?.hlsManifestUrl.isNullOrBlank()).toString(),
-                    "dashPresent" to (!response.streamingData?.dashManifestUrl.isNullOrBlank()).toString(),
-                    "sabrPresent" to (!response.streamingData?.serverAbrStreamingUrl.isNullOrBlank()).toString(),
-                    "sabrConfigPresent" to
-                        (
-                            !response.playerConfig
-                                ?.mediaCommonConfig
-                                ?.mediaUstreamerRequestConfig
-                                ?.videoPlaybackUstreamerConfig
-                                .isNullOrBlank()
-                        ).toString(),
-                )
-            } else {
-                emptyMap()
-            }
-        logger.d(
-            TAG,
-            "player response decoded",
-            details =
-                mapOf(
-                    "client" to client.clientName,
-                    "streamingPresent" to (response.streamingData != null).toString(),
-                    "formatCount" to formatCount.toString(),
-                    "elapsedMs" to elapsed.toString(),
-                ) + transportDiagnostics,
-        )
         if (formatCount > MAX_PLAYER_FORMATS) return null
         return response
     }

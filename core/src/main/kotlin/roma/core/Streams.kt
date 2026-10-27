@@ -2,7 +2,6 @@ package roma.core
 
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.response.PlayerResponse
-import com.metrolist.innertubex.InnerTubeLogger
 import com.metrolist.innertubex.cipher.PlayerConfigRepository
 import com.metrolist.innertubex.cipher.RemotePlayerConfigStore
 import com.metrolist.innertubex.cipher.YouTubeCipherService
@@ -197,9 +196,9 @@ object InnerTubeXStreams {
     @Synchronized
     private fun extractor(): InnerTubeExtractor = built ?: run {
         val t = com.metrolist.innertube.YouTube.extractionTransport()
-        val store = RemotePlayerConfigStore(t.httpClient, configRepository, InnerTubeLogger.NONE)
-        val cipher = YouTubeCipherService(t.httpClient, store, InnerTubeLogger.NONE)
-        val parser = YtConfigParserImpl(t.httpClient, t.innerTube, store, InnerTubeLogger.NONE, cipher)
+        val store = RemotePlayerConfigStore(t.httpClient, configRepository)
+        val cipher = YouTubeCipherService(t.httpClient, store)
+        val parser = YtConfigParserImpl(t.httpClient, t.innerTube, store, cipher)
         InnerTubeExtractor(parser, cipher, t.innerTube, tokenProvider = tokenProvider).also { built = it }
     }
 
