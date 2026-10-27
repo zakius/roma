@@ -26,6 +26,7 @@ tasks=()
 [ -n "$buildDict" ] && tasks+=(:dict-app:assembleRelease)
 ./gradlew -q "${tasks[@]}" ${ROMA_DICT_BASE:+-Proma.dictBase=$ROMA_DICT_BASE}
 [ -n "$app$buildDict" ] || exit 0 # tests only: nothing to sign
+[ -f keystore.properties ] || { echo "No keystore.properties: built, not signed"; exit 0; } # CI on master
 source <(sed 's/^\([a-zA-Z]*\)=\(.*\)$/\1="\2"/' keystore.properties)
 sign() { "$tools/apksigner" sign --ks "$storeFile" --ks-pass "pass:$storePassword" --ks-key-alias "$keyAlias" --key-pass "pass:$keyPassword" --out "$2" "$1"; rm -f "$2.idsig"; }
 mkdir -p dist
