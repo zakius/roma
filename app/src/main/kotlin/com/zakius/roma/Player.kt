@@ -115,17 +115,30 @@ fun PlayerScreen() {
     val lyrics = lyricsState?.lyrics
     val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty()
     if (view == "lyrics" && !hasLyrics && lyrics != null) view = "song"
+    val visitedViews = remember { androidx.compose.runtime.mutableStateListOf(view) }
+    if (view !in visitedViews) visitedViews += view
+    // Not the comments: building them loads them from the network.
+    LaunchedEffect(Unit) { buildAhead(visitedViews, listOf("song", "queue", "lyrics")) }
+    val tabShown = LocalTabShown.current
 
     val upper: @Composable (Modifier) -> Unit = { modifier ->
         Box(modifier) {
-            when (view) {
-                "lyrics" -> {
-                    LyricsBackdrop(Playback.shown()?.thumb)
-                    if (lyricsState != null && lyrics != null) LyricsView(lyricsState, lyrics, Playback.shown()?.id) else Centered("Looking for lyrics…")
+            // Each view stays composed once opened, as tabs do, so going back to it only lays out and draws: building
+            // the queue took 10 to 12 ms of the main thread on the phone (2026-10-27).
+            for (v in visitedViews) androidx.compose.runtime.key(v) {
+                Box(if (v == view) Modifier.fillMaxSize() else Modifier.hidden()) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (tabShown && v == view)) {
+                        when (v) {
+                            "lyrics" -> {
+                                LyricsBackdrop(Playback.shown()?.thumb)
+                                if (lyricsState != null && lyrics != null) LyricsView(lyricsState, lyrics, Playback.shown()?.id) else Centered("Looking for lyrics…")
+                            }
+                            "queue" -> QueueView()
+                            "comments" -> CommentsView()
+                            else -> SongView()
+                        }
+                    }
                 }
-                "queue" -> QueueView()
-                "comments" -> CommentsView()
-                else -> SongView()
             }
             Playback.lastBan?.let { (song, _) ->
                 Surface(
@@ -225,7 +238,7 @@ private fun LyricsBackdrop(thumb: String?) {
 /** While the sleep timer runs: how long is left, over the top of the upper area. Tap: change or turn it off. */
 @Composable
 private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
-    Playback.clock // counts down on the half-second clock, also while paused
+    if (LocalTabShown.current) Playback.clock // counts down on the half-second clock, also while paused; not hidden
     val text = when {
         Playback.sleepAfterSong -> "Sleep when this song ends"
         Playback.sleepAt != 0L -> "Sleep in ${((Playback.sleepAt - SystemClock.elapsedRealtime()) / 60_000 + 1).coerceAtLeast(1)} min"
@@ -295,7 +308,9 @@ private fun RowScope.Slot(
 @Composable
 private fun SeekBar(onPreview: (Long) -> Unit) {
     Playback.tick
-    Playback.clock
+    // Hidden, the bar doesn't follow the clock: twice a second it redrew the window, a GPU wake-up each time. Shown
+    // again, reading LocalTabShown brings it up to date.
+    if (LocalTabShown.current) Playback.clock
     val p = Playback.player
     val haptic = LocalHapticFeedback.current
     // A song restored after a restart isn't prepared until Play: its known length stands in.
@@ -763,8 +778,10 @@ private fun CommentsView() {
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     // The first page at once, the next when the list nears its end.
     val nearEnd by remember { derivedStateOf { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= list.layoutInfo.totalItemsCount - 5 } }
-    LaunchedEffect(state, nearEnd, state.error, state.items.size) {
-        if (state.error == null && (state.items.isEmpty() || nearEnd)) state.load()
+    // Hidden, the list stays measured but doesn't page on.
+    val shown = LocalTabShown.current
+    LaunchedEffect(state, nearEnd, state.error, state.items.size, shown) {
+        if (state.error == null && (state.items.isEmpty() || nearEnd && shown)) state.load()
     }
     val scope = rememberCoroutineScope()
     when {
