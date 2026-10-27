@@ -208,7 +208,7 @@ object InnerTubeXStreams {
         val hints = ContentHints().withStreamCapabilities(false, false, true) // direct URLs only: no HLS, no SABR
         val s = extractor().extract(videoId, hints, excludedClients, AudioQuality.HIGH, generateClientPlaybackNonce())
             ?: throw StreamResolveException(StreamResolveException.Reason.NO_PLAYABLE_STREAM, "No playable stream found for this track.", null, null)
-        println("roma streams: $videoId via InnerTubeX ${s.profileId ?: s.clientName}") // which client, for logcat; no tokens
+        println("roma streams: $videoId via InnerTubeX ${s.profileId}") // which client, for logcat; no tokens
         s.loudnessDb?.let { Streams.putLoudness(videoId, it.toFloat()) }
         AudioSource(s.audioUrl, s.mimeType ?: "audio/*", s.bitrate ?: 0)
     }

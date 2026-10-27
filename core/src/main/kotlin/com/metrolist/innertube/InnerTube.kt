@@ -33,7 +33,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
-import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.util.Locale
@@ -147,7 +146,7 @@ class InnerTube(
 
             // On disk, so a new process revalidates InnerTubeX's 3 MB player script instead of downloading it again.
             install(HttpCache) {
-                val dir = FileStorage(File(System.getProperty("java.io.tmpdir"), "ktor_cache"))
+                val dir = FileStorage(kotlinx.io.files.Path(System.getProperty("java.io.tmpdir"), "ktor_cache"))
                 publicStorage(dir)
                 privateStorage(dir)
             }

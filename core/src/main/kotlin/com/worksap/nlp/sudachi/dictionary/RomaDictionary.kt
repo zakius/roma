@@ -2,7 +2,7 @@ package com.worksap.nlp.sudachi.dictionary
 
 import com.worksap.nlp.dartsclone.DoubleArray
 import com.worksap.nlp.sudachi.Config
-import com.worksap.nlp.sudachi.DictionaryFactory
+import com.worksap.nlp.sudachi.Dictionary
 import com.worksap.nlp.sudachi.RomaLattice
 import com.worksap.nlp.sudachi.Tokenizer
 import com.worksap.nlp.sudachi.WordId
@@ -42,7 +42,7 @@ class RomaDictionary(bytes: ByteBuffer) : BinaryDictionary(bytes) {
     override fun getLexicon(): DoubleArrayLexicon = lexicon
 
     /** A tokenizer with [config] on this dictionary, its lattice reading roma's matrix (RomaLattice). */
-    fun tokenizer(config: Config): Tokenizer = RomaLattice.install(DictionaryFactory().create(config.systemDictionary(this)).create(), matrix)
+    fun tokenizer(config: Config): Tokenizer = RomaLattice.install(Dictionary.load(config.systemDictionary(this)).tokenizer(), matrix)
 }
 
 private class RomaLexicon(bytes: ByteBuffer, header: Description, private val entries: RomaEntries = RomaEntries(bytes, header)) :

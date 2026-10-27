@@ -12,6 +12,8 @@ on:
     branches: [master]
 permissions:
   contents: write
+# The runner's git names its first branch "master" without asking; saying so quiets its hint in every checkout.
+env: { GIT_CONFIG_COUNT: 1, GIT_CONFIG_KEY_0: init.defaultBranch, GIT_CONFIG_VALUE_0: master }
 # Merges in quick succession release one at a time, so a version can't be published twice.
 concurrency: { group: release, cancel-in-progress: false }
 # ubuntu-24.04, not ubuntu-latest: the image the release is built and tested on, changed on purpose rather than by GitHub.
@@ -45,7 +47,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - name: Android SDK and pigz
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
+          yes 2> /dev/null | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
           sudo apt-get install -y pigz > /dev/null
       - name: Signing key
         if: env.RELEASE
@@ -93,7 +95,7 @@ jobs:
       - name: Android SDK and pigz
         if: steps.check.outputs.build
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
+          yes 2> /dev/null | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
           sudo apt-get install -y pigz > /dev/null
       - name: Signing key
         if: steps.check.outputs.build && env.RELEASE
