@@ -6,7 +6,6 @@ import com.metrolist.innertubex.models.YouTubeClient
 data class ClientSelectionRequest(
     val hints: ContentHints,
     val authenticated: Boolean,
-    val premium: Boolean = false,
     val availablePoTokenProviders: Set<PoTokenProviderKind> = emptySet(),
     val javaScriptRuntimeAvailable: Boolean = true,
     val webViewAvailable: Boolean = false,

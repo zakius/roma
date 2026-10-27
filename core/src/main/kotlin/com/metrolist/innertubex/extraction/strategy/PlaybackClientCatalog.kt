@@ -17,7 +17,6 @@ object PlaybackClientCatalog {
             PoTokenRequirement.REQUIRED,
             PoTokenBinding.VIDEO_ID,
             webProviders,
-            premiumMayBypass = true,
         )
 
     private val webRequest =
@@ -31,11 +30,8 @@ object PlaybackClientCatalog {
 
     private val validatedRestrictedWebContent =
         ClientContentCapabilities(
-            explicit = CapabilitySupport.SUPPORTED,
             kids = CapabilitySupport.SUPPORTED,
             ageRestricted = CapabilitySupport.SUPPORTED,
-            live = CapabilitySupport.SUPPORTED,
-            uploads = CapabilitySupport.SUPPORTED,
         )
 
     val manifests: List<PlaybackClientManifest> =
@@ -46,7 +42,7 @@ object PlaybackClientCatalog {
                 lifecycle = ClientLifecycle.DEPRECATED,
                 selectionMode = ClientSelectionMode.PROBE_ONLY,
                 priority = 100,
-                content = normalSongsOnlyContent().copy(explicit = CapabilitySupport.SUPPORTED),
+                content = normalSongsOnlyContent(),
             ),
             manifest(
                 id = "WEB_REMIX",
@@ -84,11 +80,8 @@ object PlaybackClientCatalog {
                     ),
                 content =
                     ClientContentCapabilities(
-                        explicit = CapabilitySupport.UNSUPPORTED,
                         kids = CapabilitySupport.SUPPORTED,
                         ageRestricted = CapabilitySupport.UNSUPPORTED,
-                        live = CapabilitySupport.UNKNOWN,
-                        uploads = CapabilitySupport.UNSUPPORTED,
                     ),
             ),
             manifest(
@@ -107,11 +100,8 @@ object PlaybackClientCatalog {
                 content =
                     ClientContentCapabilities(
                         normal = CapabilitySupport.SUPPORTED,
-                        explicit = CapabilitySupport.UNKNOWN,
                         kids = CapabilitySupport.SUPPORTED,
                         ageRestricted = CapabilitySupport.UNSUPPORTED,
-                        live = CapabilitySupport.UNSUPPORTED,
-                        uploads = CapabilitySupport.UNSUPPORTED,
                     ),
             ),
             manifest(
@@ -124,11 +114,8 @@ object PlaybackClientCatalog {
                 content =
                     ClientContentCapabilities(
                         normal = CapabilitySupport.UNSUPPORTED,
-                        explicit = CapabilitySupport.UNSUPPORTED,
                         kids = CapabilitySupport.SUPPORTED,
                         ageRestricted = CapabilitySupport.UNSUPPORTED,
-                        live = CapabilitySupport.UNSUPPORTED,
-                        uploads = CapabilitySupport.UNSUPPORTED,
                     ),
             ),
             manifest(
@@ -140,11 +127,8 @@ object PlaybackClientCatalog {
                 content =
                     ClientContentCapabilities(
                         normal = CapabilitySupport.UNSUPPORTED,
-                        explicit = CapabilitySupport.UNSUPPORTED,
                         kids = CapabilitySupport.SUPPORTED,
                         ageRestricted = CapabilitySupport.UNSUPPORTED,
-                        live = CapabilitySupport.UNSUPPORTED,
-                        uploads = CapabilitySupport.UNSUPPORTED,
                     ),
             ),
         )
@@ -201,10 +185,7 @@ object PlaybackClientCatalog {
 
     private fun normalSongsOnlyContent() =
         ClientContentCapabilities(
-            explicit = CapabilitySupport.UNSUPPORTED,
             kids = CapabilitySupport.UNSUPPORTED,
             ageRestricted = CapabilitySupport.UNSUPPORTED,
-            live = CapabilitySupport.UNSUPPORTED,
-            uploads = CapabilitySupport.UNSUPPORTED,
         )
 }

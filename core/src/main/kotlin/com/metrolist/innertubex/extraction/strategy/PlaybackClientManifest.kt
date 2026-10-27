@@ -65,7 +65,6 @@ data class PoTokenRule(
     val requirement: PoTokenRequirement = PoTokenRequirement.NONE,
     val binding: PoTokenBinding? = null,
     val providers: Set<PoTokenProviderKind> = emptySet(),
-    val premiumMayBypass: Boolean = false,
 ) {
     init {
         require(requirement == PoTokenRequirement.NONE || binding != null) {
@@ -85,29 +84,17 @@ data class ClientPoTokenCapabilities(
 
 data class ClientContentCapabilities(
     val normal: CapabilitySupport = CapabilitySupport.SUPPORTED,
-    val explicit: CapabilitySupport = CapabilitySupport.UNKNOWN,
     val kids: CapabilitySupport = CapabilitySupport.UNKNOWN,
     val ageRestricted: CapabilitySupport = CapabilitySupport.UNKNOWN,
-    val live: CapabilitySupport = CapabilitySupport.UNKNOWN,
-    val uploads: CapabilitySupport = CapabilitySupport.UNKNOWN,
 ) {
     fun supportFor(hints: ContentHints): CapabilitySupport =
         when {
-            (hints.isUploaded == true && uploads == CapabilitySupport.UNSUPPORTED) ||
-                (hints.isLive == true && live == CapabilitySupport.UNSUPPORTED) ||
-                (hints.isAgeRestricted == true && ageRestricted == CapabilitySupport.UNSUPPORTED) ||
-                (hints.isKidsContent == true && kids == CapabilitySupport.UNSUPPORTED) ||
-                (hints.isExplicit == true && explicit == CapabilitySupport.UNSUPPORTED) -> CapabilitySupport.UNSUPPORTED
-
-            hints.isUploaded == true -> uploads
-
-            hints.isLive == true -> live
+            (hints.isAgeRestricted == true && ageRestricted == CapabilitySupport.UNSUPPORTED) ||
+                (hints.isKidsContent == true && kids == CapabilitySupport.UNSUPPORTED) -> CapabilitySupport.UNSUPPORTED
 
             hints.isAgeRestricted == true -> ageRestricted
 
             hints.isKidsContent == true -> kids
-
-            hints.isExplicit == true -> explicit
 
             else -> normal
         }

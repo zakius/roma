@@ -19,11 +19,8 @@ enum class ClientFailureKind {
 @Serializable
 enum class ClientHealthContent {
     NORMAL,
-    EXPLICIT,
     KIDS,
     AGE_RESTRICTED,
-    LIVE,
-    UPLOAD,
 }
 
 @Serializable
@@ -39,11 +36,8 @@ data class ClientHealthScope(
             ClientHealthScope(
                 content =
                     when {
-                        hints.isUploaded == true -> ClientHealthContent.UPLOAD
-                        hints.isLive == true -> ClientHealthContent.LIVE
                         hints.isAgeRestricted == true -> ClientHealthContent.AGE_RESTRICTED
                         hints.isKidsContent == true -> ClientHealthContent.KIDS
-                        hints.isExplicit == true -> ClientHealthContent.EXPLICIT
                         else -> ClientHealthContent.NORMAL
                     },
                 authenticated = authenticated,

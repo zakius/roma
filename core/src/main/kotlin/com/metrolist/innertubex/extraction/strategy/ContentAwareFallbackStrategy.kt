@@ -16,24 +16,22 @@ class ContentAwareFallbackStrategy(
             ClientSelectionRequest(
                 hints = hints,
                 authenticated = false,
-                premium = hints.premium,
                 javaScriptRuntimeAvailable = false,
                 webViewAvailable = false,
             ),
         ).candidates.map(SelectedClient::client)
 
-    override fun selectClients(request: ClientSelectionRequest): ClientSelectionResult = selectClients(request, premiumHighQuality = false)
+    override fun selectClients(request: ClientSelectionRequest): ClientSelectionResult = selectClients(request, visitorDataAvailable = false)
 
     internal fun includesVisitorBackedLegacy(excludedClients: Set<String>): Boolean =
         catalog.findManifest("VISIONOS_0_1")?.let {
             it.selectionMode == ClientSelectionMode.PROBE_ONLY &&
-                !it.isExcluded(excludedClients, emptySet(), premiumEntitlement = false)
+                !it.isExcluded(excludedClients, emptySet())
         } == true
 
     internal fun selectClients(
         request: ClientSelectionRequest,
-        premiumHighQuality: Boolean,
-        visitorDataAvailable: Boolean = false,
+        visitorDataAvailable: Boolean,
     ): ClientSelectionResult {
         val rejected = mutableListOf<RejectedClient>()
         request.hints.playbackClientOverrideId?.let(catalog::findManifest)?.let { manifest ->
@@ -42,7 +40,6 @@ class ContentAwareFallbackStrategy(
                 !manifest.isExcluded(
                     request.excludedClients,
                     request.availablePoTokenProviders,
-                    manifest.hasUsablePremiumEntitlement(request),
                 )
             ) {
                 return ClientSelectionResult(
@@ -75,7 +72,6 @@ class ContentAwareFallbackStrategy(
                 manifest.isExcluded(
                     request.excludedClients,
                     request.availablePoTokenProviders,
-                    manifest.hasUsablePremiumEntitlement(request),
                 )
             ) {
                 return@forEach
@@ -102,18 +98,6 @@ class ContentAwareFallbackStrategy(
 
                         else -> 1
                     }
-                }.thenBy {
-                    // Only Premium gains quality from cookies.
-                    if (request.authenticated &&
-                        request.premium &&
-                        premiumHighQuality &&
-                        request.hints.isKidsContent != true &&
-                        it.manifest?.authentication == AuthenticationPolicy.UNSUPPORTED
-                    ) {
-                        1
-                    } else {
-                        0
-                    }
                 }.thenByDescending { it.score }
                     .thenBy { it.manifest?.id },
             )
@@ -136,9 +120,6 @@ class ContentAwareFallbackStrategy(
             }
             if (manifest.authentication == AuthenticationPolicy.REQUIRED && !request.authenticated) {
                 add("login required")
-            }
-            if (request.hints.isUploaded == true && !request.authenticated) {
-                add("uploads require login")
             }
 
             val contentSupport = manifest.content.supportFor(request.hints)
@@ -163,7 +144,6 @@ class ContentAwareFallbackStrategy(
                 listOf("player" to manifest.poTokens.player, "GVS" to manifest.poTokens.gvs)
                     .filter { (_, rule) ->
                         rule.requirement == PoTokenRequirement.REQUIRED &&
-                            !(manifest.hasUsablePremiumEntitlement(request) && rule.premiumMayBypass) &&
                             rule.providers.none { it in request.availablePoTokenProviders }
                     }.map { it.first }
             if (missingTokenRules.isNotEmpty()) {
@@ -173,10 +153,7 @@ class ContentAwareFallbackStrategy(
             if (request.fastPathOnly) {
                 if (manifest.request.signatureTimestamp) add("watch config excluded from fast path")
                 val requiresToken =
-                    listOf(manifest.poTokens.player, manifest.poTokens.gvs).any {
-                        it.requirement == PoTokenRequirement.REQUIRED &&
-                            !(manifest.hasUsablePremiumEntitlement(request) && it.premiumMayBypass)
-                    }
+                    listOf(manifest.poTokens.player, manifest.poTokens.gvs).any { it.requirement == PoTokenRequirement.REQUIRED }
                 if (requiresToken) add("token generation excluded from fast path")
                 if (manifest.request.signatureCipher == JavaScriptRequirement.REQUIRED) {
                     add("signature transform excluded from fast path")
@@ -190,7 +167,6 @@ class ContentAwareFallbackStrategy(
     private fun PlaybackClientManifest.isExcluded(
         excludedClients: Set<String>,
         availablePoTokenProviders: Set<PoTokenProviderKind>,
-        premiumEntitlement: Boolean,
     ): Boolean =
         client.clientName in excludedClients ||
             id in excludedClients ||
@@ -203,17 +179,11 @@ class ContentAwareFallbackStrategy(
                         rule.requirement != PoTokenRequirement.NONE &&
                             rule.providers.any { it in availablePoTokenProviders }
                     }
-                val requiresPoTokens =
-                    tokenRules.any {
-                        it.requirement == PoTokenRequirement.REQUIRED && !(premiumEntitlement && it.premiumMayBypass)
-                    }
+                val requiresPoTokens = tokenRules.any { it.requirement == PoTokenRequirement.REQUIRED }
                 (noPoExcluded && poExcluded) ||
                     (!canUsePoTokens && noPoExcluded) ||
                     (requiresPoTokens && poExcluded)
             }
-
-    private fun PlaybackClientManifest.hasUsablePremiumEntitlement(request: ClientSelectionRequest): Boolean =
-        request.premium && request.authenticated && client.loginSupported
 
     private fun score(
         manifest: PlaybackClientManifest,
@@ -237,11 +207,7 @@ class ContentAwareFallbackStrategy(
             CapabilitySupport.UNSUPPORTED -> Unit
         }
 
-        val restrictedContent =
-            request.hints.isExplicit == true ||
-                request.hints.isKidsContent == true ||
-                request.hints.isAgeRestricted == true ||
-                request.hints.isUploaded == true
+        val restrictedContent = request.hints.isKidsContent == true || request.hints.isAgeRestricted == true
         if (restrictedContent && manifest.authentication == AuthenticationPolicy.OPTIONAL) {
             adjust(if (request.authenticated) 18 else -18, if (request.authenticated) "authenticated" else "signed-out")
         }

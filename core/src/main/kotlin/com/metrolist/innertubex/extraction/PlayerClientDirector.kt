@@ -71,7 +71,6 @@ internal class PlayerClientDirector(
         excludedClients: Set<String> = emptySet(),
         acceptCipherOnlyResponse: Boolean = false,
         directAudioOnlyClients: Boolean = false,
-        premiumHighQuality: Boolean = false,
         requestBudget: PlayerRequestBudget? = null,
         prefetchedPoToken: PoTokenPrefetch? = null,
     ): PlayerResponseBatch {
@@ -84,7 +83,6 @@ internal class PlayerClientDirector(
                 excludedClients,
                 acceptCipherOnlyResponse,
                 directAudioOnlyClients,
-                premiumHighQuality,
                 budget,
                 prefetchedPoToken,
             )
@@ -98,7 +96,6 @@ internal class PlayerClientDirector(
         excludedClients: Set<String>,
         acceptCipherOnlyResponse: Boolean,
         directAudioOnlyClients: Boolean,
-        premiumHighQuality: Boolean,
         requestBudget: PlayerRequestBudget,
         prefetchedPoToken: PoTokenPrefetch?,
     ): PlayerResponseBatch {
@@ -118,7 +115,6 @@ internal class PlayerClientDirector(
             ClientSelectionRequest(
                 hints = routingHints,
                 authenticated = authenticated,
-                premium = hints.premium,
                 availablePoTokenProviders = tokenProvider.capabilities.providers,
                 javaScriptRuntimeAvailable = playerConfig.playerUrl.isNotBlank(),
                 webViewAvailable = tokenProvider.capabilities.usesWebView,
@@ -127,7 +123,7 @@ internal class PlayerClientDirector(
             )
         val selection =
             if (fallbackStrategy is ContentAwareFallbackStrategy) {
-                fallbackStrategy.selectClients(selectionRequest, premiumHighQuality, requestVisitorData != null)
+                fallbackStrategy.selectClients(selectionRequest, requestVisitorData != null)
             } else {
                 fallbackStrategy.selectClients(selectionRequest)
             }
@@ -142,12 +138,7 @@ internal class PlayerClientDirector(
                     )
                 }
         val clients =
-            selection.candidates.filterNot { selected ->
-                selected.isExcluded(
-                    excludedClients,
-                    premiumEntitlement = selected.hasUsablePremiumEntitlement(authenticated, hints.premium),
-                )
-            }
+            selection.candidates.filterNot { it.isExcluded(excludedClients) }
         val playableResults = mutableListOf<ClientResult>()
         val failures = mutableListOf<PlayabilityFailure>()
         val requestFailures = mutableListOf<Throwable>()
@@ -180,7 +171,6 @@ internal class PlayerClientDirector(
             ) {
                 continue
             }
-            val premiumEntitlement = selectedClient.hasUsablePremiumEntitlement(authenticated, hints.premium)
             val untokenizedProfileFailed =
                 selectedClient.canUsePoTokens() &&
                     selectedClient.profileIds(usedPoToken = false).any { it in excludedClients }
@@ -191,18 +181,9 @@ internal class PlayerClientDirector(
                     videoId = videoId,
                     playerConfig = playerConfig,
                     hints = hints,
-                    allowUntokenizedWebPoClient =
-                        selectedClient.allowsUntokenizedPlayback(
-                            authenticated = authenticated,
-                            premiumEntitlement = premiumEntitlement,
-                        ),
-                    premiumEntitlement = premiumEntitlement,
+                    allowUntokenizedWebPoClient = selectedClient.allowsUntokenizedPlayback(authenticated),
                     forcePoToken =
-                        (
-                            hints.playbackClientOverrideId != null &&
-                                selectedClient.canUsePoTokens() &&
-                                !premiumEntitlement
-                        ) ||
+                        (hints.playbackClientOverrideId != null && selectedClient.canUsePoTokens()) ||
                             untokenizedProfileFailed,
                     requestSession = requestSession,
                     requestBudget = effectiveRequestBudget,
@@ -336,7 +317,6 @@ internal class PlayerClientDirector(
         playerConfig: PlayerConfig,
         hints: ContentHints,
         allowUntokenizedWebPoClient: Boolean,
-        premiumEntitlement: Boolean,
         forcePoToken: Boolean,
         requestSession: InnerTube.SessionSnapshot,
         requestBudget: PlayerRequestBudget,
@@ -344,7 +324,7 @@ internal class PlayerClientDirector(
     ): ClientAttemptResult =
         try {
             val client = selectedClient.client
-            val tokenPlan = selectedClient.tokenPlan(premiumEntitlement)
+            val tokenPlan = selectedClient.tokenPlan()
             val knownTokenKey =
                 requestSession.visitorData?.takeIf(String::isNotBlank)?.let {
                     PoTokenRequestKey(videoId, it, requestSession.cookie.takeIf { selectedClient.manifest?.request?.cookies != false })
@@ -459,7 +439,7 @@ internal class PlayerClientDirector(
         val retryRestrictedWithPoToken =
             !initialPlayable &&
                 tokenCanChangeRequest &&
-                (hints.isUploaded == true || hints.isAgeRestricted == true)
+                hints.isAgeRestricted == true
         if (!initialPlayable && !retryRestrictedWithPoToken) {
             return ClientAttemptResult(null, initialFailure, observedResponse = initialResponse)
         }
@@ -722,16 +702,13 @@ internal class PlayerClientDirector(
         return copy(client = client.copy(clientVersion = liveVersion))
     }
 
-    private fun SelectedClient.isExcluded(
-        excludedClients: Set<String>,
-        premiumEntitlement: Boolean,
-    ): Boolean {
+    private fun SelectedClient.isExcluded(excludedClients: Set<String>): Boolean {
         if (client.clientName in excludedClients) return true
         val noPoExcluded = profileIds(usedPoToken = false).any { it in excludedClients }
         val poExcluded = profileIds(usedPoToken = true).any { it in excludedClients }
         return (noPoExcluded && poExcluded) ||
             (!canUsePoTokens() && noPoExcluded) ||
-            (requiresPoTokens(premiumEntitlement) && poExcluded)
+            (tokenPlan().tokenRequired && poExcluded)
     }
 
     private fun SelectedClient.profileIds(usedPoToken: Boolean): Set<String> =
@@ -744,24 +721,14 @@ internal class PlayerClientDirector(
 
     private fun SelectedClient.canUsePoTokens(): Boolean = tokenPlan().canMint
 
-    private fun SelectedClient.requiresPoTokens(premiumEntitlement: Boolean): Boolean = tokenPlan(premiumEntitlement).tokenRequired
-
-    private fun SelectedClient.hasUsablePremiumEntitlement(
-        authenticated: Boolean,
-        premium: Boolean,
-    ): Boolean = premium && authenticated && client.loginSupported
-
-    private fun SelectedClient.allowsUntokenizedPlayback(
-        authenticated: Boolean,
-        premiumEntitlement: Boolean,
-    ): Boolean =
+    private fun SelectedClient.allowsUntokenizedPlayback(authenticated: Boolean): Boolean =
         ("manual override" in reasons && !canUsePoTokens()) ||
             manifest?.let {
-                it.poTokens.player.isSatisfiedByPremium(premiumEntitlement) &&
-                    it.poTokens.gvs.isSatisfiedByPremium(premiumEntitlement)
+                it.poTokens.player.requirement != PoTokenRequirement.REQUIRED &&
+                    it.poTokens.gvs.requirement != PoTokenRequirement.REQUIRED
             } ?: (!client.useWebPoTokens || authenticated)
 
-    private fun SelectedClient.tokenPlan(premiumEntitlement: Boolean = false): TokenPlan {
+    private fun SelectedClient.tokenPlan(): TokenPlan {
         val declaredManifest = manifest
         if (declaredManifest == null) {
             return TokenPlan(
@@ -781,13 +748,10 @@ internal class PlayerClientDirector(
         return TokenPlan(
             playerBinding = compatibleBinding(declaredManifest.poTokens.player),
             gvsBinding = compatibleBinding(declaredManifest.poTokens.gvs),
-            playerRequired = !declaredManifest.poTokens.player.isSatisfiedByPremium(premiumEntitlement),
-            gvsRequired = !declaredManifest.poTokens.gvs.isSatisfiedByPremium(premiumEntitlement),
+            playerRequired = declaredManifest.poTokens.player.requirement == PoTokenRequirement.REQUIRED,
+            gvsRequired = declaredManifest.poTokens.gvs.requirement == PoTokenRequirement.REQUIRED,
         )
     }
-
-    private fun PoTokenRule.isSatisfiedByPremium(premiumEntitlement: Boolean): Boolean =
-        requirement != PoTokenRequirement.REQUIRED || (premiumEntitlement && premiumMayBypass)
 
     private fun PoTokenResult.tokenFor(binding: PoTokenBinding): String =
         when (binding) {

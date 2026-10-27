@@ -263,13 +263,7 @@ class InnerTubeExtractor internal constructor(
             throwExtractionFailure(diagnostics)
         }
 
-        val authenticatedPremiumHighQuality =
-            hints.premium && audioQuality == AudioQuality.HIGH && innerTube.hasSapCookieAuth()
-        val configFreeEligible =
-            hints.playbackClientOverrideId == null &&
-                hints.isAgeRestricted != true &&
-                hints.isUploaded != true && hints.isLive != true &&
-                !authenticatedPremiumHighQuality
+        val configFreeEligible = hints.playbackClientOverrideId == null && hints.isAgeRestricted != true
         val deferConfigFree =
             configFreeEligible && hints.isKidsContent != true &&
                 innerTube.sessionSnapshot().visitorData.isNullOrBlank() &&
@@ -308,14 +302,7 @@ class InnerTubeExtractor internal constructor(
             }
 
         val cookieFirst =
-            hints.playbackClientOverrideId == null &&
-                innerTube.hasSapCookieAuth() &&
-                (
-                    authenticatedPremiumHighQuality ||
-                        hints.isExplicit == true ||
-                        hints.isAgeRestricted == true ||
-                        hints.isUploaded == true
-                )
+            hints.playbackClientOverrideId == null && innerTube.hasSapCookieAuth() && hints.isAgeRestricted == true
         val stream = extractWithWatchConfig(useLoginCookies = cookieFirst)
         if (stream != null) return stream
         if (diagnostics.unavailable) throwExtractionFailure(diagnostics)
@@ -335,7 +322,7 @@ class InnerTubeExtractor internal constructor(
         // Embedded player context fallback when the regular watch-page clients fail.
         // Uploaded songs intentionally do not use this path because embedded
         // playback does not expose the user's private upload library.
-        if (hints.playbackClientOverrideId == null && hints.isUploaded != true) {
+        if (hints.playbackClientOverrideId == null) {
             val embeddedStream =
                 extractWithEmbeddedConfig(
                     videoId = videoId,
@@ -372,10 +359,7 @@ class InnerTubeExtractor internal constructor(
     ): Boolean =
         hints.playbackClientOverrideId == null &&
             hints.isKidsContent == null &&
-            hints.isExplicit != true &&
             hints.isAgeRestricted != true &&
-            hints.isLive != true &&
-            hints.isUploaded != true &&
             classifiedFailure != StreamResolveException.Reason.AGE_RESTRICTED
 
     private suspend fun extractWithWebKidsFallback(
@@ -626,7 +610,6 @@ class InnerTubeExtractor internal constructor(
                 excludedClients = excludedClients,
                 acceptCipherOnlyResponse = allowCipherProcessing,
                 directAudioOnlyClients = !allowCipherProcessing,
-                premiumHighQuality = hints.premium && audioQuality == AudioQuality.HIGH,
                 requestBudget = diagnostics.requestBudget,
             )
         diagnostics.ensureSessionCurrent()
@@ -695,8 +678,6 @@ class InnerTubeExtractor internal constructor(
                             diagnostics,
                             result.clientName,
                             result.userAgent,
-                            directUrl,
-                            hints.isUploaded == true,
                         )
                     val contentLength =
                         resolveBoundedContentLength(
@@ -772,8 +753,6 @@ class InnerTubeExtractor internal constructor(
                     diagnostics,
                     result.clientName,
                     result.userAgent,
-                    url,
-                    hints.isUploaded == true,
                 )
             val contentLength =
                 resolveBoundedContentLength(
@@ -863,8 +842,6 @@ class InnerTubeExtractor internal constructor(
         diagnostics: ExtractionDiagnostics,
         clientName: String,
         userAgent: String,
-        mediaUrl: String? = null,
-        includeLoginCookies: Boolean = false,
     ): Map<String, String> {
         diagnostics.ensureSessionCurrent()
         val session = diagnostics.session
@@ -897,11 +874,6 @@ class InnerTubeExtractor internal constructor(
                     headers["Origin"] = "https://www.youtube.com"
                 }
             }
-        }
-        if (includeLoginCookies && mediaUrl?.let(::isAllowedMediaUrl) == true) {
-            session.cookie
-                ?.takeIf(String::isNotBlank)
-                ?.let { headers["Cookie"] = it }
         }
         return headers
     }
