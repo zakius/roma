@@ -17,7 +17,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.util.Clock
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
@@ -27,7 +26,6 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.RenderersFactory
-import androidx.media3.exoplayer.analytics.DefaultAnalyticsCollector
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
@@ -139,7 +137,7 @@ object Playback {
         // also keeps the default bandwidth meter out of the APK.
         player = ExoPlayer.Builder(
             c, audio, ProgressiveMediaSource.Factory(source, containers).setLoadErrorHandlingPolicy(WaitForNetwork),
-            DefaultTrackSelector(c), AheadLoadControl(load), NoBandwidthMeter, DefaultAnalyticsCollector(Clock.DEFAULT),
+            DefaultTrackSelector(c), AheadLoadControl(load), NoBandwidthMeter, NoAnalytics,
         )
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
@@ -1211,4 +1209,37 @@ private object NoBandwidthMeter : androidx.media3.exoplayer.upstream.BandwidthMe
     override fun getTransferListener(): androidx.media3.datasource.TransferListener? = null
     override fun addEventListener(handler: Handler, listener: androidx.media3.exoplayer.upstream.BandwidthMeter.EventListener) {}
     override fun removeEventListener(listener: androidx.media3.exoplayer.upstream.BandwidthMeter.EventListener) {}
+}
+
+/** Nothing in roma listens for analytics events, and platform diagnostics are off: ExoPlayer's events go nowhere. */
+private object NoAnalytics : androidx.media3.exoplayer.analytics.AnalyticsCollector {
+    override fun addListener(listener: androidx.media3.exoplayer.analytics.AnalyticsListener) {}
+    override fun removeListener(listener: androidx.media3.exoplayer.analytics.AnalyticsListener) {}
+    override fun setPlayer(player: Player, looper: android.os.Looper) {}
+    override fun release() {}
+    override fun updateMediaPeriodQueueInfo(queue: List<androidx.media3.exoplayer.source.MediaSource.MediaPeriodId>, readingPeriod: androidx.media3.exoplayer.source.MediaSource.MediaPeriodId?) {}
+    override fun notifySeekStarted() {}
+    override fun onRendererReadyChanged(rendererIndex: Int, rendererTrackType: Int, isRendererReady: Boolean) {}
+    override fun onAudioEnabled(counters: androidx.media3.exoplayer.DecoderCounters) {}
+    override fun onAudioDecoderInitialized(decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {}
+    override fun onAudioInputFormatChanged(format: androidx.media3.common.Format, decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?) {}
+    override fun onAudioPositionAdvancing(playoutStartSystemTimeMs: Long) {}
+    override fun onAudioUnderrun(bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {}
+    override fun onAudioDecoderReleased(decoderName: String) {}
+    override fun onAudioDisabled(counters: androidx.media3.exoplayer.DecoderCounters) {}
+    override fun onAudioSinkError(audioSinkError: Exception) {}
+    override fun onAudioCodecError(audioCodecError: Exception) {}
+    override fun onAudioTrackInitialized(audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig) {}
+    override fun onAudioTrackReleased(audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig) {}
+    override fun onVideoEnabled(counters: androidx.media3.exoplayer.DecoderCounters) {}
+    override fun onVideoDecoderInitialized(decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {}
+    override fun onVideoInputFormatChanged(format: androidx.media3.common.Format, decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?) {}
+    override fun onDroppedFrames(droppedFrames: Int, elapsedMs: Long) {}
+    override fun onVideoDecoderReleased(decoderName: String) {}
+    override fun onVideoDisabled(counters: androidx.media3.exoplayer.DecoderCounters) {}
+    override fun onRenderedFirstFrame(output: Any, renderTimeMs: Long) {}
+    override fun onVideoFrameProcessingOffset(totalProcessingOffsetUs: Long, frameCount: Int) {}
+    override fun onVideoCodecError(videoCodecError: Exception) {}
+    override fun onDroppedSeeksWhileScrubbing(droppedSeeks: Int) {}
+    override fun onBandwidthSample(elapsedMs: Int, bytesTransferred: Long, bitrateEstimate: Long) {}
 }
