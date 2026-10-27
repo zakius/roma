@@ -12,11 +12,10 @@ java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
 }
-kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_21 } }
+kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_21; optIn.add("kotlin.ExperimentalStdlibApi") } }
 
 dependencies {
-    // YouTube Music API: the vendored com.metrolist.innertube sources sit on top of InnerTubeX.
-    api("com.github.MetrolistGroup.innertubex:innertubex:v0.11.2")
+    // YouTube Music API: the vendored com.metrolist.innertube sources sit on top of InnerTubeX (vendored too).
     api("io.ktor:ktor-client-core:3.6.0")
     implementation("io.ktor:ktor-client-android:3.6.0")
     implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
@@ -26,7 +25,7 @@ dependencies {
     implementation("com.worksap.nlp:sudachi:0.8.2")
     // Sudachi's own trie, for roma's dictionary format (RomaDictionary.kt); the version Sudachi depends on.
     implementation("com.worksap.nlp:jdartsclone:1.2.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
     testImplementation(kotlin("test"))
     // Android supplies android.icu; on the JVM the tests use ICU4J.
     testImplementation("com.ibm.icu:icu4j:78.1")
