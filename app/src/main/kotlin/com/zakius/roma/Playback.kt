@@ -17,6 +17,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.Clock
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
@@ -26,10 +27,12 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.RenderersFactory
+import androidx.media3.exoplayer.analytics.DefaultAnalyticsCollector
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.mp4.FragmentedMp4Extractor
@@ -130,15 +133,17 @@ object Playback {
         }
         val none = SubtitleParser.Factory.UNSUPPORTED
         val containers = ExtractorsFactory { arrayOf(MatroskaExtractor(none), FragmentedMp4Extractor(none), Mp4Extractor(none)) }
-        player = ExoPlayer.Builder(c, audio, ProgressiveMediaSource.Factory(source, containers).setLoadErrorHandlingPolicy(WaitForNetwork))
+        // NoBandwidthMeter and no diagnostics: neither is used for one audio stream at a time, and both cost binder calls
+        // during the launch: the default bandwidth meter watches the network type and asks telephony for the country,
+        // the diagnostics report each playback session to MediaMetrics. The constructor that takes every component
+        // also keeps the default bandwidth meter out of the APK.
+        player = ExoPlayer.Builder(
+            c, audio, ProgressiveMediaSource.Factory(source, containers).setLoadErrorHandlingPolicy(WaitForNetwork),
+            DefaultTrackSelector(c), AheadLoadControl(load), NoBandwidthMeter, DefaultAnalyticsCollector(Clock.DEFAULT),
+        )
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
-            .setLoadControl(AheadLoadControl(load))
-            // Neither is used for one audio stream at a time, and both cost binder calls during the launch: the default
-            // bandwidth meter watches the network type and asks telephony for the country, the diagnostics report each
-            // playback session to MediaMetrics.
-            .setBandwidthMeter(NoBandwidthMeter)
             .setUsePlatformDiagnostics(false)
             .build()
         Startup.later { scope.launch {
