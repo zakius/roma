@@ -11,3 +11,12 @@
     static void checkParameterIsNotNull(...);
     static void checkNotNullParameter(...);
 }
+# Ktor logs through slf4j, which has no backend in roma and discards everything.
+-assumenosideeffects interface org.slf4j.Logger {
+    public boolean is*Enabled(...) return false;
+    public void trace(...);
+    public void debug(...);
+    public void info(...);
+    public void warn(...);
+    public void error(...);
+}
