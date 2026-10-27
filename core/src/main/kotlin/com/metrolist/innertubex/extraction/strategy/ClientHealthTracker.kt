@@ -1,13 +1,11 @@
 package com.metrolist.innertubex.extraction.strategy
 
 import com.metrolist.innertubex.extraction.ContentHints
-import kotlinx.serialization.Serializable
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.math.min
 import kotlin.time.Clock
 
-@Serializable
 enum class ClientFailureKind {
     PLAYER_REQUEST,
     PLAYABILITY,
@@ -16,14 +14,12 @@ enum class ClientFailureKind {
     MEDIA_FAILURE,
 }
 
-@Serializable
 enum class ClientHealthContent {
     NORMAL,
     KIDS,
     AGE_RESTRICTED,
 }
 
-@Serializable
 data class ClientHealthScope(
     val content: ClientHealthContent,
     val authenticated: Boolean,

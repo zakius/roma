@@ -826,8 +826,6 @@ internal class PlayerClientDirector(
             )
             append(",hls=")
             append(if (!response.streamingData?.hlsManifestUrl.isNullOrBlank()) "present" else "absent")
-            append(",dash=")
-            append(if (!response.streamingData?.dashManifestUrl.isNullOrBlank()) "present" else "absent")
         }
     }
 

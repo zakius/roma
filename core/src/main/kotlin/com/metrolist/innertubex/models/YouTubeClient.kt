@@ -1,14 +1,11 @@
 package com.metrolist.innertubex.models
 
-import kotlinx.serialization.Serializable
 
-@Serializable
 enum class PoTokenBinding {
     VIDEO_ID,
     VISITOR_DATA,
 }
 
-@Serializable
 data class YouTubeClient(
     val clientName: String,
     val clientVersion: String,
