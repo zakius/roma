@@ -6,8 +6,6 @@ import kotlinx.serialization.Serializable
 class MusicCarouselShelfRenderer(
     val header: Header?,
     val contents: List<Content>,
-    val itemSize: String,
-    val numItemsPerColumn: Int?,
 ) {
     @Serializable
     class Header(
@@ -27,6 +25,5 @@ class MusicCarouselShelfRenderer(
         val musicTwoRowItemRenderer: MusicTwoRowItemRenderer?,
         val musicResponsiveListItemRenderer: MusicResponsiveListItemRenderer?,
         val musicMultiRowListItemRenderer: MusicMultiRowListItemRenderer?,
-        val musicNavigationButtonRenderer: MusicNavigationButtonRenderer?, // navigation button in explore tab
     )
 }

@@ -14,7 +14,6 @@ class SearchSuggestionsSectionRenderer(
         @Serializable
         class SearchSuggestionRenderer(
             val suggestion: Runs,
-            val navigationEndpoint: NavigationEndpoint,
         )
     }
 }

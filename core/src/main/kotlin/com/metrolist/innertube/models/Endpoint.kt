@@ -80,29 +80,11 @@ data class BrowseEndpoint(
 @Serializable
 data class SearchEndpoint(
     val params: String?,
-    val query: String,
 ) : Endpoint()
 
 @Serializable
 data class FeedbackEndpoint(
     val feedbackToken: String
-) : Endpoint()
-
-@Serializable
-data class QueueAddEndpoint(
-    val queueInsertPosition: String,
-    val queueTarget: QueueTarget,
-) : Endpoint() {
-    @Serializable
-    data class QueueTarget(
-        val videoId: String? = null,
-        val playlistId: String? = null,
-    )
-}
-
-@Serializable
-data class ShareEntityEndpoint(
-    val serializedShareEntity: String,
 ) : Endpoint()
 
 @Serializable
@@ -113,7 +95,6 @@ data class DefaultServiceEndpoint(
     @Serializable
     data class SubscribeEndpoint(
         val channelIds: List<String>,
-        val params: String? = null,
     ) : Endpoint()
 }
 

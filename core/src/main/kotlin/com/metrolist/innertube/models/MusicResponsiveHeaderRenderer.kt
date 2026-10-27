@@ -15,22 +15,8 @@ class MusicResponsiveHeaderRenderer(
 ) {
     @Serializable
     class Button(
-        val musicPlayButtonRenderer: MusicPlayButtonRenderer? = null,
         val menuRenderer: Menu.MenuRenderer? = null,
-        val toggleButtonRenderer: ToggleButtonRenderer? = null,
-    ) {
-        @Serializable
-        class MusicPlayButtonRenderer(
-            val playNavigationEndpoint: NavigationEndpoint? = null,
-        )
-
-        @Serializable
-        class ToggleButtonRenderer(
-            val defaultIcon: Icon? = null,
-            val defaultServiceEndpoint: DefaultServiceEndpoint? = null,
-            val toggledServiceEndpoint: ToggledServiceEndpoint? = null,
-        )
-    }
+    )
 }
 
 @Serializable

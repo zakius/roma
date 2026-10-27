@@ -8,11 +8,6 @@ class NavigationEndpoint(
     val watchPlaylistEndpoint: WatchEndpoint? = null,
     val browseEndpoint: BrowseEndpoint? = null,
     val searchEndpoint: SearchEndpoint? = null,
-    val queueAddEndpoint: QueueAddEndpoint? = null,
-    val shareEntityEndpoint: ShareEntityEndpoint? = null,
-    val feedbackEndpoint: FeedbackEndpoint? = null,
-    val urlEndpoint: UrlEndpoint? = null,
-    val deletePrivatelyOwnedEntityCommand: DeletePrivatelyOwnedEntityCommand? = null,
     val confirmDialogEndpoint: ConfirmDialogEndpoint? = null,
 ) {
     @Serializable
@@ -55,8 +50,6 @@ class NavigationEndpoint(
                 ?: watchPlaylistEndpoint
                 ?: browseEndpoint
                 ?: searchEndpoint
-                ?: queueAddEndpoint
-                ?: shareEntityEndpoint
 
     val anyWatchEndpoint: WatchEndpoint?
         get() = watchEndpoint
