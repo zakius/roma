@@ -204,8 +204,7 @@ object InnerTubeXStreams {
 
     /** Blocking. Throws [StreamResolveException] with a plain reason ("This track is age-restricted.") on refusal. */
     fun audio(videoId: String, excludedClients: Set<String> = emptySet()): AudioSource = runBlocking {
-        val hints = ContentHints().withStreamCapabilities(false, true) // direct URLs only: no HLS (InnerTubeX here has no SABR)
-        val s = extractor().extract(videoId, hints, excludedClients, AudioQuality.HIGH, generateClientPlaybackNonce())
+        val s = extractor().extract(videoId, ContentHints(), excludedClients, AudioQuality.HIGH, generateClientPlaybackNonce())
             ?: throw StreamResolveException(StreamResolveException.Reason.NO_PLAYABLE_STREAM, "No playable stream found for this track.", null, null)
         println("roma streams: $videoId via InnerTubeX ${s.profileId}") // which client, for logcat; no tokens
         s.loudnessDb?.let { Streams.putLoudness(videoId, it.toFloat()) }

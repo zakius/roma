@@ -10,7 +10,6 @@ import com.metrolist.innertubex.extraction.strategy.ClientHealthScope
 import com.metrolist.innertubex.extraction.strategy.ClientSelectionRequest
 import com.metrolist.innertubex.extraction.strategy.ContentAwareFallbackStrategy
 import com.metrolist.innertubex.extraction.strategy.PlaybackClientCatalog
-import com.metrolist.innertubex.extraction.strategy.PlaybackTransportPreference
 import com.metrolist.innertubex.extraction.strategy.PoTokenRequirement
 import com.metrolist.innertubex.extraction.strategy.PoTokenRule
 import com.metrolist.innertubex.extraction.strategy.SelectedClient
@@ -156,12 +155,6 @@ internal class PlayerClientDirector(
                 javaScriptRuntimeAvailable = playerConfig.playerUrl.isNotBlank(),
                 webViewAvailable = tokenProvider.capabilities.usesWebView,
                 fastPathOnly = directAudioOnlyClients,
-                transportPreference =
-                    when {
-                        hints.isLive == true -> PlaybackTransportPreference.HLS
-
-                        else -> PlaybackTransportPreference.AUTO
-                    },
                 excludedClients = excludedClients,
             )
         val selection =

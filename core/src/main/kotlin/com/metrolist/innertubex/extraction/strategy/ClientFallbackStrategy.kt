@@ -3,12 +3,6 @@ package com.metrolist.innertubex.extraction.strategy
 import com.metrolist.innertubex.extraction.ContentHints
 import com.metrolist.innertubex.models.YouTubeClient
 
-enum class PlaybackTransportPreference {
-    AUTO,
-    DIRECT,
-    HLS,
-}
-
 data class ClientSelectionRequest(
     val hints: ContentHints,
     val authenticated: Boolean,
@@ -17,7 +11,6 @@ data class ClientSelectionRequest(
     val javaScriptRuntimeAvailable: Boolean = true,
     val webViewAvailable: Boolean = false,
     val fastPathOnly: Boolean = false,
-    val transportPreference: PlaybackTransportPreference = PlaybackTransportPreference.AUTO,
     val excludedClients: Set<String> = emptySet(),
 )
 

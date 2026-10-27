@@ -46,7 +46,6 @@ object PlaybackClientCatalog {
                 lifecycle = ClientLifecycle.DEPRECATED,
                 selectionMode = ClientSelectionMode.PROBE_ONLY,
                 priority = 100,
-                transports = setOf(PlaybackTransport.DIRECT),
                 content = normalSongsOnlyContent().copy(explicit = CapabilitySupport.SUPPORTED),
             ),
             manifest(
@@ -56,7 +55,6 @@ object PlaybackClientCatalog {
                 selectionMode = ClientSelectionMode.AUTOMATIC,
                 priority = 70,
                 authentication = AuthenticationPolicy.OPTIONAL,
-                transports = setOf(PlaybackTransport.DIRECT, PlaybackTransport.HLS),
                 poTokens = ClientPoTokenCapabilities(player = webPlayerNotRequired, gvs = webGvsRequired),
                 request = webRequest,
                 content = validatedRestrictedWebContent,
@@ -68,7 +66,6 @@ object PlaybackClientCatalog {
                 selectionMode = ClientSelectionMode.AUTOMATIC,
                 priority = 55,
                 authentication = AuthenticationPolicy.REQUIRED,
-                transports = setOf(PlaybackTransport.DIRECT, PlaybackTransport.HLS),
                 poTokens = ClientPoTokenCapabilities(player = webPlayerNotRequired, gvs = webGvsRequired),
                 request = webRequest,
                 content = validatedRestrictedWebContent,
@@ -79,7 +76,6 @@ object PlaybackClientCatalog {
                 lifecycle = ClientLifecycle.EXPERIMENTAL,
                 selectionMode = ClientSelectionMode.AUTOMATIC,
                 priority = 42,
-                transports = setOf(PlaybackTransport.DIRECT, PlaybackTransport.HLS),
                 poTokens = ClientPoTokenCapabilities(player = webSessionPlayerRequired, gvs = webGvsRequired),
                 request =
                     webRequest.copy(
@@ -102,7 +98,6 @@ object PlaybackClientCatalog {
                 selectionMode = ClientSelectionMode.AUTOMATIC,
                 priority = 65,
                 authentication = AuthenticationPolicy.OPTIONAL,
-                transports = setOf(PlaybackTransport.DIRECT, PlaybackTransport.HLS),
                 request =
                     webRequest.copy(
                         embedded = true,
@@ -125,7 +120,6 @@ object PlaybackClientCatalog {
                 lifecycle = ClientLifecycle.EXPERIMENTAL,
                 selectionMode = ClientSelectionMode.AUTOMATIC,
                 priority = 55,
-                transports = setOf(PlaybackTransport.DIRECT),
                 request = webRequest.copy(cookies = false),
                 content =
                     ClientContentCapabilities(
@@ -143,7 +137,6 @@ object PlaybackClientCatalog {
                 lifecycle = ClientLifecycle.EXPERIMENTAL,
                 selectionMode = ClientSelectionMode.AUTOMATIC,
                 priority = 60,
-                transports = setOf(PlaybackTransport.DIRECT),
                 content =
                     ClientContentCapabilities(
                         normal = CapabilitySupport.UNSUPPORTED,
@@ -186,7 +179,6 @@ object PlaybackClientCatalog {
         lifecycle: ClientLifecycle,
         selectionMode: ClientSelectionMode,
         authentication: AuthenticationPolicy = AuthenticationPolicy.UNSUPPORTED,
-        transports: Set<PlaybackTransport>,
         poTokens: ClientPoTokenCapabilities = ClientPoTokenCapabilities(),
         request: ClientRequestCapabilities =
             ClientRequestCapabilities(
@@ -201,7 +193,6 @@ object PlaybackClientCatalog {
         lifecycle = lifecycle,
         selectionMode = selectionMode,
         authentication = authentication,
-        transports = transports,
         poTokens = poTokens,
         request = request,
         content = content,

@@ -957,58 +957,6 @@ class InnerTubeExtractor internal constructor(
                     .distinct()
                     .sorted()
 
-            val isLive = response.videoDetails?.isLiveContent == true
-
-            val hlsManifestUrl =
-                streamingData.hlsManifestUrl
-                    ?.withPoToken(result.streamingDataPoToken)
-                    ?.let { appendClientPlaybackNonce(it, clientPlaybackNonce) }
-            val hasAnyVideoFormat = allFormats.any { it.width != null }
-            val needsVideoButNoVideoFormats = hints.wantVideo && !hasAnyVideoFormat
-
-            if (
-                !hlsManifestUrl.isNullOrBlank() &&
-                hints.allowHls &&
-                isAllowedHlsUrl(hlsManifestUrl) &&
-                (
-                    isLive || allFormats.isEmpty() || needsVideoButNoVideoFormats || result.clientName == "TVHTML5_SIMPLY" ||
-                        (requireBoundedRange && !hints.allowBoundedRange)
-                )
-            ) {
-                return ExtractedStream(
-                    videoId = videoId,
-                    audioUrl = hlsManifestUrl,
-                    videoUrl = hlsManifestUrl,
-                    headers =
-                        buildHeaders(
-                            diagnostics,
-                            result.clientName,
-                            result.userAgent,
-                            hlsManifestUrl,
-                            hints.isUploaded == true && !result.bearerAuthenticated,
-                        ),
-                    loudnessDb = response.playerConfig?.audioConfig?.loudnessDb,
-                    expiresAt = hlsExpiry(streamingData, hlsManifestUrl),
-                    contentLengthBytes = null,
-                    itag = 96,
-                    mimeType = "application/x-mpegURL",
-                    codecs = null,
-                    bitrate = null,
-                    sampleRate = null,
-                    clientName = result.clientName,
-                    profileId = result.profileId,
-                    requireBoundedRange = false,
-                    useRangeChunks = false,
-                    rangeChunkSizeBytes = mediaRangeChunkSize(result.clientName),
-                    playbackTracking = playbackTracking,
-                    streamDiagnostics = diagnostics.snapshot(),
-                ).withResponseMetadata(response).also { diagnostics.ensureSessionCurrent() }
-            }
-
-            if (requireBoundedRange && !hints.allowBoundedRange) {
-                continue
-            }
-
             val directAudioItags =
                 allFormats
                     .asSequence()
@@ -1288,42 +1236,6 @@ class InnerTubeExtractor internal constructor(
             ).withResponseMetadata(response).also { diagnostics.ensureSessionCurrent() }
         }
 
-        // Fallback to HLS if no playable direct URLs were found across all clients
-        val fallbackResult = results.firstOrNull { it.response.streamingData?.hlsManifestUrl != null }
-        if (hints.allowHls && fallbackResult != null) {
-            val hlsManifestUrl =
-                fallbackResult.response.streamingData
-                    ?.hlsManifestUrl
-                    ?.withPoToken(fallbackResult.streamingDataPoToken)
-                    ?.let { appendClientPlaybackNonce(it, clientPlaybackNonce) }
-            if (!hlsManifestUrl.isNullOrBlank() && isAllowedHlsUrl(hlsManifestUrl)) {
-                return ExtractedStream(
-                    videoId = videoId,
-                    audioUrl = hlsManifestUrl,
-                    videoUrl = hlsManifestUrl,
-                    headers = buildHeaders(diagnostics, fallbackResult.clientName, fallbackResult.userAgent),
-                    loudnessDb = null,
-                    expiresAt = hlsExpiry(checkNotNull(fallbackResult.response.streamingData), hlsManifestUrl),
-                    contentLengthBytes = null,
-                    itag = 96,
-                    mimeType = "application/x-mpegURL",
-                    codecs = null,
-                    bitrate = null,
-                    sampleRate = null,
-                    clientName = fallbackResult.clientName,
-                    profileId = fallbackResult.profileId,
-                    requireBoundedRange = false,
-                    useRangeChunks = false,
-                    rangeChunkSizeBytes = mediaRangeChunkSize(fallbackResult.clientName),
-                    playbackTracking =
-                        fallbackResult.response.playbackTracking
-                            .toPlaybackTrackingData(clientPlaybackNonce)
-                            .takeUnless { fallbackResult.bearerAuthenticated },
-                    streamDiagnostics = diagnostics.snapshot(),
-                ).withResponseMetadata(fallbackResult.response).also { diagnostics.ensureSessionCurrent() }
-            }
-        }
-
         val failedProfiles =
             results
                 .map { result -> result.profileId }
@@ -1369,21 +1281,6 @@ class InnerTubeExtractor internal constructor(
                 attempts = attempts.takeLast(32),
                 usedAuthenticatedWatchPage = usedAuthenticatedWatchPage,
             )
-    }
-
-    private fun hlsExpiry(
-        streamingData: StreamingData,
-        url: String,
-    ): Instant? {
-        val parsed = Url(url)
-        val pathSegments = parsed.encodedPath.split('/')
-        val pathExpiry = pathSegments.zipWithNext().firstOrNull { it.first == "expire" }?.second
-        val urlDeadlines =
-            listOfNotNull(parsed.parameters["expire"], pathExpiry)
-                .mapNotNull { value -> value.toLongOrNull()?.takeIf { it > 0 } }
-                .mapNotNull { epochSeconds -> runCatching { Instant.fromEpochSeconds(epochSeconds) }.getOrNull() }
-        val deadlines = urlDeadlines + listOfNotNull(streamingData.expiresInSeconds?.takeIf { it > 0 }?.let { now() + it.seconds })
-        return deadlines.minOrNull()
     }
 
     private fun extractExpire(url: String): Long? {
@@ -1523,16 +1420,6 @@ class InnerTubeExtractor internal constructor(
                         it.host == "youtube.com" || it.host.endsWith(".youtube.com")
                 ) &&
                 it.encodedPath == "/videoplayback" && it.user == null && it.password == null
-        } == true
-
-    private fun isAllowedHlsUrl(value: String): Boolean =
-        runCatching { Url(value) }.getOrNull()?.let {
-            it.protocol == URLProtocol.HTTPS && it.port == 443 && it.user == null && it.password == null &&
-                (
-                    it.host == "googlevideo.com" || it.host.endsWith(".googlevideo.com") ||
-                        it.host == "youtube.com" || it.host.endsWith(".youtube.com")
-                ) &&
-                (it.encodedPath.startsWith("/manifest/") || it.encodedPath.startsWith("/api/manifest/"))
         } == true
 }
 

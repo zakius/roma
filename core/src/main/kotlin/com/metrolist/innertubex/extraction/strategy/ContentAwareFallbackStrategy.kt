@@ -1,7 +1,6 @@
 package com.metrolist.innertubex.extraction.strategy
 
 import com.metrolist.innertubex.extraction.ContentHints
-import com.metrolist.innertubex.extraction.requiresBoundedMediaRange
 import com.metrolist.innertubex.models.YouTubeClient
 
 class ContentAwareFallbackStrategy(
@@ -95,21 +94,13 @@ class ContentAwareFallbackStrategy(
         val orderedCandidates =
             candidates.sortedWith(
                 compareBy<SelectedClient> {
-                    when (request.transportPreference) {
-                        PlaybackTransportPreference.AUTO -> {
-                            when {
-                                // Repeatedly failing clients go behind every healthy transport instead of only losing points.
-                                it.manifest?.id in healthDemoted -> 3
+                    when {
+                        // Repeatedly failing clients go behind every healthy one instead of only losing points.
+                        it.manifest?.id in healthDemoted -> 3
 
-                                request.hints.isKidsContent == true && it.client in kidsClients -> 0
+                        request.hints.isKidsContent == true && it.client in kidsClients -> 0
 
-                                else -> 1
-                            }
-                        }
-
-                        else -> {
-                            0
-                        }
+                        else -> 1
                     }
                 }.thenBy {
                     // Only Premium gains quality from cookies; cookie-less clients start video several times faster.
@@ -158,26 +149,6 @@ class ContentAwareFallbackStrategy(
                 (request.hints.wantVideo || contentSupport != CapabilitySupport.SUPPORTED)
             ) {
                 add("legacy direct playback verified for normal and explicit audio only")
-            }
-            if (request.hints.wantVideo &&
-                PlaybackTransport.DIRECT !in manifest.transports
-            ) {
-                add("transport cannot satisfy video request")
-            }
-
-            if (manifest.transports.none { transport ->
-                    when (transport) {
-                        PlaybackTransport.HLS -> {
-                            request.hints.allowHls
-                        }
-
-                        PlaybackTransport.DIRECT, PlaybackTransport.DASH -> {
-                            request.hints.allowBoundedRange || !requiresBoundedMediaRange(manifest.client.clientName)
-                        }
-                    }
-                }
-            ) {
-                add("available transports disabled")
             }
 
             if (!request.javaScriptRuntimeAvailable && manifest.request.signatureCipher == JavaScriptRequirement.REQUIRED) {
@@ -277,20 +248,6 @@ class ContentAwareFallbackStrategy(
             adjust(if (request.authenticated) 18 else -18, if (request.authenticated) "authenticated" else "signed-out")
         }
         if (manifest.authentication == AuthenticationPolicy.REQUIRED) adjust(8, "auth-specialist")
-
-        when (request.transportPreference) {
-            PlaybackTransportPreference.AUTO -> {
-                if (PlaybackTransport.DIRECT in manifest.transports) adjust(10, "direct-fast-path")
-            }
-
-            PlaybackTransportPreference.DIRECT -> {
-                adjust(if (PlaybackTransport.DIRECT in manifest.transports) 30 else -30, "direct-preference")
-            }
-
-            PlaybackTransportPreference.HLS -> {
-                adjust(if (PlaybackTransport.HLS in manifest.transports) 30 else -30, "hls-preference")
-            }
-        }
 
         if (request.hints.wantVideo) {
             if (manifest.client.clientName == "WEB_REMIX" || manifest.client.clientName == "WEB_CREATOR") {

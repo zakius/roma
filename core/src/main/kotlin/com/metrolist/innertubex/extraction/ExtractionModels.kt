@@ -19,10 +19,6 @@ public class ContentHints(
     /** True only when the caller has independently confirmed YouTube Premium entitlement. */
     public var premium: Boolean = false
         private set
-    public var allowHls: Boolean = true
-        private set
-    public var allowBoundedRange: Boolean = true
-        private set
 
     public operator fun component1(): Boolean? = isExplicit
 
@@ -69,23 +65,12 @@ public class ContentHints(
             maxVideoHeight = maxVideoHeight,
         ).also {
             it.premium = premium
-            it.allowHls = allowHls
-            it.allowBoundedRange = allowBoundedRange
         }
 
     /** Returns a copy carrying the caller-confirmed entitlement state. */
     public fun withPremium(premium: Boolean = true): ContentHints =
         copy().also {
             it.premium = premium
-        }
-
-    public fun withStreamCapabilities(
-        allowHls: Boolean = true,
-        allowBoundedRange: Boolean = true,
-    ): ContentHints =
-        copy().also {
-            it.allowHls = allowHls
-            it.allowBoundedRange = allowBoundedRange
         }
 
     override fun equals(other: Any?): Boolean {
@@ -101,9 +86,7 @@ public class ContentHints(
             wantVideo == other.wantVideo &&
             playbackClientOverrideId == other.playbackClientOverrideId &&
             maxVideoHeight == other.maxVideoHeight &&
-            premium == other.premium &&
-            allowHls == other.allowHls &&
-            allowBoundedRange == other.allowBoundedRange
+            premium == other.premium
     }
 
     override fun hashCode(): Int {
@@ -117,9 +100,7 @@ public class ContentHints(
         result = 31 * result + wantVideo.hashCode()
         result = 31 * result + (playbackClientOverrideId?.hashCode() ?: 0)
         result = 31 * result + (maxVideoHeight ?: 0)
-        result = 31 * result + premium.hashCode()
-        result = 31 * result + allowHls.hashCode()
-        return 31 * result + allowBoundedRange.hashCode()
+        return 31 * result + premium.hashCode()
     }
 
     override fun toString(): String = diagnosticSummary()
@@ -130,7 +111,7 @@ public fun ContentHints.diagnosticSummary(): String =
         "live=$isLive, uploaded=$isUploaded, local=$isLocal, " +
         "endpointParamsPresent=${endpointParams != null}, wantVideo=$wantVideo, " +
         "clientOverride=$playbackClientOverrideId, maxVideoHeight=$maxVideoHeight, " +
-        "premium=$premium, allowHls=$allowHls, allowBoundedRange=$allowBoundedRange}"
+        "premium=$premium}"
 
 public data class PlayerConfig(
     val playerUrl: String,

@@ -27,12 +27,6 @@ enum class AuthenticationPolicy {
     REQUIRED,
 }
 
-enum class PlaybackTransport {
-    DIRECT,
-    HLS,
-    DASH,
-}
-
 enum class CapabilitySupport {
     SUPPORTED,
     LIMITED,
@@ -135,7 +129,6 @@ data class PlaybackClientManifest(
     val lifecycle: ClientLifecycle,
     val selectionMode: ClientSelectionMode,
     val authentication: AuthenticationPolicy,
-    val transports: Set<PlaybackTransport>,
     val poTokens: ClientPoTokenCapabilities = ClientPoTokenCapabilities(),
     val request: ClientRequestCapabilities = ClientRequestCapabilities(),
     val content: ClientContentCapabilities = ClientContentCapabilities(),
