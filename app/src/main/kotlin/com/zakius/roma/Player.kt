@@ -185,20 +185,20 @@ fun PlayerScreen() {
                 (if (Store.bool("ui.leftHanded", false)) slots.reversed() else slots).forEach { it() }
             }
             Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-                Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_shuffle_on), "Shuffle", entry != null, Playback.shuffled, iconSize = 26, state = if (Playback.shuffled) "on" else "off") { Playback.toggleShuffle() }
-                Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_previous), "Previous", entry != null, iconSize = 30) { Playback.previous() }
+                Slot(painterResource(R.drawable.shuffle), "Shuffle", entry != null, Playback.shuffled, iconSize = 26, state = if (Playback.shuffled) "on" else "off") { Playback.toggleShuffle() }
+                Slot(painterResource(R.drawable.previous), "Previous", entry != null, iconSize = 30) { Playback.previous() }
                 // Shows what the user asked for: Pause while a song buffers or waits for the network, too.
                 val showPlay = androidx.media3.common.util.Util.shouldShowPlayButton(p)
                 // Long press: the sleep timer. A hidden extra on a button that's there anyway, so the row stays as it is.
                 Slot(
-                    painterResource(if (showPlay) androidx.media3.ui.R.drawable.exo_icon_play else androidx.media3.ui.R.drawable.exo_icon_pause), if (showPlay) "Play" else "Pause", entry != null, iconSize = 44,
+                    painterResource(if (showPlay) R.drawable.play else R.drawable.pause), if (showPlay) "Play" else "Pause", entry != null, iconSize = 44,
                     onLongClick = { sleepOpen = true }, longClickLabel = "Sleep timer",
                 ) { Playback.togglePlay() }
-                Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_next), "Next", Playback.neighbour(Playback.shownIndex(), 1) >= 0, iconSize = 30) { Playback.next() }
+                Slot(painterResource(R.drawable.next), "Next", Playback.neighbour(Playback.shownIndex(), 1) >= 0, iconSize = 30) { Playback.next() }
                 val repeatIcon = when (p.repeatMode) {
-                    Player.REPEAT_MODE_ONE -> androidx.media3.ui.R.drawable.exo_icon_repeat_one
-                    Player.REPEAT_MODE_ALL -> androidx.media3.ui.R.drawable.exo_icon_repeat_all
-                    else -> androidx.media3.ui.R.drawable.exo_icon_repeat_all // off is shown as muted (see Slot), not as another icon
+                    Player.REPEAT_MODE_ONE -> R.drawable.repeat_one
+                    Player.REPEAT_MODE_ALL -> R.drawable.repeat
+                    else -> R.drawable.repeat // off is shown as muted (see Slot), not as another icon
                 }
                 val repeatState = when (p.repeatMode) { Player.REPEAT_MODE_ONE -> "this song"; Player.REPEAT_MODE_ALL -> "all"; else -> "off" }
                 Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != Player.REPEAT_MODE_OFF, iconSize = 26, state = repeatState) { Playback.cycleRepeat() }

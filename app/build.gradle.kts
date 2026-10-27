@@ -73,7 +73,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
 
     implementation("androidx.media3:media3-exoplayer:1.11.1")
-    implementation("androidx.media3:media3-ui:1.11.1") // only for its player icons
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2") // ASUS FlipFont skip, App.kt
