@@ -81,7 +81,7 @@ object LyricsProviders {
     fun find(q: LyricsQuery, providers: List<LyricsProvider>, icu: Icu? = null, timeoutMs: Long = 5000): LyricsSearch {
         val futures = pool.invokeAll(providers.map { p -> Callable { p.fetch(q) } }, timeoutMs, TimeUnit.MILLISECONDS)
         val got = providers.zip(futures).map { (p, f) -> p to runCatching { f.get() } }
-        val found = got.mapNotNull { (p, r) -> r.getOrNull()?.let { withoutCredits(it, q) }?.takeIf { it.lines.any { l -> l.text.isNotBlank() } }?.let { p to it } }
+        val found = got.mapNotNull { (p, r) -> r.getOrNull()?.let { withoutCredits(unescaped(it), q) }?.takeIf { it.lines.any { l -> l.text.isNotBlank() } }?.let { p to it } }
         val complete = got.all { it.second.isSuccess }
         val ytm = found.firstOrNull { it.first == YouTubeLyrics }?.second
         val chosen = chooseLyrics(ytm, found.filter { it.first != YouTubeLyrics }.map { it.second }, icu) ?: return LyricsSearch(null, complete)
@@ -90,6 +90,25 @@ object LyricsProviders {
         return LyricsSearch(LyricsResult(bare, translations, chosen.second), complete)
     }
 }
+
+// ---- Entities ----
+
+private val ENTITY = Regex("&(#x[0-9a-fA-F]+|#\\d+|amp|apos|quot|lt|gt|nbsp);")
+
+/** "don&apos;t" as "don't": some providers send their lyrics HTML-escaped. */
+fun unescapeHtml(s: String): String = if ('&' !in s) s else ENTITY.replace(s) {
+    when (val e = it.groupValues[1]) {
+        "amp" -> "&"; "apos" -> "'"; "quot" -> "\""; "lt" -> "<"; "gt" -> ">"; "nbsp" -> " "
+        else -> runCatching { String(Character.toChars(if (e[1] == 'x') e.drop(2).toInt(16) else e.drop(1).toInt())) }.getOrDefault(it.value)
+    }
+}
+
+private fun unescaped(l: Lyrics) = Lyrics(
+    l.source,
+    l.lines.map { Line(it.startMs, unescapeHtml(it.text), it.words.map { w -> Word(w.startMs, w.endMs, unescapeHtml(w.text)) }, it.translation?.let(::unescapeHtml)) },
+    l.synced,
+    l.translationSource,
+)
 
 // ---- Credits ----
 

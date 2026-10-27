@@ -70,6 +70,7 @@ import roma.core.song
 import kotlinx.serialization.Serializable
 import java.io.File
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 /** A queue entry. Section is "queued" (pinned: radio never moves or removes it) or "radio". */
 class Entry(val song: Song, val section: String)
@@ -250,6 +251,7 @@ object Playback {
     // Its lyrics and large art too, so they are there the moment it starts: only the one next song, once per song,
     // and both are kept (lyrics cache, Coil's disk cache) for when it plays. Wasted only if it's skipped.
     private fun prefetchNext() {
+        prefetchQueueCovers()
         val i = player.nextMediaItemIndex
         if (i == C.INDEX_UNSET) return
         val next = (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song ?: return
@@ -263,6 +265,20 @@ object Playback {
     }
 
     private var prefetched: String? = null
+
+    /**
+     * The queue rows' covers for the next [QUEUE_COVERS] songs, decoded, so the queue opens with them drawn (about
+     * 80 KB of memory each). A cover already in memory costs nothing; see [PrefetchCovers] for when it runs.
+     */
+    private fun prefetchQueueCovers() {
+        if (thrifty()) return
+        val px = (48 * appContext.resources.displayMetrics.density).roundToInt() // SongRow's cover
+        val from = player.currentMediaItemIndex + 1
+        val urls = (from until minOf(from + QUEUE_COVERS, player.mediaItemCount)).mapNotNull { i ->
+            (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song?.thumb?.let { thumbAt(it, px) }
+        }
+        scope.launch { for (u in urls) Images.load(u, px) }
+    }
 
     // Blocking, on ExoPlayer's loader thread. URLs expire after about 6 hours; reuse them for 5.
     private fun streamUrl(id: String): String {
@@ -460,13 +476,14 @@ object Playback {
     }
 
     /** Mobile data or Battery Saver, and the user hasn't allowed guesses there. */
-    private fun thrifty(): Boolean {
+    fun thrifty(): Boolean {
         if (Store.bool("prepare.always", false)) return false
         val metered = appContext.getSystemService(android.net.ConnectivityManager::class.java).isActiveNetworkMetered
         return metered || appContext.getSystemService(android.os.PowerManager::class.java).isPowerSaveMode
     }
 
     private const val GUESS_SONGS = 3
+    private const val QUEUE_COVERS = 30
     private const val GUESSES_PER_HOUR = 60
 
     private fun switchTo(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {

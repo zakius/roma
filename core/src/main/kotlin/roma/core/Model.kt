@@ -22,6 +22,7 @@ class Song(
 ) {
     val artistLatin get() = artists.joinToString(", ") { it.name.latin }
     val artistOriginal get() = artists.joinToString(", ") { it.name.original }
+    val artistText get() = Text.join(artists.map { it.name }, ", ")
     val firstArtistId get() = artists.firstOrNull { it.id != null }?.id
 
     fun withReason(r: String?) = Song(id, title, artists, album, durationSec, thumb, video, r)
@@ -80,7 +81,7 @@ private fun fold(s: String) = Romanizer.stripMarks(s).lowercase().replace(Regex(
 class Item(val kind: String, val id: String, val title: Text, val subtitle: Text, val thumb: String?, val song: Song? = null)
 
 fun Romanizer.item(y: com.metrolist.innertube.models.YTItem): Item? = when (y) {
-    is SongItem -> song(y).let { Item("song", it.id, it.title, Text(it.artistOriginal, it.artistLatin), it.thumb, it) }
+    is SongItem -> song(y).let { Item("song", it.id, it.title, it.artistText, it.thumb, it) }
     is com.metrolist.innertube.models.AlbumItem -> {
         val artists = y.artists.orEmpty().joinToString(", ") { it.name }
         Item("album", y.browseId, text(y.title, listOf(artists), titleOf = true), text(artists, listOf(y.title)), y.thumbnail)

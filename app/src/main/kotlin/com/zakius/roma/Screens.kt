@@ -116,13 +116,18 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
     val small = MaterialTheme.typography.bodySmall
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     val mod = if (center) Modifier.fillMaxWidth() else Modifier
+    // The style's 1.5 line height parts a wrapped title's lines wider than the title from the artist line under it.
+    val wrapping = style.copy(lineHeight = style.fontSize * 1.25f)
     when {
-        t.isLatin || Store.reads(t.original) -> Text(t.original, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
-        mode == "romanized" -> Text(t.latin, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
-        mode == "original" -> Text(t.original, mod, style = style, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
-        mode == "ruby" -> Column(mod) {
-            Text(t.latin, Modifier.fillMaxWidth(), style = small, color = dim, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(t.original, Modifier.fillMaxWidth(), style = style, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        t.isLatin || Store.reads(t.original) -> Text(t.original, mod, style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        mode == "romanized" -> Text(t.latin, mod, style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        mode == "original" -> Text(t.original, mod, style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        mode == "ruby" -> {
+            if (t.pieces.size == t.pieceLatin.size && t.pieces.isNotEmpty()) Box(mod) { RubyLine(t.pieces, t.pieceLatin, -1, wrapping, small.copy(color = dim), center, maxLines) }
+            else Column(mod) {
+                Text(t.latin, Modifier.fillMaxWidth(), style = small, color = dim, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(t.original, Modifier.fillMaxWidth(), style = style, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         else -> Column(mod) {
             Text(t.latin, Modifier.fillMaxWidth(), style = style, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -687,6 +692,9 @@ fun HomeScreen() {
     // The mixes take at least the first screen, so the shelves begin below it even when there are few mixes.
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val height = maxHeight
+        // Out here, not in a row: a row is composed only once it scrolls into view. The first cards of every shelf
+        // come before the later ones of any.
+        if (shelves) PrefetchCovers(Home.sections.flatMap { it.items.withIndex() }.sortedBy { it.index }.map { it.value.thumb }, 128.dp, near = 40)
         LazyColumn(Modifier.fillMaxSize(), Home.list) {
             item(key = "mixes") { Column(Modifier.heightIn(min = height)) { Mixes(Home.mixes, Home.mixesRead) } }
             if (!shelves) return@LazyColumn
@@ -757,7 +765,10 @@ private fun Mixes(mixes: List<Item>?, read: Boolean) {
         mixes == null -> Hint("Looking for your mixes…")
         mixes.isEmpty() -> Hint("No mixes yet")
     }
-    if (list.size > shown) LazyRow { items(list.drop(shown)) { m -> Card(m) { play(m) } } }
+    if (list.size > shown) {
+        PrefetchCovers(list.drop(shown).map { it.thumb }, 128.dp)
+        LazyRow { items(list.drop(shown)) { m -> Card(m) { play(m) } } }
+    }
 }
 
 // ---------------------------------------------------------------- Search
@@ -840,6 +851,8 @@ fun SearchScreen() {
                     item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
                 }
             }) { found ->
+                PrefetchCovers(local.map { it.thumb } + found.items.filter { it.song != null }.map { it.thumb }, 48.dp)
+                PrefetchCovers(found.items.filter { it.song == null }.map { it.thumb }, 56.dp)
                 LaunchedEffect(found) { Playback.prepare((local.take(1) + listOfNotNull(found.items.firstOrNull()?.playable)).distinctBy { it.id }) }
                 LazyColumn(Modifier.fillMaxSize()) {
                     localRows()
@@ -889,6 +902,7 @@ fun LibraryScreen() {
         val id = tabs[tab].second
         val list = key(tab) { rememberLazyListState() }
         Loader("library:$id", { partial -> loadLibrary(id, partial) }, list, { items -> items.map { it.id } }, ListSerializer(Item.serializer())) { items ->
+            PrefetchCovers(items.map { it.thumb }, 56.dp, list)
             if (items.isEmpty()) Centered("Nothing here yet. ${tabs[tab].first} you save in YouTube Music show here.")
             Box {
                 LazyColumn(Modifier.fillMaxSize(), list) { items(items) { item -> ItemRow(item) { openItem(item) } } }
@@ -912,6 +926,8 @@ fun PageScreen(p: Page) {
         // Play and the first row are the likely taps; not while another page covers this one.
         val shown = LocalTabShown.current
         LaunchedEffect(d.songs.firstOrNull()?.id, shown) { if (shown) Playback.prepare(d.songs.take(1)) }
+        PrefetchCovers(d.songs.map { it.thumb }, 48.dp, list)
+        PrefetchCovers(d.items.map { it.thumb }, 56.dp)
         Box {
         LazyColumn(Modifier.fillMaxSize(), list) {
             item {
@@ -1209,7 +1225,7 @@ fun SetupScreen() {
 
 private val SCRIPTS = listOf("ja" to "Japanese", "zh" to "Chinese", "ko" to "Korean", "cyrillic" to "Cyrillic", "greek" to "Greek", "other" to "Other scripts")
 
-private val MODES = listOf("both" to "Latin, original underneath", "ruby" to "Original, reading above", "romanized" to "Latin only", "original" to "Original only")
+private val MODES = listOf("both" to "Latin, original underneath", "ruby" to "Reading above each word, like furigana", "romanized" to "Latin only", "original" to "Original only")
 
 private fun move(order: List<roma.core.LyricsProvider>, i: Int, by: Int) {
     val list = order.toMutableList()

@@ -14,8 +14,28 @@ import java.text.Normalizer
  * romanization. A kept original (latin == original) counts as Latin too.
  */
 @Serializable
-class Text(val original: String, val latin: String) {
+class Text(
+    val original: String,
+    val latin: String,
+    /** The original split into words as lyrics split a line, with each word's part of [latin]; empty when unknown. */
+    val pieces: List<String> = emptyList(),
+    val pieceLatin: List<String> = emptyList(),
+) {
     val isLatin get() = original == latin || !Romanizer.hasNonLatin(original)
+
+    companion object {
+        /** Several names as one ("A, B"), keeping their words. */
+        fun join(texts: List<Text>, separator: String): Text {
+            val split = texts.map { if (it.pieces.isNotEmpty()) it.pieces to it.pieceLatin else if (it.isLatin) listOf(it.original) to listOf(it.latin) else null }
+            fun List<List<String>>.joined() = flatMapIndexed { i, p -> if (i == size - 1) p else p.dropLast(1) + (p.last() + separator) }
+            return Text(
+                texts.joinToString(separator) { it.original },
+                texts.joinToString(separator) { it.latin },
+                if (split.any { it == null }) emptyList() else split.map { it!!.first }.joined(),
+                if (split.any { it == null }) emptyList() else split.map { it!!.second }.joined(),
+            )
+        }
+    }
 }
 
 /** ICU transliteration, supplied by the platform: android.icu on Android, ICU4J on a desktop JVM. */
@@ -83,7 +103,30 @@ class Romanizer(
         val o = overrides.firstOrNull { it.original == s && it.scope == "song" && it.id == songId }
             ?: overrides.firstOrNull { it.original == s && it.scope == "artist" && it.id == artistId }
             ?: overrides.firstOrNull { it.original == s && it.scope == "text" }
-        return Text(s, o?.latin ?: (if (titleOf) ownLatin(s) else null) ?: machine(s, siblings, songId = songId))
+        return pieced(s, o?.latin ?: (if (titleOf) ownLatin(s) else null) ?: machine(s, siblings, songId = songId), siblings, songId)
+    }
+
+    /**
+     * [latin] cut into the words of [s] for the furigana layout. The cuts come from romanizing word by word, but the
+     * text is [latin]'s, so title case and corrections stay. No pieces when the two spell different things (a
+     * corrected or official Latin title): that name shows one reading above the whole of it.
+     */
+    fun pieced(s: String, latin: String, siblings: List<String> = emptyList(), songId: String? = null): Text {
+        if (!hasNonLatin(s)) return Text(s, latin)
+        // ponytail: two more dictionary passes per non-Latin name, ruby mode or not; skip them per mode if it shows in profiles
+        val pieces = pieces(s, siblings)
+        val parts = parts(pieces, siblings, songId)
+        fun letters(t: String) = t.filter { it.isLetterOrDigit() }.lowercase()
+        if (letters(parts.joinToString("")) != letters(latin)) return Text(s, latin)
+        var at = 0
+        val cut = parts.map { p ->
+            var n = p.count { it.isLetterOrDigit() }
+            val start = at
+            // A piece takes its letters and whatever follows them up to the next piece's first letter.
+            while (at < latin.length && (n > 0 || !latin[at].isLetterOrDigit())) { if (latin[at].isLetterOrDigit()) n--; at++ }
+            latin.substring(start, at)
+        }
+        return Text(s, latin, pieces, cut)
     }
 
     /** Title case for names and titles; [sentence] case (only the first letter) for lyric lines. */

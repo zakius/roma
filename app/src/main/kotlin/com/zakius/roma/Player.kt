@@ -12,6 +12,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -474,7 +475,7 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         ) { if (id != null) Nav.open(Page(kind, id)) }
         Column(Modifier.goTo("album", s.album?.id)) { Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true) }
         Spacer(Modifier.height(4.dp))
-        Column(Modifier.goTo("artist", s.firstArtistId)) { Name(roma.core.Text(s.artistOriginal, s.artistLatin), Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true) }
+        Column(Modifier.goTo("artist", s.firstArtistId)) { Name(s.artistText, Store.playerMode, style = MaterialTheme.typography.titleMedium, center = true) }
         if (fixing) CorrectDialog(s) { fixing = false }
         if (current && Playback.waitingForNetwork) {
             Spacer(Modifier.height(8.dp))
@@ -510,6 +511,7 @@ private fun QueueView() {
     if (radio.isNotEmpty()) { rows.add("Radio" to -1); radio.forEach { rows.add(null to it) } }
     if (queued.isEmpty() && radio.isEmpty()) rows.add((if (Store.stopAtEnd) "Nothing next: autoplay is off" else "Nothing next yet") to -1)
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    PrefetchCovers(all.drop(cur + 1).map { it.song.thumb }, 48.dp, list)
     Box { LazyColumn(Modifier.fillMaxSize(), list) {
         itemsIndexed(rows, contentType = { _, (header, _) -> header == null }) { _, (header, i) ->
             if (header != null) {
@@ -598,7 +600,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                     // Ruby sets whole words, not karaoke syllables (which would scatter 二|人 apart): the word holding
                     // the syllable being sung is lit.
                     val piece = if (karaoke && wordIndex >= 0) pieceAt(line, units, wordIndex) else wordIndex
-                    RubyLine(line.pieces, line.pieceLatin, piece, big, seek) { i -> fixWord = wordAt(line, line.pieces, i) ?: fixWord }
+                    RubyLine(line.pieces, line.pieceLatin, piece, big, onTap = seek) { i -> fixWord = wordAt(line, line.pieces, i) ?: fixWord }
                 } else {
                     if (showOriginal && line.text.isNotBlank()) WordsText(units, line.text, wordIndex, big, seek, fix)
                     if (latinShown) WordsText(unitLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge, seek, fix)
@@ -648,29 +650,45 @@ private fun pieceAt(line: Line, units: List<String>, unit: Int): Int {
 
 /**
  * Ruby layout: each word's romaji sits right above it, so the eye never has to match the two lines up. Karaoke
- * lights the current word in both. Words wrap as wholes.
+ * lights the current word in both, on the same tinted background as the lines layout. Words wrap as wholes. Without
+ * [onTap] the words take no touches, so a row around them stays clickable.
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun RubyLine(units: List<String>, latin: List<String>, current: Int, style: androidx.compose.ui.text.TextStyle, onTap: () -> Unit, onLongPress: (Int) -> Unit) {
+fun RubyLine(
+    units: List<String>,
+    latin: List<String>,
+    current: Int,
+    style: androidx.compose.ui.text.TextStyle,
+    latinStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyMedium,
+    center: Boolean = false,
+    maxLines: Int = Int.MAX_VALUE,
+    onTap: (() -> Unit)? = null,
+    onLongPress: (Int) -> Unit = {},
+) {
     val on = MaterialTheme.colorScheme.onSurface
     val hi = MaterialTheme.colorScheme.primary
-    fun color(i: Int, cur: Int) = when {
-        cur < 0 || i < cur -> on
-        i == cur -> hi
+    fun color(i: Int, base: Color) = when {
+        current < 0 || i < current -> base
+        i == current -> hi
         else -> on.copy(alpha = 0.35f)
     }
     val latest by rememberUpdatedState(onTap to onLongPress)
-    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp, if (center) Alignment.CenterHorizontally else Alignment.Start),
+        maxLines = maxLines,
+    ) {
         units.forEachIndexed { i, u ->
             if (u.isBlank()) return@forEachIndexed
             Column(
-                Modifier.pointerInput(i) { detectTapGestures(onTap = { latest.first() }, onLongPress = { latest.second(i) }) },
+                Modifier
+                    .then(if (onTap == null) Modifier else Modifier.pointerInput(i) { detectTapGestures(onTap = { latest.first?.invoke() }, onLongPress = { latest.second(i) }) })
+                    .then(if (i == current) Modifier.background(hi.copy(alpha = 0.18f)) else Modifier),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 // An empty slot (punctuation) keeps the words on one baseline.
-                Text(latin[i].trim().ifEmpty { " " }, style = MaterialTheme.typography.bodyMedium, color = color(i, current))
-                Text(u.trim(), style = style, color = color(i, current))
+                Text(latin[i].trim().ifEmpty { " " }, style = latinStyle, color = color(i, latinStyle.color.takeOrElse { on }))
+                Text(u.trim(), style = style, color = color(i, style.color.takeOrElse { on }))
             }
         }
     }
