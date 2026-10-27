@@ -80,40 +80,10 @@ object Dictionary {
         busy = true
         status = "Downloading the Japanese dictionary…"
         thread(name = "dictionary") {
-            val installer = app.packageManager.packageInstaller
-            var id = -1
             try {
-                val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                params.setAppPackageName(BuildConfig.DICT_PACKAGE)
-                id = installer.createSession(params)
-                installer.openSession(id).use { session ->
-                    val conn = URL(BuildConfig.DICT_URL).openConnection() as HttpURLConnection
-                    conn.connectTimeout = 15_000
-                    conn.readTimeout = 30_000 // a stalled download fails instead of keeping the install busy for good
-                    check(conn.responseCode == 200) { "The download answered HTTP ${conn.responseCode}" }
-                    val total = conn.contentLengthLong
-                    var read = 0L
-                    var shown = -1L
-                    val counted = object : FilterInputStream(conn.inputStream) {
-                        override fun read(b: ByteArray, off: Int, len: Int) = super.read(b, off, len).also {
-                            if (it > 0) read += it
-                            val percent = if (total > 0) read * 100 / total else read shr 20
-                            if (percent != shown) {
-                                shown = percent
-                                status = if (total > 0) "Downloading the Japanese dictionary… $percent%" else "Downloading the Japanese dictionary… $percent MB"
-                            }
-                        }
-                    }
-                    session.openWrite("dictionary.apk", 0, -1).use { out ->
-                        GZIPInputStream(counted, 1 shl 16).use { it.copyTo(out, 1 shl 16) }
-                        session.fsync(out)
-                    }
-                    status = "Installing the Japanese dictionary…"
-                    val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
-                    session.commit(PendingIntent.getBroadcast(app, id, Intent(ACTION).setPackage(app.packageName), flags).intentSender)
-                }
+                installApk(app, BuildConfig.DICT_URL, BuildConfig.DICT_PACKAGE, gzip = true, ACTION) { status = "Downloading the Japanese dictionary… $it" }
+                status = "Installing the Japanese dictionary…"
             } catch (e: Exception) {
-                if (id >= 0) runCatching { installer.abandonSession(id) }
                 busy = false
                 status = "Couldn't get the Japanese dictionary: ${plainError(e)}"
             }
@@ -177,5 +147,47 @@ object Dictionary {
                 status = "Couldn't install the Japanese dictionary: " + (i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "unknown reason")
             }
         }
+    }
+}
+
+/**
+ * Streams the APK at [url] (gzipped when [gzip]) straight into a PackageInstaller session for [pkg] and commits it;
+ * the outcome arrives as a broadcast of [action]. [progress] gets "n%" (or "n MB" without a length). Blocking.
+ */
+fun installApk(app: Context, url: String, pkg: String, gzip: Boolean, action: String, userActionNotRequired: Boolean = false, progress: (String) -> Unit) {
+    val installer = app.packageManager.packageInstaller
+    val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+    params.setAppPackageName(pkg)
+    if (userActionNotRequired && Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+    val id = installer.createSession(params)
+    try {
+        installer.openSession(id).use { session ->
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 30_000 // a stalled download fails instead of keeping the install busy for good
+            check(conn.responseCode == 200) { "The download answered HTTP ${conn.responseCode}" }
+            val total = conn.contentLengthLong
+            var read = 0L
+            var shown = -1L
+            val counted = object : FilterInputStream(conn.inputStream) {
+                override fun read(b: ByteArray, off: Int, len: Int) = super.read(b, off, len).also {
+                    if (it > 0) read += it
+                    val percent = if (total > 0) read * 100 / total else read shr 20
+                    if (percent != shown) {
+                        shown = percent
+                        progress(if (total > 0) "$percent%" else "$percent MB")
+                    }
+                }
+            }
+            session.openWrite("app.apk", 0, -1).use { out ->
+                (if (gzip) GZIPInputStream(counted, 1 shl 16) else counted).use { it.copyTo(out, 1 shl 16) }
+                session.fsync(out)
+            }
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+            session.commit(PendingIntent.getBroadcast(app, id, Intent(action).setPackage(app.packageName), flags).intentSender)
+        }
+    } catch (e: Exception) {
+        runCatching { installer.abandonSession(id) }
+        throw e
     }
 }

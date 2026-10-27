@@ -61,6 +61,7 @@ class App : Application() {
         Images.init(this)
         if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME) Home.preload()
         Dictionary.init(this)
+        Update.init(this)
         Playback.init(this)
         Startup.later {
             thread(name = "sudachi") {

@@ -90,3 +90,14 @@ fun Romanizer.item(y: com.metrolist.innertube.models.YTItem): Item? = when (y) {
     is com.metrolist.innertube.models.ArtistItem -> Item("artist", y.id, text(y.title, artistId = y.id), Text("", ""), y.thumbnail)
     else -> null
 }
+
+/** Dotted versions compared number by number: 0.1.10 is newer than 0.1.9. */
+fun newerVersion(a: String, b: String): Boolean {
+    val x = a.split('.').map { it.toIntOrNull() ?: 0 }
+    val y = b.split('.').map { it.toIntOrNull() ?: 0 }
+    for (i in 0 until maxOf(x.size, y.size)) {
+        val d = x.getOrElse(i) { 0 } - y.getOrElse(i) { 0 }
+        if (d != 0) return d > 0
+    }
+    return false
+}

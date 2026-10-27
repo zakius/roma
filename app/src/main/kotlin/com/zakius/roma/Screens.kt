@@ -1075,6 +1075,9 @@ fun SettingsScreen() {
     // Lazy: Settings is longer than the screen, and a Column composed and measured every row on each visit (24 to
     // 32 ms of the main thread on the phone, 2026-10-26) where the visible ones take a third of that.
     LazyColumn(Modifier.fillMaxSize()) {
+        Update.available?.let { v ->
+            item { Row1("Update to roma $v", Update.status ?: "Restarts roma, so the music stops") { Update.install(context) } }
+        }
         item { Header("Account") }
         item {
             if (signedIn) Row1("Signed in to YouTube Music", "Tap to sign out") {
