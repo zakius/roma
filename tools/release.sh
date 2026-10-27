@@ -1,7 +1,7 @@
 #!/bin/bash
 # Release APKs, signed with the key named in keystore.properties (outside git):
 #   dist/roma-<version>.apk: R8-shrunk, Zopfli-recompressed (tools/repack_apk.py), zipaligned (arm64 and x86_64 in one).
-#   dist/roma-dict-<dictionary version>.apk.gz: the Japanese dictionary app (:dict), only when that file is missing.
+#   dist/roma-dict-<dictionary version>.apk.gz: the Japanese dictionary app (:dict-app), only when that file is missing.
 #     The APK keeps the dictionary uncompressed (roma maps it in place); the gzip is only for the download.
 # roma fetches the dictionary from its GitHub release (dict-<version>), or from ROMA_DICT_BASE if set.
 # Usage: release.sh [app] [dict] [test]; all three by default (test: the core tests, which need the slim dictionary).
@@ -23,7 +23,7 @@ app=; buildDict=; test=
 tasks=()
 [ -n "$test" ] && tasks+=(:core:test)
 [ -n "$app" ] && tasks+=(:app:assembleRelease)
-[ -n "$buildDict" ] && tasks+=(:dict:assembleRelease)
+[ -n "$buildDict" ] && tasks+=(:dict-app:assembleRelease)
 ./gradlew -q "${tasks[@]}" ${ROMA_DICT_BASE:+-Proma.dictBase=$ROMA_DICT_BASE}
 [ -n "$app$buildDict" ] || exit 0 # tests only: nothing to sign
 source <(sed 's/^\([a-zA-Z]*\)=\(.*\)$/\1="\2"/' keystore.properties)
@@ -39,7 +39,7 @@ if [ -n "$app" ]; then
   ls -l "$out"
 fi
 if [ -n "$buildDict" ]; then
-  "$tools/zipalign" -f -P 16 4 dict/build/outputs/apk/release/dict-release-unsigned.apk "$tmp/dict.apk"
+  "$tools/zipalign" -f -P 16 4 dict-app/build/outputs/apk/release/dict-app-release-unsigned.apk "$tmp/dict.apk"
   sign "$tmp/dict.apk" "$tmp/dict-signed.apk"
   pigz -11 -c "$tmp/dict-signed.apk" > "$dict.tmp" && mv "$dict.tmp" "$dict"
   ls -l "$dict"

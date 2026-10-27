@@ -234,7 +234,7 @@ class Romanizer(
 
     private fun tokenizer(): Tokenizer? = loaded ?: synchronized(tokenizerLock) {
         loaded ?: if (failedAt != 0L && System.currentTimeMillis() - failedAt < 60_000) null else runCatching {
-            // roma's config: Sudachi's default with the slim dictionary's renumbered unknown-word ids (:dictslim).
+            // roma's config: Sudachi's default with the slim dictionary's renumbered unknown-word ids (:dict-tool).
             DictionaryFactory().create(Config.fromClasspath("roma-sudachi.json").systemDictionary(BinaryDictionary.loadSystem(dictionary()))).create()
         }.onSuccess { loaded = it }.onFailure { failedAt = System.currentTimeMillis() }.getOrNull()
     }
