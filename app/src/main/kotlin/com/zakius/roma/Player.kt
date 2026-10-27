@@ -49,7 +49,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.outlined.ThumbUp
@@ -171,7 +171,7 @@ fun PlayerScreen() {
                     { Spacer(Modifier.weight(1f)) }, // deliberately empty: no icon, no label, not tappable
                     { Slot(rememberVectorPainter(CommentsIcon), "Comments", entry != null, view == "comments", label = "Comments", state = if (view == "comments") "shown" else null) { view = if (view == "comments") "song" else "comments" } },
                     { Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics", state = if (view == "lyrics") "shown" else null) { view = if (view == "lyrics") "song" else "lyrics" } },
-                    { Slot(rememberVectorPainter(Icons.Default.List), "Queue", entry != null, view == "queue", label = "Queue", state = if (view == "queue") "shown" else null) { view = if (view == "queue") "song" else "queue" } },
+                    { Slot(rememberVectorPainter(Icons.AutoMirrored.Filled.List), "Queue", entry != null, view == "queue", label = "Queue", state = if (view == "queue") "shown" else null) { view = if (view == "queue") "song" else "queue" } },
                     {
                         Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), "Like", entry != null && Store.signedIn, liked, label = "Like", state = if (liked) "liked" else "not liked") {
                             haptic.performHapticFeedback(if (liked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
@@ -417,7 +417,7 @@ private fun SongView() {
                         val toNext = dx < 0
                         val target = if (toNext) targets.first else targets.second
                         val flung = abs(v.x) > 1000f && (v.x < 0) == toNext
-                        if (target < 0 || !(armed || flung)) return@detectDragGestures run { settle(); Unit }
+                        if (target < 0 || !(armed || flung)) { settle(); return@detectDragGestures }
                         scope.launch {
                             animate(dx, if (toNext) -width.toFloat() else width.toFloat()) { x, _ -> dx = x }
                             Playback.skipTo(target) // the target is shown at once (pending), so the page snaps back under it
