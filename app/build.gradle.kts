@@ -57,7 +57,9 @@ android {
     packaging {
         resources { excludes += setOf("META-INF/*.md", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "kotlin/**", "DebugProbesKt.bin", "META-INF/*.version",
             // Sudachi reads its part-of-speech table only in its command-line tool.
-            "pos.csv") }
+            "pos.csv",
+            // Four copies of the Apache License 2.0, which assets/LICENSE-2.0.txt already carries.
+            "META-INF/androidx/**/LICENSE.txt") }
         // Native libraries compressed in the APK and unpacked at install (extractNativeLibs), as in tennessine.
         jniLibs { useLegacyPackaging = true }
     }
