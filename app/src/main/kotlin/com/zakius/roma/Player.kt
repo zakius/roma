@@ -110,11 +110,12 @@ fun PlayerScreen() {
     // Where a seek-bar drag would land, -1 when there's no drag: the upper area shows the lyric line there.
     var seekPreview by remember { mutableLongStateOf(-1L) }
     val haptic = LocalHapticFeedback.current
-    val entry = Playback.current()
+    // While a mix loads, the song still playing is on its way out: its controls are dimmed.
+    val entry = if (Playback.opening != null) null else Playback.current()
     val p = Playback.player
     val lyricsState = Playback.lyrics?.takeIf { it.songId == Playback.shown()?.id }
     val lyrics = lyricsState?.lyrics
-    val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty()
+    val hasLyrics = lyrics != null && lyrics.lines.isNotEmpty() && Playback.opening == null
     if (view == "lyrics" && !hasLyrics && lyrics != null) view = "song"
     val visitedViews = remember { androidx.compose.runtime.mutableStateListOf(view) }
     if (view !in visitedViews) visitedViews += view
@@ -127,7 +128,7 @@ fun PlayerScreen() {
             // Each view stays composed once opened, as tabs do, so going back to it only lays out and draws: building
             // the queue took 10 to 12 ms of the main thread on the phone (2026-10-27).
             for (v in visitedViews) androidx.compose.runtime.key(v) {
-                Box(if (v == view) Modifier.fillMaxSize() else Modifier.hidden()) {
+                Box(if (v == view && Playback.opening == null) Modifier.fillMaxSize() else Modifier.hidden()) {
                     androidx.compose.runtime.CompositionLocalProvider(LocalTabShown provides (tabShown && v == view)) {
                         when (v) {
                             "lyrics" -> {
@@ -141,6 +142,7 @@ fun PlayerScreen() {
                     }
                 }
             }
+            Playback.opening?.let { (title, thumb) -> OpeningPage(title, thumb) }
             Playback.lastBan?.let { (song, _) ->
                 Surface(
                     Modifier.align(Alignment.BottomCenter).padding(8.dp).fillMaxWidth(),
@@ -192,11 +194,11 @@ fun PlayerScreen() {
                     painterResource(if (showPlay) androidx.media3.ui.R.drawable.exo_icon_play else androidx.media3.ui.R.drawable.exo_icon_pause), if (showPlay) "Play" else "Pause", entry != null, iconSize = 44,
                     onLongClick = { sleepOpen = true }, longClickLabel = "Sleep timer",
                 ) { Playback.togglePlay() }
-                Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_next), "Next", p.hasNextMediaItem(), iconSize = 30) { Playback.next() }
+                Slot(painterResource(androidx.media3.ui.R.drawable.exo_icon_next), "Next", Playback.neighbour(Playback.shownIndex(), 1) >= 0, iconSize = 30) { Playback.next() }
                 val repeatIcon = when (p.repeatMode) {
                     Player.REPEAT_MODE_ONE -> androidx.media3.ui.R.drawable.exo_icon_repeat_one
                     Player.REPEAT_MODE_ALL -> androidx.media3.ui.R.drawable.exo_icon_repeat_all
-                    else -> androidx.media3.ui.R.drawable.exo_icon_repeat_all // off is shown by colour: dimming means unavailable
+                    else -> androidx.media3.ui.R.drawable.exo_icon_repeat_all // off is shown as muted (see Slot), not as another icon
                 }
                 val repeatState = when (p.repeatMode) { Player.REPEAT_MODE_ONE -> "this song"; Player.REPEAT_MODE_ALL -> "all"; else -> "off" }
                 Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != Player.REPEAT_MODE_OFF, iconSize = 26, state = repeatState) { Playback.cycleRepeat() }
@@ -288,12 +290,13 @@ private fun RowScope.Slot(
     icon: Painter, description: String, enabled: Boolean, selected: Boolean = false, label: String? = null, iconSize: Int = 22,
     state: String? = null, onLongClick: (() -> Unit)? = null, longClickLabel: String? = null, onClick: () -> Unit,
 ) {
-    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+    // A switch without a label (Shuffle, Repeat): on gets the pill, off is muted, but less than an unavailable control (0.3).
+    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = if (state != null && label == null) 0.6f else 1f)
     Box(
         Modifier.weight(1f).widthIn(min = 48.dp).fillMaxHeight()
             .padding(horizontal = 2.dp)
             // A rounded background only when selected, not a rounded clip on every slot: one GPU program less.
-            .then(if (selected && label != null) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp)) else Modifier)
+            .then(if (selected) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp)) else Modifier)
             .combinedClickable(enabled = enabled, onClickLabel = description, role = Role.Button, onLongClick = onLongClick, onLongClickLabel = longClickLabel, onClick = onClick)
             .semantics { if (state != null) stateDescription = state }
             .dim(if (enabled) 1f else 0.3f),
@@ -315,7 +318,7 @@ private fun SeekBar(onPreview: (Long) -> Unit) {
     val p = Playback.player
     val haptic = LocalHapticFeedback.current
     // A song restored after a restart isn't prepared until Play: its known length stands in.
-    val duration = Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: Playback.current()?.song?.durationSec?.let { it * 1000L } ?: 0L
+    val duration = if (Playback.opening != null) 0L else Playback.pending?.let { it.durationSec * 1000L } ?: p.duration.takeIf { it > 0 } ?: Playback.current()?.song?.durationSec?.let { it * 1000L } ?: 0L
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
     var snappedTo by remember { mutableLongStateOf(-1L) }
@@ -325,7 +328,7 @@ private fun SeekBar(onPreview: (Long) -> Unit) {
     val lyrics = Playback.lyrics?.takeIf { it.songId == Playback.shown()?.id }?.lyrics?.takeIf { it.synced }
     val snapMs = with(LocalDensity.current) { 12.dp.toPx() } / width * duration
     // While a picked song is being prepared, the old one's progress would belong to another title: show the new start.
-    val preparing = Playback.pending != null
+    val preparing = Playback.pending != null || Playback.opening != null
     val pos = if (preparing) 0f else if (dragging) dragValue else p.currentPosition.toFloat()
     // One line, about 28 dp: elapsed time, the bar, total time.
     Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -369,7 +372,7 @@ private fun SongView() {
     var dy by remember { mutableFloatStateOf(0f) }
     var width by remember { mutableIntStateOf(1) }
     val at = Playback.shownIndex()
-    val targets by rememberUpdatedState(neighbour(at, 1) to neighbour(at, -1))
+    val targets by rememberUpdatedState(Playback.neighbour(at, 1) to Playback.neighbour(at, -1))
     val side by remember { derivedStateOf { kotlin.math.sign(dx) } }
     val leave = with(LocalDensity.current) { 96.dp.toPx() }
     val pop = remember { Animatable(0f) }
@@ -446,14 +449,16 @@ private fun SongView() {
     }
 }
 
-/** The queue position [dir] steps from [i], wrapping only with Repeat all; -1 when there is none. */
-private fun neighbour(i: Int, dir: Int): Int {
-    val p = Playback.player
-    if (i < 0 || i >= p.mediaItemCount) return -1
-    val t = p.currentTimeline
-    val repeat = if (p.repeatMode == Player.REPEAT_MODE_ALL) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
-    val j = if (dir > 0) t.getNextWindowIndex(i, repeat, false) else t.getPreviousWindowIndex(i, repeat, false)
-    return if (j == androidx.media3.common.C.INDEX_UNSET) -1 else j
+/** A mix from Home while its songs load: its cover and name, then its first song as soon as that's known. */
+@Composable
+private fun OpeningPage(title: String, thumb: String?) {
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        if (thumb != null) Thumb(shownThumb(thumb, 240.dp), 240.dp, Modifier.size(240.dp).clip(RoundedCornerShape(8.dp)))
+        Spacer(Modifier.height(16.dp))
+        Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text("Loading…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable
@@ -471,7 +476,7 @@ private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
         // opens the correction dialog, the same as More → Correct romanization.
         var fixing by remember { mutableStateOf(false) }
         fun Modifier.goTo(kind: String, id: String?) = combinedClickable(
-            onClickLabel = id?.let { "Go to $kind" }, onLongClickLabel = "Correct romanization", onLongClick = { fixing = true },
+            onClickLabel = id?.let { "Go to $kind" }, onLongClickLabel = "Correct romanization".takeIf { s.romanizable }, onLongClick = { fixing = true }.takeIf { s.romanizable },
         ) { if (id != null) Nav.open(Page(kind, id)) }
         Column(Modifier.goTo("album", s.album?.id)) { Name(s.title, Store.playerMode, style = MaterialTheme.typography.headlineSmall, center = true) }
         Spacer(Modifier.height(4.dp))

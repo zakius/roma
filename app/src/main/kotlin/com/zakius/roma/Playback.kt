@@ -340,6 +340,13 @@ object Playback {
         private set
     private var pendingJob: Job? = null
     private var pendingIndex = -1
+
+    /** A mix picked whose songs are still loading: its name and cover, shown instead of the song it replaces. */
+    var opening by mutableStateOf<Pair<String, String?>?>(null)
+        private set
+
+    // While a pick is prepared, what still plays drops to 30%, so the ear hears a switch coming, without a gap.
+    private fun duck(on: Boolean) { player.volume = if (on) baseVolume * 0.3f else baseVolume }
     private lateinit var cached: CacheDataSource.Factory
     private lateinit var cache: SimpleCache
 
@@ -347,19 +354,22 @@ object Playback {
     fun shown(): Song? = pending ?: current()?.song
 
     /** The queue position of [shown]: a skip's target while it is prepared, -1 while a new list is. */
-    fun shownIndex(): Int = if (pending == null) player.currentMediaItemIndex else pendingIndex
+    fun shownIndex(): Int = if (opening != null) -1 else if (pending == null) player.currentMediaItemIndex else pendingIndex
 
     private fun play(songs: List<Song>, start: Int, mix: String?, mixNext: String?) {
         if (songs.isEmpty()) return
         Store.remember(songs)
         val song = songs[start]
         pendingJob?.cancel()
+        opening = null
         pending = song
         pendingIndex = -1
+        duck(true)
         loadLyrics(song, network = false)
         pendingJob = scope.launch {
             withTimeoutOrNull(8_000) { precacheAsync(song.id).await() } // on failure the player's own error handling takes over
             pending = null
+            duck(false)
             switchTo(songs, start, mix, mixNext)
         }
     }
@@ -368,23 +378,38 @@ object Playback {
     fun skipTo(index: Int) {
         val song = (player.getMediaItemAt(index).localConfiguration?.tag as? Entry)?.song ?: return
         pendingJob?.cancel()
+        opening = null
         pending = song
         pendingIndex = index
+        duck(true)
         loadLyrics(song, network = false)
         pendingJob = scope.launch {
             withTimeoutOrNull(8_000) { precacheAsync(song.id).await() }
             pending = null
+            duck(false)
             if (index < player.mediaItemCount) player.seekTo(index, 0)
         }
     }
 
+    /** Steps from the shown song, so taps while a skip is still prepared go further instead of re-picking its target. */
     fun next() {
-        if (player.hasNextMediaItem()) skipTo(player.nextMediaItemIndex)
+        neighbour(shownIndex(), 1).takeIf { it >= 0 }?.let(::skipTo)
     }
 
     /** Like the system's: past 3 s, back to the start of this song; earlier, the song before. */
     fun previous() {
-        if (player.currentPosition > 3_000 || !player.hasPreviousMediaItem()) player.seekTo(0) else skipTo(player.previousMediaItemIndex)
+        if (pending == null && (player.currentPosition > 3_000 || !player.hasPreviousMediaItem())) player.seekTo(0)
+        else neighbour(shownIndex(), -1).takeIf { it >= 0 }?.let(::skipTo)
+    }
+
+    /** The queue position [dir] steps from [i], wrapping only with Repeat all; -1 when there is none. */
+    fun neighbour(i: Int, dir: Int): Int {
+        val p = player
+        if (i < 0 || i >= p.mediaItemCount) return -1
+        val t = p.currentTimeline
+        val repeat = if (p.repeatMode == Player.REPEAT_MODE_ALL) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+        val j = if (dir > 0) t.getNextWindowIndex(i, repeat, false) else t.getPreviousWindowIndex(i, repeat, false)
+        return if (j == C.INDEX_UNSET) -1 else j
     }
 
     // The song whose lyrics, radio top-up and next-song prefetch still wait for playback to start.
@@ -592,14 +617,19 @@ object Playback {
      * Plays a personal mix or another generated playlist (RD…) as a playlist: its songs go into "You queued", not radio,
      * and its next page loads when the queue runs low. The radio filters apply; the leash doesn't.
      */
-    fun playMix(id: String, loaded: List<Song>? = null) {
+    fun playMix(id: String, loaded: List<Song>? = null, title: String = "", thumb: String? = null) {
         // From its page: the songs are there already (every distinct one, see loadDetail), so it starts at once.
         if (loaded != null) return play(filterMix(loaded, emptyList(), Store.bans(), Store.radioSettings()), 0, id.removePrefix("VL"), null)
-        scope.launch {
+        // A pendingJob, so a song picked meanwhile wins over the mix arriving later.
+        pendingJob?.cancel()
+        pending = null
+        opening = title to thumb
+        duck(true)
+        pendingJob = scope.launch {
             val page = withContext(Dispatchers.IO) { YouTube.playlist(id.removePrefix("VL")).getOrNull() }
-            if (page == null) { error = "Couldn't load this playlist."; return@launch }
             // Liked music plays as liked: the mix filters (versions, bans) are for what YouTube picks.
-            val songs = withContext(Dispatchers.IO) { page.songs.map { Store.romanizer.song(it) }.let { if (id == "LM") it else filterMix(it, emptyList(), Store.bans(), Store.radioSettings()) } }
+            val songs = withContext(Dispatchers.IO) { page?.songs.orEmpty().map { Store.romanizer.song(it) }.let { if (id == "LM") it else filterMix(it, emptyList(), Store.bans(), Store.radioSettings()) } }
+            if (page == null || songs.isEmpty()) { opening = null; duck(false); error = "Couldn't load this playlist."; return@launch }
             play(songs, 0, id.removePrefix("VL"), page.songsContinuation)
         }
     }

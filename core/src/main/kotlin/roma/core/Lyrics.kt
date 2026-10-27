@@ -103,9 +103,16 @@ fun unescapeHtml(s: String): String = if ('&' !in s) s else ENTITY.replace(s) {
     }
 }
 
+private val BACKSLASHED = Regex("""\\(['"])""")
+
+/** "it\'s" as "it's": some providers' lyrics keep a backslash from escaping quotes for a string literal. */
+fun unescapeQuotes(s: String): String = if ('\\' !in s) s else BACKSLASHED.replace(s, "$1")
+
+private fun unescapedText(s: String) = unescapeQuotes(unescapeHtml(s))
+
 private fun unescaped(l: Lyrics) = Lyrics(
     l.source,
-    l.lines.map { Line(it.startMs, unescapeHtml(it.text), it.words.map { w -> Word(w.startMs, w.endMs, unescapeHtml(w.text)) }, it.translation?.let(::unescapeHtml)) },
+    l.lines.map { Line(it.startMs, unescapedText(it.text), it.words.map { w -> Word(w.startMs, w.endMs, unescapedText(w.text)) }, it.translation?.let(::unescapedText)) },
     l.synced,
     l.translationSource,
 )

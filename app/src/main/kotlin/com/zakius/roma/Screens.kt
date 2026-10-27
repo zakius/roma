@@ -123,7 +123,7 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
         mode == "romanized" -> Text(t.latin, mod, style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "original" -> Text(t.original, mod, style = wrapping, textAlign = align, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
         mode == "ruby" -> {
-            if (t.pieces.size == t.pieceLatin.size && t.pieces.isNotEmpty()) Box(mod) { RubyLine(t.pieces, t.pieceLatin, -1, wrapping, small.copy(color = dim), center, maxLines) }
+            if (t.pieces.size == t.pieceLatin.size && t.pieces.isNotEmpty()) Box(mod, contentAlignment = if (center) Alignment.TopCenter else Alignment.TopStart) { RubyLine(t.pieces, t.pieceLatin, -1, wrapping, small.copy(color = dim), center, maxLines) }
             else Column(mod) {
                 Text(t.latin, Modifier.fillMaxWidth(), style = small, color = dim, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(t.original, Modifier.fillMaxWidth(), style = style, textAlign = align, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -233,7 +233,16 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             MenuItem(if (liked) "Unlike" else "Like", Store.signedIn) { Playback.toggleLike(s); onClose() }
             MenuItem("Go to artist", s.firstArtistId != null) { Nav.open(Page("artist", s.firstArtistId!!)); onClose() }
             MenuItem("Go to album", s.album?.id != null) { Nav.open(Page("album", s.album!!.id!!)); onClose() }
-            MenuItem("Correct romanization…", true) { fixing = true }
+            // The same video ID plays on both: on YouTube a song is its "Topic" upload.
+            MenuItem("Share…", true) {
+                val host = if (Store.str("share.site", "music") == "music") "music.youtube.com" else "www.youtube.com"
+                val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, "https://$host/watch?v=${s.id}")
+                    .putExtra(Intent.EXTRA_TITLE, "${s.title.latin} · ${s.artistLatin}")
+                context.startActivity(Intent.createChooser(send, null))
+                onClose()
+            }
+            MenuItem("Correct romanization…", s.romanizable) { fixing = true }
             val titleKept = Store.keptOriginal("song", s.id, s.title.original)
             MenuItem(if (titleKept) "Romanize title" else "Don't romanize title", titleKept || !s.title.isLatin) {
                 Store.toggleKeepOriginal("song", s.id, s.title.original); onClose()
@@ -270,6 +279,9 @@ private fun MenuItem(label: String, enabled: Boolean, onClick: () -> Unit) {
         style = MaterialTheme.typography.bodyLarge,
     )
 }
+
+/** Some name of the song is in a non-Latin script: only then is there a romanization to correct. */
+val Song.romanizable get() = !title.isLatin || artists.any { !it.name.isLatin } || album?.name?.isLatin == false
 
 /**
  * Correct the Latin form of the song's title, an artist or the album, for this string, this song or this artist; or,
@@ -736,7 +748,7 @@ private fun Mixes(mixes: List<Item>?, read: Boolean) {
     if (!Store.signedIn) return Hint("Sign in to see your mixes")
     val config = androidx.compose.ui.platform.LocalConfiguration.current
     val list = mixes.orEmpty()
-    fun play(m: Item) { Playback.playMix(m.id); Nav.tab = TAB_PLAYER }
+    fun play(m: Item) { Playback.playMix(m.id, title = Store.shown(m.title), thumb = m.thumb); Nav.tab = TAB_PLAYER }
     val (cols, fit, side) = mixGrid(config, Home.gridFor.takeIf { it > 0 } ?: list.size)
     val shown = minOf(fit - 1, list.size) // mixes in the grid; Liked music is the last tile
     val textStyle = MaterialTheme.typography.bodySmall
@@ -750,7 +762,7 @@ private fun Mixes(mixes: List<Item>?, read: Boolean) {
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (line in (list.take(shown) + listOf<Item?>(null)).chunked(cols)) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             for (m in line) {
-                if (m == null) Tile("Liked music", false, { Playback.playMix("LM"); Nav.tab = TAB_PLAYER }) {
+                if (m == null) Tile("Liked music", false, { Playback.playMix("LM", title = "Liked music"); Nav.tab = TAB_PLAYER }) {
                     Box(Modifier.size(side).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
                         Icon(Icons.Filled.ThumbUp, null, Modifier.size(side / 3), tint = MaterialTheme.colorScheme.onSecondaryContainer)
                     }
@@ -1075,6 +1087,7 @@ fun SettingsScreen() {
         item { Header("Display") }
         item { Options("Lists", "display.list", "both", MODES) }
         item { Options("Player", "display.player", "both", MODES) }
+        item { Options("Shared links open", "share.site", "music", listOf("music" to "YouTube Music", "youtube" to "YouTube")) }
         item { Switch1("Left-handed player controls", "ui.leftHanded", false) }
         item { Switch1("True black in dark mode (saves power on OLED screens)", "ui.trueBlack", false) }
         item { Switch1("Accent colour from the song's artwork", "ui.artColors", false) }

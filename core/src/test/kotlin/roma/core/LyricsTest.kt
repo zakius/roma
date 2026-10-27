@@ -42,6 +42,7 @@ class LyricsTest {
     @Test fun htmlEntities() {
         assertEquals("rock an' roll \"A & B\" <3 it's", unescapeHtml("rock an&apos; roll &quot;A &amp; B&quot; &lt;3 it&#39;s"))
         assertEquals("&amp x &#xZZ;", unescapeHtml("&amp x &#xZZ;"))
+        assertEquals("it's \"A\" \\n", unescapeQuotes("it\\'s \\\"A\\\" \\n"))
     }
 
     @Test fun translationMerge() {
