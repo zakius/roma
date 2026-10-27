@@ -29,7 +29,10 @@ jobs:
         run: |
           v=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          if gh release view "v$v" > /dev/null 2>&1; then echo "release=" >> "$GITHUB_OUTPUT"; else echo "release=1" >> "$GITHUB_OUTPUT"; fi
+          # Only "release not found" is a new version; any other error (network, rate limit) fails the run.
+          if out=$(gh release view "v$v" 2>&1); then echo "release=" >> "$GITHUB_OUTPUT"
+          elif [[ $out == *"release not found"* ]]; then echo "release=1" >> "$GITHUB_OUTPUT"
+          else echo "$out" >&2; exit 1; fi
 
   app:
     needs: version
