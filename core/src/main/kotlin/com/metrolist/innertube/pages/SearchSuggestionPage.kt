@@ -33,36 +33,10 @@ object SearchSuggestionPage {
                             ?.runs
                             ?.firstOrNull()
                             ?.text ?: return null,
-                    author = PodcastPage.extractPodcastByline(secondaryLine?.getOrNull(0)).firstOrNull(),
-                    episodeCountText = secondaryLine?.lastOrNull()?.firstOrNull()?.text,
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    playEndpoint = renderer.overlay
-                        ?.musicItemThumbnailOverlayRenderer
-                        ?.content
-                        ?.musicPlayButtonRenderer
-                        ?.playNavigationEndpoint
-                        ?.watchPlaylistEndpoint,
-                    shuffleEndpoint = renderer.menu
-                        ?.menuRenderer
-                        ?.items
-                        ?.find { it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE" }
-                        ?.menuNavigationItemRenderer
-                        ?.navigationEndpoint
-                        ?.watchPlaylistEndpoint,
                 )
             }
             renderer.isEpisode -> {
-                val secondaryLine =
-                    renderer.flexColumns
-                        .getOrNull(1)
-                        ?.musicResponsiveListItemFlexColumnRenderer
-                        ?.text
-                        ?.runs
-                        ?.splitBySeparator()
-                val firstSubtitle = secondaryLine?.getOrNull(0)?.firstOrNull()?.text
-                val isUnfilteredSearch = firstSubtitle == "Episode"
-                val dateIndex = if (isUnfilteredSearch) 1 else 0
-                val podcastIndex = if (isUnfilteredSearch) 2 else 1
                 EpisodeItem(
                     id = renderer.videoId ?: return null,
                     title =
@@ -73,26 +47,7 @@ object SearchSuggestionPage {
                             ?.runs
                             ?.firstOrNull()
                             ?.text ?: return null,
-                    author = null,
-                    podcast = secondaryLine?.getOrNull(podcastIndex)?.firstOrNull()?.takeIf {
-                        it.navigationEndpoint?.browseEndpoint != null
-                    }?.let {
-                        Album(
-                            name = it.text,
-                            id = it.navigationEndpoint?.browseEndpoint?.browseId!!,
-                        )
-                    },
-                    duration = secondaryLine?.lastOrNull()?.firstOrNull()?.text?.parseTime(),
-                    publishDateText = secondaryLine?.getOrNull(dateIndex)?.firstOrNull()?.text,
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    endpoint = renderer.overlay
-                        ?.musicItemThumbnailOverlayRenderer
-                        ?.content
-                        ?.musicPlayButtonRenderer
-                        ?.playNavigationEndpoint
-                        ?.watchEndpoint,
-                    libraryAddToken = null,
-                    libraryRemoveToken = null,
                 )
             }
             renderer.isPlaylist -> {
@@ -173,10 +128,6 @@ object SearchSuggestionPage {
                     duration = PageHelper.extractDuration(metadataRuns),
                     musicVideoType = renderer.musicVideoType,
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    explicit =
-                        renderer.badges?.find {
-                            it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                        } != null,
                 )
             }
             renderer.isArtist -> {
@@ -275,10 +226,6 @@ object SearchSuggestionPage {
                             ?.text
                             ?.toIntOrNull(),
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    explicit =
-                        renderer.badges?.find {
-                            it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                        } != null,
                 )
             }
             else -> null

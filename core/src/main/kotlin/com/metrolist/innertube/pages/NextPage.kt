@@ -22,9 +22,6 @@ object NextPage {
     fun fromPlaylistPanelVideoRenderer(renderer: PlaylistPanelVideoRenderer): SongItem? {
         val longByLineRuns = renderer.longBylineText?.runs?.splitBySeparator() ?: return null
 
-        // Extract library tokens using the new method that properly handles multiple toggle items
-        val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
-
         return SongItem(
             id = renderer.videoId
                 ?: renderer.navigationEndpoint.watchEndpoint?.videoId
@@ -58,12 +55,6 @@ object NextPage {
                 renderer.thumbnail.thumbnails
                     .lastOrNull()
                     ?.url ?: return null,
-            explicit =
-                renderer.badges?.find {
-                    it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                } != null,
-            libraryAddToken = libraryTokens.addToken,
-            libraryRemoveToken = libraryTokens.removeToken
         )
     }
 }

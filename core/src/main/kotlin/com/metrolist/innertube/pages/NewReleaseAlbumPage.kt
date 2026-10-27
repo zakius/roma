@@ -28,10 +28,6 @@ object NewReleaseAlbumPage {
                     ?.text
                     ?.toIntOrNull(),
             thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-            explicit =
-                renderer.subtitleBadges?.find {
-                    it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                } != null,
         )
     }
 }

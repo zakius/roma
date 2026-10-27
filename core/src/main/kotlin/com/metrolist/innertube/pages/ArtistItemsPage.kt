@@ -37,9 +37,6 @@ class ArtistItemsPage(
                     } else null
                 }
 
-            // Extract library tokens using the new method that properly handles multiple toggle items
-            val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
-
             return SongItem(
                 id = renderer.playlistItemData?.videoId
                     ?: renderer.navigationEndpoint?.watchEndpoint?.videoId
@@ -67,13 +64,6 @@ class ArtistItemsPage(
                         ?.parseTime(),
                 musicVideoType = renderer.musicVideoType,
                 thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                explicit = renderer.badges?.find {
-                    it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                } != null,
-                endpoint = renderer.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint,
-                libraryAddToken = libraryTokens.addToken,
-                libraryRemoveToken = libraryTokens.removeToken,
-                isEpisode = renderer.isEpisode
             )
         }
 
@@ -88,9 +78,6 @@ class ArtistItemsPage(
                     artists = null,
                     year = renderer.subtitle?.runs?.lastOrNull()?.text?.toIntOrNull(),
                     thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                    explicit = renderer.subtitleBadges?.find {
-                        it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                    } != null
                 )
                 // Video
                 renderer.isSong -> {
@@ -106,7 +93,6 @@ class ArtistItemsPage(
                         duration = null,
                         musicVideoType = renderer.musicVideoType,
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                        endpoint = renderer.navigationEndpoint.watchEndpoint
                     )
                 }
                 renderer.isPlaylist -> PlaylistItem(

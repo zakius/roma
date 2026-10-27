@@ -237,7 +237,6 @@ object YouTube {
                                 ?.thumbnails
                                 ?.lastOrNull()!!
                                 .url,
-                        explicit = false, // TODO: Extract explicit badge for albums from YouTube response
                     )
                 return@runCatching AlbumPage(
                     album = albumItem,
@@ -327,7 +326,6 @@ object YouTube {
                                 ?.thumbnails
                                 ?.lastOrNull()
                                 ?.url!!,
-                        explicit = false, // TODO: Extract explicit badge for albums from YouTube response
                     )
                 val albumSongsList =
                     if (withSongs) {
@@ -478,12 +476,6 @@ object YouTube {
             val isSubscribed = immersiveSubscribed ?: visualSubscribed ?: false
 
             // Also extract channelId from visual header if not in immersive header
-            val channelIdFromVisual =
-                response.header
-                    ?.musicVisualHeaderRenderer
-                    ?.subscriptionButton
-                    ?.subscribeButtonRenderer
-                    ?.channelId
 
             ArtistPage(
                 artist =
@@ -524,33 +516,6 @@ object YouTube {
                                     ?.thumbnail
                                     ?.musicThumbnailRenderer
                                     ?.getThumbnailUrl(),
-                        channelId =
-                            response.header
-                                ?.musicImmersiveHeaderRenderer
-                                ?.subscriptionButton
-                                ?.subscribeButtonRenderer
-                                ?.channelId
-                                ?: channelIdFromVisual,
-                        playEndpoint =
-                            response.contents
-                                ?.singleColumnBrowseResultsRenderer
-                                ?.tabs
-                                ?.firstOrNull()
-                                ?.tabRenderer
-                                ?.content
-                                ?.sectionListRenderer
-                                ?.contents
-                                ?.firstOrNull()
-                                ?.musicShelfRenderer
-                                ?.contents
-                                ?.firstOrNull()
-                                ?.musicResponsiveListItemRenderer
-                                ?.overlay
-                                ?.musicItemThumbnailOverlayRenderer
-                                ?.content
-                                ?.musicPlayButtonRenderer
-                                ?.playNavigationEndpoint
-                                ?.watchEndpoint,
                         shuffleEndpoint =
                             response.header
                                 ?.musicImmersiveHeaderRenderer
@@ -701,8 +666,6 @@ object YouTube {
                 base?.musicResponsiveHeaderRenderer
                     ?: base?.musicEditablePlaylistDetailHeaderRenderer?.header?.musicResponsiveHeaderRenderer
 
-            val editable = base?.musicEditablePlaylistDetailHeaderRenderer != null
-
             val description: String? =
                 header?.description?.musicDescriptionShelfRenderer?.description?.runs?.joinToString("") { it.text }
                     ?: base?.musicEditablePlaylistDetailHeaderRenderer
@@ -748,11 +711,6 @@ object YouTube {
 
                 PlaylistPage.ownerFromDetailSubtitle(detailSubtitle)
             }
-
-            val authorAvatarUrl: String? = header?.facepile
-                ?.avatarStackViewModel?.avatars?.firstOrNull()
-                ?.avatarViewModel?.image?.sources?.firstOrNull()
-                ?.url
 
             PlaylistPage(
                 playlist =
@@ -805,9 +763,6 @@ object YouTube {
                                     ?.menuRenderer?.items?.find {
                                         it.menuNavigationItemRenderer?.icon?.iconType == "MIX"
                                     }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint,
-                        isEditable = editable,
-                        description = description,
-                        authorAvatarUrl = authorAvatarUrl,
                     ),
                 songs = run {
                     val twoColShelf =
@@ -1190,29 +1145,12 @@ object YouTube {
                         Timber.w("convertMusicResponsiveListItemRenderer: Song '$title' (id=${renderer.videoId}) has EMPTY artists list")
                     }
 
-                    val thirdColumn =
-                        renderer.flexColumns
-                            .getOrNull(2)
-                            ?.musicResponsiveListItemFlexColumnRenderer
-                            ?.text
-
                     SongItem(
                         id = renderer.videoId!!,
                         title = title,
                         artists = artists,
                         thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
                         musicVideoType = renderer.musicVideoType,
-                        explicit =
-                            renderer.badges?.any {
-                                it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                            } == true,
-                        chartPosition =
-                            thirdColumn
-                                ?.runs
-                                ?.firstOrNull()
-                                ?.text
-                                ?.toIntOrNull(),
-                        chartChange = thirdColumn?.runs?.getOrNull(1)?.text,
                     )
                 }
 
@@ -1245,10 +1183,6 @@ object YouTube {
                         artists = artists,
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
                         musicVideoType = renderer.musicVideoType,
-                        explicit =
-                            renderer.subtitleBadges?.any {
-                                it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                            } == true,
                     )
                 }
 
@@ -1276,10 +1210,6 @@ object YouTube {
                                 ?.text
                                 ?.toIntOrNull(),
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                        explicit =
-                            renderer.subtitleBadges?.any {
-                                it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                            } == true,
                     )
                 }
 
@@ -1426,13 +1356,6 @@ object YouTube {
             val libraryPage = libraryPodcastEpisodes().getOrThrow()
             libraryPage.items.filterIsInstance<PodcastItem>()
         }
-
-    suspend fun getChannelId(browseId: String): String {
-        artist(browseId).onSuccess {
-            return it.artist.channelId ?: ""
-        }
-        return ""
-    }
 
     suspend fun addToPlaylist(
         playlistId: String,
@@ -1776,59 +1699,6 @@ object YouTube {
                 .body<FeedbackResponse>()
                 .feedbackResponses
                 .all { it.isProcessed }
-        }
-
-    /**
-     * Add a song to library by fetching fresh feedback tokens from the next endpoint
-     * This is more reliable than using cached tokens which might be stale
-     */
-    suspend fun addSongToLibrary(videoId: String): Result<Boolean> =
-        runCatching {
-            // Get fresh song data with menu tokens using next endpoint
-            val nextResult = next(WatchEndpoint(videoId = videoId)).getOrThrow()
-            val song =
-                nextResult.items.find { it.id == videoId }
-                    ?: throw Exception("Song not found in next response")
-
-            val addToken =
-                song.libraryAddToken
-                    ?: throw Exception("Add to library token not available")
-
-            feedback(listOf(addToken)).getOrThrow()
-        }
-
-    /**
-     * Remove a song from library by fetching fresh feedback tokens from the next endpoint
-     */
-    suspend fun removeSongFromLibrary(videoId: String): Result<Boolean> =
-        runCatching {
-            // Get fresh song data with menu tokens using next endpoint
-            val nextResult = next(WatchEndpoint(videoId = videoId)).getOrThrow()
-            val song =
-                nextResult.items.find { it.id == videoId }
-                    ?: throw Exception("Song not found in next response")
-
-            val removeToken =
-                song.libraryRemoveToken
-                    ?: throw Exception("Remove from library token not available")
-
-            feedback(listOf(removeToken)).getOrThrow()
-        }
-
-    /**
-     * Toggle song library status - adds if not in library, removes if in library
-     * Uses fresh tokens fetched from the API for reliability
-     */
-    suspend fun toggleSongLibrary(
-        videoId: String,
-        addToLibrary: Boolean,
-    ): Result<Boolean> =
-        runCatching {
-            if (addToLibrary) {
-                addSongToLibrary(videoId).getOrThrow()
-            } else {
-                removeSongFromLibrary(videoId).getOrThrow()
-            }
         }
 
     @JvmInline

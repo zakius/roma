@@ -41,16 +41,13 @@ object SearchPage {
             // CRITICAL: Check isEpisode BEFORE isSong — both can match isSong (watchEndpoint or
             // null navigationEndpoint), so episodes must be identified first.
             renderer.isEpisode -> {
-                val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
-
                 // The subtitle line structure differs between filtered and unfiltered search:
                 //   Unfiltered: ["Episode", "·", "Jan 2025", "·", "Podcast Name", "·", "1:00:00"]
                 //     → secondaryLine = [["Episode"], ["Jan 2025"], ["Podcast Name"], ["1:00:00"]]
                 //   Filtered:   ["Jan 2025", "·", "Podcast Name"]
                 //     → secondaryLine = [["Jan 2025"], ["Podcast Name"]]
                 //
-                // Strategy: locate the podcast section by its PODCAST_SHOW_DETAIL_PAGE link;
-                // the date is in the section immediately before it.
+                // Strategy: locate the podcast section by its PODCAST_SHOW_DETAIL_PAGE link.
                 val podcastSectionIndex = secondaryLine.indexOfFirst { section ->
                     section.any { run ->
                         run.navigationEndpoint?.browseEndpoint
@@ -60,6 +57,7 @@ object SearchPage {
                     }
                 }
 
+                // Unread, but it skips an episode whose podcast link has no browse id.
                 val podcast = if (podcastSectionIndex >= 0) {
                     secondaryLine[podcastSectionIndex].firstOrNull()?.let { run ->
                         Album(
@@ -68,10 +66,6 @@ object SearchPage {
                         )
                     }
                 } else null
-
-                val publishDateText = if (podcastSectionIndex > 0)
-                    secondaryLine.getOrNull(podcastSectionIndex - 1)?.firstOrNull()?.text
-                else null
 
                 EpisodeItem(
                     id = renderer.playlistItemData?.videoId
@@ -92,35 +86,12 @@ object SearchPage {
                             ?.runs
                             ?.firstOrNull()
                             ?.text ?: return null,
-                    author = null,
-                    podcast = podcast,
-                    duration =
-                        secondaryLine
-                            .lastOrNull()
-                            ?.firstOrNull()
-                            ?.text
-                            ?.parseTime(),
-                    publishDateText = publishDateText,
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    explicit =
-                        renderer.badges?.find {
-                            it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                        } != null,
                     // In filtered search the overlay play button may be absent; fall back to the
                     // item's own watchEndpoint so the episode is always playable.
-                    endpoint = renderer.overlay
-                        ?.musicItemThumbnailOverlayRenderer
-                        ?.content
-                        ?.musicPlayButtonRenderer
-                        ?.playNavigationEndpoint
-                        ?.watchEndpoint
-                        ?: renderer.navigationEndpoint?.watchEndpoint,
-                    libraryAddToken = libraryTokens.addToken,
-                    libraryRemoveToken = libraryTokens.removeToken,
                 )
             }
             renderer.isSong -> {
-                val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
                 val metadataRuns = renderer.flexColumns
                     .drop(1)
                     .flatMap { it.musicResponsiveListItemFlexColumnRenderer.text?.runs.orEmpty() }
@@ -157,13 +128,6 @@ object SearchPage {
                     duration = PageHelper.extractDuration(metadataRuns),
                     musicVideoType = renderer.musicVideoType,
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    explicit =
-                        renderer.badges?.find {
-                            it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                        } != null,
-                    libraryAddToken = libraryTokens.addToken,
-                    libraryRemoveToken = libraryTokens.removeToken,
-                    isEpisode = renderer.isEpisode
                 )
             }
             renderer.isArtist -> {
@@ -222,7 +186,6 @@ object SearchPage {
                         ?.menuNavigationItemRenderer
                         ?.navigationEndpoint
                         ?.watchPlaylistEndpoint,
-                    isProfile = true,
                 )
             }
             renderer.isAlbum -> {
@@ -253,10 +216,6 @@ object SearchPage {
                             ?.text
                             ?.toIntOrNull(),
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    explicit =
-                        renderer.badges?.find {
-                            it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                        } != null,
                 )
             }
             renderer.isPlaylist -> {
@@ -332,36 +291,7 @@ object SearchPage {
                             ?.runs
                             ?.firstOrNull()
                             ?.text ?: return null,
-                    author =
-                        PageHelper.extractArtists(
-                            renderer.flexColumns
-                                .drop(1)
-                                .flatMap { it.musicResponsiveListItemFlexColumnRenderer.text?.runs.orEmpty() },
-                        ).firstOrNull(),
-                    episodeCountText =
-                        renderer.flexColumns
-                            .getOrNull(1)
-                            ?.musicResponsiveListItemFlexColumnRenderer
-                            ?.text
-                            ?.runs
-                            ?.lastOrNull()
-                            ?.text,
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    playEndpoint =
-                        renderer.overlay
-                            ?.musicItemThumbnailOverlayRenderer
-                            ?.content
-                            ?.musicPlayButtonRenderer
-                            ?.playNavigationEndpoint
-                            ?.watchPlaylistEndpoint,
-                    shuffleEndpoint =
-                        renderer.menu
-                            ?.menuRenderer
-                            ?.items
-                            ?.find { it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE" }
-                            ?.menuNavigationItemRenderer
-                            ?.navigationEndpoint
-                            ?.watchPlaylistEndpoint,
                 )
             }
             else -> null
