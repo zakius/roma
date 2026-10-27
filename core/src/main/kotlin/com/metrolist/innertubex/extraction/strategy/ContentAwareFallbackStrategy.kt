@@ -103,10 +103,10 @@ class ContentAwareFallbackStrategy(
                         else -> 1
                     }
                 }.thenBy {
-                    // Only Premium gains quality from cookies; cookie-less clients start video several times faster.
+                    // Only Premium gains quality from cookies.
                     if (request.authenticated &&
                         request.premium &&
-                        (premiumHighQuality || request.hints.wantVideo) &&
+                        premiumHighQuality &&
                         request.hints.isKidsContent != true &&
                         it.manifest?.authentication == AuthenticationPolicy.UNSUPPORTED
                     ) {
@@ -145,9 +145,7 @@ class ContentAwareFallbackStrategy(
             if (checkContentSupport && contentSupport == CapabilitySupport.UNSUPPORTED) {
                 add("content type unsupported")
             }
-            if (checkContentSupport && manifest.id == "VISIONOS_0_1" &&
-                (request.hints.wantVideo || contentSupport != CapabilitySupport.SUPPORTED)
-            ) {
+            if (checkContentSupport && manifest.id == "VISIONOS_0_1" && contentSupport != CapabilitySupport.SUPPORTED) {
                 add("legacy direct playback verified for normal and explicit audio only")
             }
 
@@ -249,17 +247,6 @@ class ContentAwareFallbackStrategy(
         }
         if (manifest.authentication == AuthenticationPolicy.REQUIRED) adjust(8, "auth-specialist")
 
-        if (request.hints.wantVideo) {
-            if (manifest.client.clientName == "WEB_REMIX" || manifest.client.clientName == "WEB_CREATOR") {
-                adjust(-40, "web-remix-or-creator-video-demoted")
-            } else if (manifest.client.clientName.startsWith("TVHTML5") ||
-                manifest.client.clientName.startsWith("VISIONOS") ||
-                manifest.client.clientName.startsWith("ANDROID_VR") ||
-                manifest.client.clientName.startsWith("IOS")
-            ) {
-                adjust(35, "video-dedicated-client-preferred")
-            }
-        }
 
         when (manifest.lifecycle) {
             ClientLifecycle.STABLE -> Unit

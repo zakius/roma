@@ -97,7 +97,6 @@ internal class PlayerClientDirector(
         excludedClients: Set<String> = emptySet(),
         acceptCipherOnlyResponse: Boolean = false,
         directAudioOnlyClients: Boolean = false,
-        wantVideo: Boolean = false,
         premiumHighQuality: Boolean = false,
         requestBudget: PlayerRequestBudget? = null,
         prefetchedPoToken: PoTokenPrefetch? = null,
@@ -112,7 +111,6 @@ internal class PlayerClientDirector(
                 excludedClients,
                 acceptCipherOnlyResponse,
                 directAudioOnlyClients,
-                wantVideo,
                 premiumHighQuality,
                 budget,
                 prefetchedPoToken,
@@ -128,7 +126,6 @@ internal class PlayerClientDirector(
         excludedClients: Set<String>,
         acceptCipherOnlyResponse: Boolean,
         directAudioOnlyClients: Boolean,
-        wantVideo: Boolean,
         premiumHighQuality: Boolean,
         requestBudget: PlayerRequestBudget,
         prefetchedPoToken: PoTokenPrefetch?,
@@ -188,7 +185,6 @@ internal class PlayerClientDirector(
                 videoId = videoId,
                 playerConfig = playerConfig,
                 excludedClients = excludedClients,
-                wantVideo = wantVideo,
                 requestBudget = effectiveRequestBudget,
                 initialSession = requestSession,
                 credential = tvBearerCredential,
@@ -352,30 +348,12 @@ internal class PlayerClientDirector(
                 }
                 playableResults += result
 
-                if (acceptCipherOnlyResponse && (!wantVideo || hasUsableVideoTransport(attempt.response))) {
+                if (acceptCipherOnlyResponse) {
                     return PlayerResponseBatch(listOf(result), failures, requestFailures, attempts)
                 }
 
-                val yieldsDirect =
-                    hasPlaybackReadyDirectAudioUrl(attempt.response) &&
-                        (!wantVideo || hasPlaybackReadyDirectVideoUrl(attempt.response))
-                if (yieldsDirect) {
-                    // For video, prefer a poToken client over a direct non-poToken one: YouTube 403s
-                    // direct video URLs without a poToken, attached by the extractor after cipher resolution.
-                    val preferDirect = !wantVideo || attempt.usedPoToken || playableResults.none { it.usedPoToken }
-                    if (preferDirect) {
-                        val selectedResults =
-                            if (acceptCipherOnlyResponse) {
-                                if (wantVideo) {
-                                    playableResults.sortedByDescending(ClientResult::usedPoToken)
-                                } else {
-                                    playableResults.toList()
-                                }
-                            } else {
-                                listOf(result)
-                            }
-                        return PlayerResponseBatch(selectedResults, failures, requestFailures, attempts)
-                    }
+                if (hasPlaybackReadyDirectAudioUrl(attempt.response)) {
+                    return PlayerResponseBatch(listOf(result), failures, requestFailures, attempts)
                 }
 
             } else {
@@ -390,14 +368,7 @@ internal class PlayerClientDirector(
         }
 
         if (playableResults.isNotEmpty()) {
-            // For video, order poToken clients first so the extractor can attach the GVS poToken.
-            val orderedResults =
-                if (wantVideo) {
-                    playableResults.sortedByDescending { it.usedPoToken }
-                } else {
-                    playableResults
-                }
-            return PlayerResponseBatch(orderedResults, failures, requestFailures, attempts)
+            return PlayerResponseBatch(playableResults, failures, requestFailures, attempts)
         }
 
         return PlayerResponseBatch(
@@ -415,7 +386,6 @@ internal class PlayerClientDirector(
         videoId: String,
         playerConfig: PlayerConfig,
         excludedClients: Set<String>,
-        wantVideo: Boolean,
         requestBudget: PlayerRequestBudget,
         initialSession: InnerTube.SessionSnapshot,
         credential: TvBearerCredential,
@@ -481,9 +451,6 @@ internal class PlayerClientDirector(
         if (attempt == null) {
             attemptResult.failure?.let(failures::add)
             attemptResult.requestFailure?.let(requestFailures::add)
-            return PlayerResponseBatch(emptyList(), failures, requestFailures, attempts)
-        }
-        if (wantVideo && !hasUsableVideoTransport(attempt.response)) {
             return PlayerResponseBatch(emptyList(), failures, requestFailures, attempts)
         }
         return PlayerResponseBatch(
@@ -981,36 +948,12 @@ internal class PlayerClientDirector(
         }
     }
 
-    private fun hasUsableVideoTransport(response: PlayerResponse): Boolean {
-        val streamingData = response.streamingData ?: return false
-        if (!streamingData.hlsManifestUrl.isNullOrBlank()) return true
-        val allFormats = (streamingData.formats ?: emptyList()) + streamingData.adaptiveFormats
-        return allFormats.any { format ->
-            format.width != null && (
-                !format.url.isNullOrBlank() ||
-                    !format.signatureCipher.isNullOrBlank() ||
-                    !format.cipher.isNullOrBlank()
-            )
-        }
-    }
-
     private fun hasPlaybackReadyDirectAudioUrl(response: PlayerResponse): Boolean {
         val streamingData = response.streamingData ?: return false
         val allFormats = (streamingData.formats ?: emptyList()) + streamingData.adaptiveFormats
         return allFormats.any { format ->
             val url = format.url
             format.isAudio &&
-                !url.isNullOrBlank() &&
-                !url.hasNParameter()
-        }
-    }
-
-    private fun hasPlaybackReadyDirectVideoUrl(response: PlayerResponse): Boolean {
-        val streamingData = response.streamingData ?: return false
-        val allFormats = (streamingData.formats ?: emptyList()) + streamingData.adaptiveFormats
-        return allFormats.any { format ->
-            val url = format.url
-            format.width != null &&
                 !url.isNullOrBlank() &&
                 !url.hasNParameter()
         }

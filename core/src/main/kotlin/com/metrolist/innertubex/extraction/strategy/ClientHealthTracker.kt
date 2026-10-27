@@ -30,7 +30,6 @@ enum class ClientHealthContent {
 data class ClientHealthScope(
     val content: ClientHealthContent,
     val authenticated: Boolean,
-    val wantVideo: Boolean,
 ) {
     companion object {
         fun from(
@@ -48,7 +47,6 @@ data class ClientHealthScope(
                         else -> ClientHealthContent.NORMAL
                     },
                 authenticated = authenticated,
-                wantVideo = hints.wantVideo,
             )
     }
 }

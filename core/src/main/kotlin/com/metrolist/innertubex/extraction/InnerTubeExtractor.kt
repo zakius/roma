@@ -262,7 +262,6 @@ class InnerTubeExtractor internal constructor(
             !confirmedPremium ||
             audioQuality != AudioQuality.HIGH ||
             hints.playbackClientOverrideId != null ||
-            hints.wantVideo ||
             hints.isUploaded == true ||
             hints.isLive == true
         ) {
@@ -551,7 +550,7 @@ class InnerTubeExtractor internal constructor(
         val authenticatedPremiumHighQuality =
             hints.premium && audioQuality == AudioQuality.HIGH && innerTube.hasSapCookieAuth()
         val configFreeEligible =
-            hints.playbackClientOverrideId == null && !hints.wantVideo &&
+            hints.playbackClientOverrideId == null &&
                 hints.isAgeRestricted != true &&
                 hints.isUploaded != true && hints.isLive != true &&
                 !authenticatedPremiumHighQuality
@@ -599,8 +598,7 @@ class InnerTubeExtractor internal constructor(
                     authenticatedPremiumHighQuality ||
                         hints.isExplicit == true ||
                         hints.isAgeRestricted == true ||
-                        hints.isUploaded == true ||
-                        hints.wantVideo
+                        hints.isUploaded == true
                 )
         val stream = extractWithWatchConfig(useLoginCookies = cookieFirst)
         if (stream != null) return stream
@@ -662,7 +660,6 @@ class InnerTubeExtractor internal constructor(
             hints.isAgeRestricted != true &&
             hints.isLive != true &&
             hints.isUploaded != true &&
-            !hints.wantVideo &&
             classifiedFailure != StreamResolveException.Reason.AGE_RESTRICTED
 
     private suspend fun extractWithWebKidsFallback(
@@ -918,8 +915,7 @@ class InnerTubeExtractor internal constructor(
                 hints = hints,
                 excludedClients = excludedClients,
                 acceptCipherOnlyResponse = allowCipherProcessing,
-                directAudioOnlyClients = !allowCipherProcessing && !hints.wantVideo,
-                wantVideo = hints.wantVideo,
+                directAudioOnlyClients = !allowCipherProcessing,
                 premiumHighQuality = hints.premium && audioQuality == AudioQuality.HIGH,
                 requestBudget = diagnostics.requestBudget,
                 tvBearerCredential = tvBearerCredential,
@@ -951,12 +947,6 @@ class InnerTubeExtractor internal constructor(
             val allFormats =
                 (streamingData.formats ?: emptyList()) +
                     streamingData.adaptiveFormats
-            val availableVideoHeights =
-                allFormats
-                    .mapNotNull { format -> format.height?.takeIf { format.width != null && it > 0 } }
-                    .distinct()
-                    .sorted()
-
             val directAudioItags =
                 allFormats
                     .asSequence()
@@ -986,35 +976,15 @@ class InnerTubeExtractor internal constructor(
                     requireUrl = false,
                 )
             val directAudioIsBest = directFastPathCandidate === bestAvailableAudioFormat
-            val wantVideo = hints.wantVideo
-            val directVideoFormats =
-                if (wantVideo) preferredVideoFormats(streamingData, requireUrl = true) else emptyList()
-            val preferredDirectVideo =
-                selectBestVideoFormat(directVideoFormats, maxHeight = hints.maxVideoHeight ?: 2160)
-            val directFastPathVideo =
-                preferredDirectVideo?.takeIf { it.hasReadyVideoUrl() }
-                    ?: selectBestVideoFormat(
-                        directVideoFormats.filter {
-                            it.height == preferredDirectVideo?.height && it.hasReadyVideoUrl()
-                        },
-                        maxHeight = hints.maxVideoHeight ?: 2160,
-                    )
-                    ?: preferredDirectVideo
-            if (directFastPathCandidate != null && directAudioIsBest && (!wantVideo || directFastPathVideo != null)) {
+            if (directFastPathCandidate != null && directAudioIsBest) {
                 val directUrl =
                     appendClientPlaybackNonce(
                         directFastPathCandidate.url.orEmpty().withPoToken(result.streamingDataPoToken),
                         clientPlaybackNonce,
                     )
                 if (!isAllowedMediaUrl(directUrl)) continue
-                val directVideoUrl =
-                    directFastPathVideo
-                        ?.url
-                        ?.withPoToken(result.streamingDataPoToken)
-                        ?.let { appendClientPlaybackNonce(it, clientPlaybackNonce) }
-                if (wantVideo && (directVideoUrl.isNullOrBlank() || !isAllowedMediaUrl(directVideoUrl))) continue
-                // Fast path: if the selected URLs are already playback-ready, skip cipher/ejs work.
-                if (!directUrl.hasNParameter() && directVideoUrl?.hasNParameter() != true) {
+                // Fast path: if the selected URL is already playback-ready, skip cipher/ejs work.
+                if (!directUrl.hasNParameter()) {
                     val expireSeconds = extractExpire(directUrl)
                     val expiresAt = expireSeconds?.let { Instant.fromEpochSeconds(it) }
                     val directHeaders =
@@ -1034,21 +1004,6 @@ class InnerTubeExtractor internal constructor(
                             diagnostics.requestBudget,
                         )
                     if (requireBoundedRange && contentLength == null) {
-                        continue
-                    }
-                    val videoContentLength =
-                        if (wantVideo) {
-                            resolveBoundedContentLength(
-                                directFastPathVideo?.contentLength,
-                                checkNotNull(directVideoUrl),
-                                directHeaders,
-                                requireBoundedRange,
-                                diagnostics.requestBudget,
-                            )
-                        } else {
-                            null
-                        }
-                    if (requireBoundedRange && wantVideo && videoContentLength == null) {
                         continue
                     }
 
@@ -1071,15 +1026,6 @@ class InnerTubeExtractor internal constructor(
                         rangeChunkSizeBytes = mediaRangeChunkSize(result.clientName),
                         playbackTracking = playbackTracking,
                         streamDiagnostics = diagnostics.snapshot(),
-                        videoUrl = directVideoUrl,
-                        videoWidth = directFastPathVideo?.width,
-                        videoHeight = directFastPathVideo?.height,
-                        videoMimeType = directFastPathVideo?.mimeType?.substringBefore(";")?.trim(),
-                        videoCodecs = directFastPathVideo?.mimeType?.extractCodecs(),
-                        videoBitrate = directFastPathVideo?.bitrate,
-                        videoItag = directFastPathVideo?.itag,
-                        videoContentLengthBytes = videoContentLength,
-                        availableVideoHeights = availableVideoHeights,
                     ).withResponseMetadata(response).also { diagnostics.ensureSessionCurrent() }
                 }
             }
@@ -1090,41 +1036,12 @@ class InnerTubeExtractor internal constructor(
             val rawAudioFormats = allFormats.filter { it.width == null }
             val preferredRawAudioFormat = selectBestAudioFormat(rawAudioFormats, audioQuality, requireUrl = false)
             val audioFormatsForCipher = preferredRawAudioFormat?.let { listOf(it) } ?: rawAudioFormats
-            val rawVideoFormats = if (hints.wantVideo) preferredVideoFormats(streamingData, requireUrl = false) else emptyList()
-            val preferredRawVideoFormat =
-                selectBestVideoFormat(
-                    rawVideoFormats,
-                    requireUrl = false,
-                    maxHeight = hints.maxVideoHeight ?: 2160,
-                )
-            val rawVideoFallback =
-                if (preferredRawVideoFormat?.hasReadyVideoUrl() == true) {
-                    null
-                } else {
-                    selectBestVideoFormat(
-                        rawVideoFormats.filter {
-                            it.itag != preferredRawVideoFormat?.itag &&
-                                it.height == preferredRawVideoFormat?.height &&
-                                it.hasReadyVideoUrl()
-                        },
-                        maxHeight = hints.maxVideoHeight ?: 2160,
-                    )
-                }
-            val rawVideoCandidates = listOfNotNull(preferredRawVideoFormat, rawVideoFallback)
-            val formatsForCipher = audioFormatsForCipher + rawVideoCandidates
             var processedFormats =
                 cipherService
                     .processFormats(
                         playerUrl = playerConfig.playerUrl,
-                        formats = formatsForCipher,
+                        formats = audioFormatsForCipher,
                     ).also { diagnostics.ensureSessionCurrent() }
-            val processedVideoFormat =
-                rawVideoCandidates.firstNotNullOfOrNull { candidate ->
-                    processedFormats.firstOrNull {
-                        // processFormats keeps the solved n and nulls unresolved ones, so any URL left is ready.
-                        it.itag == candidate.itag && it.width != null && it.url?.let(::isAllowedMediaUrl) == true
-                    }
-                }
 
             var audioFormats = processedFormats.filter(PlayerResponse.StreamingData.Format::isAudio)
             var usableAudioFormats = audioFormats.filter { !it.url.isNullOrBlank() }
@@ -1160,14 +1077,6 @@ class InnerTubeExtractor internal constructor(
                 continue
             }
             if (!isAllowedMediaUrl(url)) continue
-            val videoUrl =
-                processedVideoFormat
-                    ?.url
-                    ?.withPoToken(result.streamingDataPoToken)
-                    ?.let { appendClientPlaybackNonce(it, clientPlaybackNonce) }
-            if (hints.wantVideo && (videoUrl.isNullOrBlank() || !isAllowedMediaUrl(videoUrl))) {
-                continue
-            }
             val expireSeconds = extractExpire(url)
             val expiresAt = expireSeconds?.let { Instant.fromEpochSeconds(it) }
             val directHeaders =
@@ -1187,21 +1096,6 @@ class InnerTubeExtractor internal constructor(
                     diagnostics.requestBudget,
                 )
             if (requireBoundedRange && contentLength == null) {
-                continue
-            }
-            val videoContentLength =
-                if (hints.wantVideo) {
-                    resolveBoundedContentLength(
-                        processedVideoFormat?.contentLength,
-                        checkNotNull(videoUrl),
-                        directHeaders,
-                        requireBoundedRange,
-                        diagnostics.requestBudget,
-                    )
-                } else {
-                    null
-                }
-            if (requireBoundedRange && hints.wantVideo && videoContentLength == null) {
                 continue
             }
 
@@ -1224,15 +1118,6 @@ class InnerTubeExtractor internal constructor(
                 rangeChunkSizeBytes = mediaRangeChunkSize(result.clientName),
                 playbackTracking = playbackTracking,
                 streamDiagnostics = diagnostics.snapshot(),
-                videoUrl = videoUrl,
-                videoWidth = processedVideoFormat?.width,
-                videoHeight = processedVideoFormat?.height,
-                videoMimeType = processedVideoFormat?.mimeType?.substringBefore(";")?.trim(),
-                videoCodecs = processedVideoFormat?.mimeType?.extractCodecs(),
-                videoBitrate = processedVideoFormat?.bitrate,
-                videoItag = processedVideoFormat?.itag,
-                videoContentLengthBytes = videoContentLength,
-                availableVideoHeights = availableVideoHeights,
             ).withResponseMetadata(response).also { diagnostics.ensureSessionCurrent() }
         }
 
@@ -1395,21 +1280,7 @@ class InnerTubeExtractor internal constructor(
             )
         }
 
-    private fun preferredVideoFormats(
-        streamingData: StreamingData,
-        requireUrl: Boolean,
-    ): List<Format> {
-        val adaptive = streamingData.adaptiveFormats.filter { it.width != null && (!requireUrl || !it.url.isNullOrBlank()) }
-        val adaptiveHeights = adaptive.filter { it.hasReadyVideoUrl() }.mapTo(mutableSetOf()) { it.height }
-        return adaptive +
-            streamingData.formats.orEmpty().filter {
-                it.width != null && it.height !in adaptiveHeights && (!requireUrl || !it.url.isNullOrBlank())
-            }
-    }
-
     private fun String.extractCodecs(): String? = CODECS_REGEX.find(this)?.groupValues?.getOrNull(1)
-
-    private fun Format.hasReadyVideoUrl(): Boolean = url?.let { !it.hasNParameter() && isAllowedMediaUrl(it) } == true
 
     private fun isAllowedMediaUrl(value: String): Boolean =
         runCatching { Url(value) }.getOrNull()?.let {

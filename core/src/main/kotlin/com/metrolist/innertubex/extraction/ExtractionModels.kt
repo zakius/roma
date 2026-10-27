@@ -12,9 +12,7 @@ public class ContentHints(
     public val isUploaded: Boolean? = null,
     public val isLocal: Boolean? = null,
     public val endpointParams: String? = null,
-    public val wantVideo: Boolean = false,
     public val playbackClientOverrideId: String? = null,
-    public val maxVideoHeight: Int? = null,
 ) {
     /** True only when the caller has independently confirmed YouTube Premium entitlement. */
     public var premium: Boolean = false
@@ -34,11 +32,7 @@ public class ContentHints(
 
     public operator fun component7(): String? = endpointParams
 
-    public operator fun component8(): Boolean = wantVideo
-
-    public operator fun component9(): String? = playbackClientOverrideId
-
-    public operator fun component10(): Int? = maxVideoHeight
+    public operator fun component8(): String? = playbackClientOverrideId
 
     public fun copy(
         isExplicit: Boolean? = this.isExplicit,
@@ -48,9 +42,7 @@ public class ContentHints(
         isUploaded: Boolean? = this.isUploaded,
         isLocal: Boolean? = this.isLocal,
         endpointParams: String? = this.endpointParams,
-        wantVideo: Boolean = this.wantVideo,
         playbackClientOverrideId: String? = this.playbackClientOverrideId,
-        maxVideoHeight: Int? = this.maxVideoHeight,
     ): ContentHints =
         ContentHints(
             isExplicit = isExplicit,
@@ -60,9 +52,7 @@ public class ContentHints(
             isUploaded = isUploaded,
             isLocal = isLocal,
             endpointParams = endpointParams,
-            wantVideo = wantVideo,
             playbackClientOverrideId = playbackClientOverrideId,
-            maxVideoHeight = maxVideoHeight,
         ).also {
             it.premium = premium
         }
@@ -83,9 +73,7 @@ public class ContentHints(
             isUploaded == other.isUploaded &&
             isLocal == other.isLocal &&
             endpointParams == other.endpointParams &&
-            wantVideo == other.wantVideo &&
             playbackClientOverrideId == other.playbackClientOverrideId &&
-            maxVideoHeight == other.maxVideoHeight &&
             premium == other.premium
     }
 
@@ -97,9 +85,7 @@ public class ContentHints(
         result = 31 * result + (isUploaded?.hashCode() ?: 0)
         result = 31 * result + (isLocal?.hashCode() ?: 0)
         result = 31 * result + (endpointParams?.hashCode() ?: 0)
-        result = 31 * result + wantVideo.hashCode()
         result = 31 * result + (playbackClientOverrideId?.hashCode() ?: 0)
-        result = 31 * result + (maxVideoHeight ?: 0)
         return 31 * result + premium.hashCode()
     }
 
@@ -109,8 +95,8 @@ public class ContentHints(
 public fun ContentHints.diagnosticSummary(): String =
     "{explicit=$isExplicit, kids=$isKidsContent, ageRestricted=$isAgeRestricted, " +
         "live=$isLive, uploaded=$isUploaded, local=$isLocal, " +
-        "endpointParamsPresent=${endpointParams != null}, wantVideo=$wantVideo, " +
-        "clientOverride=$playbackClientOverrideId, maxVideoHeight=$maxVideoHeight, " +
+        "endpointParamsPresent=${endpointParams != null}, " +
+        "clientOverride=$playbackClientOverrideId, " +
         "premium=$premium}"
 
 public data class PlayerConfig(
@@ -213,15 +199,6 @@ public class ExtractedStream(
     val useRangeChunks: Boolean = false,
     val playbackTracking: PlaybackTrackingData? = null,
     val streamDiagnostics: StreamDiagnostics? = null,
-    val videoUrl: String? = null,
-    val videoWidth: Int? = null,
-    val videoHeight: Int? = null,
-    val videoMimeType: String? = null,
-    val videoCodecs: String? = null,
-    val videoBitrate: Int? = null,
-    val videoItag: Int? = null,
-    val videoContentLengthBytes: Long? = null,
-    val availableVideoHeights: List<Int> = emptyList(),
 ) {
     public var perceptualLoudnessDb: Double? = null
         internal set
@@ -265,23 +242,14 @@ public class ExtractedStream(
 
     public operator fun component18(): StreamDiagnostics? = streamDiagnostics
 
-    public operator fun component19(): String? = videoUrl
 
-    public operator fun component20(): Int? = videoWidth
 
-    public operator fun component21(): Int? = videoHeight
 
-    public operator fun component22(): String? = videoMimeType
 
-    public operator fun component23(): String? = videoCodecs
 
-    public operator fun component24(): Int? = videoBitrate
 
-    public operator fun component25(): Int? = videoItag
 
-    public operator fun component26(): Long? = videoContentLengthBytes
 
-    public operator fun component27(): List<Int> = availableVideoHeights
 
     public fun copy(
         videoId: String = this.videoId,
@@ -302,15 +270,6 @@ public class ExtractedStream(
         useRangeChunks: Boolean = this.useRangeChunks,
         playbackTracking: PlaybackTrackingData? = this.playbackTracking,
         streamDiagnostics: StreamDiagnostics? = this.streamDiagnostics,
-        videoUrl: String? = this.videoUrl,
-        videoWidth: Int? = this.videoWidth,
-        videoHeight: Int? = this.videoHeight,
-        videoMimeType: String? = this.videoMimeType,
-        videoCodecs: String? = this.videoCodecs,
-        videoBitrate: Int? = this.videoBitrate,
-        videoItag: Int? = this.videoItag,
-        videoContentLengthBytes: Long? = this.videoContentLengthBytes,
-        availableVideoHeights: List<Int> = this.availableVideoHeights,
     ): ExtractedStream =
         ExtractedStream(
             videoId = videoId,
@@ -331,15 +290,6 @@ public class ExtractedStream(
             useRangeChunks = useRangeChunks,
             playbackTracking = playbackTracking,
             streamDiagnostics = streamDiagnostics,
-            videoUrl = videoUrl,
-            videoWidth = videoWidth,
-            videoHeight = videoHeight,
-            videoMimeType = videoMimeType,
-            videoCodecs = videoCodecs,
-            videoBitrate = videoBitrate,
-            videoItag = videoItag,
-            videoContentLengthBytes = videoContentLengthBytes,
-            availableVideoHeights = availableVideoHeights,
         ).also {
             it.perceptualLoudnessDb = perceptualLoudnessDb
             it.mediaMetadata = mediaMetadata
@@ -366,15 +316,6 @@ public class ExtractedStream(
             useRangeChunks == other.useRangeChunks &&
             playbackTracking == other.playbackTracking &&
             streamDiagnostics == other.streamDiagnostics &&
-            videoUrl == other.videoUrl &&
-            videoWidth == other.videoWidth &&
-            videoHeight == other.videoHeight &&
-            videoMimeType == other.videoMimeType &&
-            videoCodecs == other.videoCodecs &&
-            videoBitrate == other.videoBitrate &&
-            videoItag == other.videoItag &&
-            videoContentLengthBytes == other.videoContentLengthBytes &&
-            availableVideoHeights == other.availableVideoHeights &&
             (perceptualLoudnessDb?.equals(other.perceptualLoudnessDb) ?: (other.perceptualLoudnessDb == null)) &&
             mediaMetadata == other.mediaMetadata
     }
@@ -398,15 +339,6 @@ public class ExtractedStream(
         result = 31 * result + useRangeChunks.hashCode()
         result = 31 * result + (playbackTracking?.hashCode() ?: 0)
         result = 31 * result + (streamDiagnostics?.hashCode() ?: 0)
-        result = 31 * result + (videoUrl?.hashCode() ?: 0)
-        result = 31 * result + (videoWidth?.hashCode() ?: 0)
-        result = 31 * result + (videoHeight?.hashCode() ?: 0)
-        result = 31 * result + (videoMimeType?.hashCode() ?: 0)
-        result = 31 * result + (videoCodecs?.hashCode() ?: 0)
-        result = 31 * result + (videoBitrate?.hashCode() ?: 0)
-        result = 31 * result + (videoItag?.hashCode() ?: 0)
-        result = 31 * result + (videoContentLengthBytes?.hashCode() ?: 0)
-        result = 31 * result + availableVideoHeights.hashCode()
         result = 31 * result + (perceptualLoudnessDb?.hashCode() ?: 0)
         result = 31 * result + (mediaMetadata?.hashCode() ?: 0)
         return result
@@ -422,9 +354,7 @@ public class ExtractedStream(
             "mimeType=$mimeType, " +
             "clientName=$clientName, " +
             "profileId=$profileId, " +
-            "mediaMetadata=${mediaMetadata != null}, " +
-            "videoUrl=${videoUrl.presence()}, " +
-            "videoItag=$videoItag)"
+            "mediaMetadata=${mediaMetadata != null})"
 }
 
 public data class StreamAttemptDiagnostic(
