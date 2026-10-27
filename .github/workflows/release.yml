@@ -2,11 +2,15 @@
 # gets its own release, dict-<version>, the first time its version is seen; roma downloads it from there. The app and
 # the dictionary build in parallel jobs, and the core tests (which need the slim dictionary) in a third; roma's release
 # is published only once its dictionary release exists and the tests pass.
+# A push to master runs the same jobs without signing or publishing: it tests the merge and saves the Gradle cache
+# (Gradle User Home, with SudachiDict and the slim dictionary), which setup-gradle only writes on the default branch and
+# which a tag run can only read from there.
 # Secrets: KEYSTORE_BASE64 (the .jks, base64), STORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD.
 name: release
 on:
   push:
     tags: ["v*"]
+    branches: [master]
 permissions:
   contents: write
 # ubuntu-24.04, not ubuntu-latest: the image the release is built and tested on, changed on purpose rather than by GitHub.
@@ -23,6 +27,7 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
           sudo apt-get install -y pigz > /dev/null
       - name: Signing key
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
@@ -32,7 +37,8 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$RUNNER_TEMP/release.jks" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
       - run: tools/release.sh app
-      - uses: actions/upload-artifact@v7
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7
         with: { name: app, path: dist/roma-*.apk }
 
   test:
@@ -67,7 +73,7 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" > /dev/null
           sudo apt-get install -y pigz > /dev/null
       - name: Signing key
-        if: steps.check.outputs.build
+        if: steps.check.outputs.build && startsWith(github.ref, 'refs/tags/')
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
@@ -79,13 +85,14 @@ jobs:
       - if: steps.check.outputs.build
         run: tools/release.sh dict
       - name: Publish
-        if: steps.check.outputs.build
+        if: steps.check.outputs.build && startsWith(github.ref, 'refs/tags/')
         env: { GH_TOKEN: "${{ github.token }}", DICT: "${{ steps.check.outputs.tag }}" }
         run: |
           gh release create "$DICT" dist/roma-dict-*.apk.gz --target "$GITHUB_SHA" --latest=false --title "Japanese dictionary ${DICT#dict-}" \
             --notes "SudachiDict core ${DICT#dict-} as a companion app for roma, without what roma never reads (postal addresses, split and synonym data; duplicate cost rows merged). roma installs it when Japanese is romanized. SudachiDict is Apache-2.0 (Works Applications)."
 
   publish:
+    if: startsWith(github.ref, 'refs/tags/')
     needs: [app, dict, test]
     runs-on: ubuntu-24.04
     steps:

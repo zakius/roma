@@ -5,7 +5,7 @@
 #     The APK keeps the dictionary uncompressed (roma maps it in place); the gzip is only for the download.
 # roma fetches the dictionary from its GitHub release (dict-<version>), or from ROMA_DICT_BASE if set.
 # Usage: release.sh [app] [dict] [test]; all three by default (test: the core tests, which need the slim dictionary).
-# The GitHub workflow (.github/workflows/release.yml) runs them in separate jobs for a v* tag.
+# The GitHub workflow (.github/workflows/release.yml) runs them in separate jobs for a v* tag, and unsigned for master.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export JAVA_HOME=${JAVA_HOME:-$HOME/.local/share/JetBrains/Toolbox/apps/air/jbr}
@@ -26,6 +26,11 @@ tasks=()
 [ -n "$buildDict" ] && tasks+=(:dict-app:assembleRelease)
 ./gradlew -q "${tasks[@]}" ${ROMA_DICT_BASE:+-Proma.dictBase=$ROMA_DICT_BASE}
 [ -n "$app$buildDict" ] || exit 0 # tests only: nothing to sign
+# No key (CI on master, or a checkout without one): built, not signed. A tag's release must be signed.
+if [ ! -f keystore.properties ]; then
+  [[ ${GITHUB_REF:-} != refs/tags/* ]] || { echo "keystore.properties missing on a tag run" >&2; exit 1; }
+  echo "No keystore.properties: built, not signed"; exit 0
+fi
 source <(sed 's/^\([a-zA-Z]*\)=\(.*\)$/\1="\2"/' keystore.properties)
 sign() { "$tools/apksigner" sign --ks "$storeFile" --ks-pass "pass:$storePassword" --ks-key-alias "$keyAlias" --key-pass "pass:$keyPassword" --out "$2" "$1"; rm -f "$2.idsig"; }
 mkdir -p dist
