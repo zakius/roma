@@ -21,7 +21,6 @@ import kotlinx.serialization.json.JsonNames
  */
 @Serializable
 class MusicResponsiveListItemRenderer(
-    val badges: List<Badges>?,
     val fixedColumns: List<FlexColumn>?,
     val flexColumns: List<FlexColumn>,
     val thumbnail: ThumbnailRenderer?,

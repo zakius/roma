@@ -2,7 +2,7 @@ package com.metrolist.innertube.pages
 
 import com.metrolist.innertube.models.SongItem
 
-data class PlaylistContinuationPage(
+class PlaylistContinuationPage(
     val songs: List<SongItem>,
     val continuation: String?,
 )

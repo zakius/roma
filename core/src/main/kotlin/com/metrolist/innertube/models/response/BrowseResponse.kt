@@ -5,9 +5,7 @@ import com.metrolist.innertube.models.Continuation
 import com.metrolist.innertube.models.GridRenderer
 import com.metrolist.innertube.models.Menu
 import com.metrolist.innertube.models.MusicDetailHeaderRenderer
-import com.metrolist.innertube.models.MusicEditablePlaylistDetailHeaderRenderer
 import com.metrolist.innertube.models.MusicShelfRenderer
-import com.metrolist.innertube.models.ResponseContext
 import com.metrolist.innertube.models.Runs
 import com.metrolist.innertube.models.SectionListRenderer
 import com.metrolist.innertube.models.SubscriptionButton
@@ -22,8 +20,6 @@ class BrowseResponse(
     val onResponseReceivedActions: List<ResponseAction>?,
     val header: Header?,
     val microformat: Microformat?,
-    val responseContext: ResponseContext,
-    val background: ThumbnailRenderer?
 ) {
     @Serializable
     class Contents(
@@ -82,19 +78,16 @@ class BrowseResponse(
     class Header(
         val musicImmersiveHeaderRenderer: MusicImmersiveHeaderRenderer?,
         val musicDetailHeaderRenderer: MusicDetailHeaderRenderer?,
-        val musicEditablePlaylistDetailHeaderRenderer: MusicEditablePlaylistDetailHeaderRenderer?,
         val musicVisualHeaderRenderer: MusicVisualHeaderRenderer?,
         val musicHeaderRenderer: MusicHeaderRenderer?,
     ) {
         @Serializable
         class MusicImmersiveHeaderRenderer(
             val title: Runs,
-            val description: Runs?,
             val thumbnail: ThumbnailRenderer?,
             val playButton: Button?,
             val startRadioButton: Button?,
             val subscriptionButton: SubscriptionButton?,
-            val menu: Menu,
             val subscriptionButton2: SubscriptionButton2?,
             val monthlyListenerCount: Runs? = null,
         ) {
@@ -113,8 +106,6 @@ class BrowseResponse(
         class MusicVisualHeaderRenderer(
             val title: Runs,
             val foregroundThumbnail: ThumbnailRenderer,
-            val thumbnail: ThumbnailRenderer?,
-            val subscriptionButton: SubscriptionButton?,
         )
 
         @Serializable
@@ -127,10 +118,8 @@ class BrowseResponse(
             val buttons: List<Buttons>?,
             val title: Runs?,
             val thumbnail: MusicThumbnailRenderer?,
-            val subtitle: Runs?,
             val secondSubtitle: Runs?,
             val straplineTextOne: Runs?,
-            val straplineThumbnail: MusicThumbnailRenderer?,
         )
         @Serializable
         class MusicThumbnail(

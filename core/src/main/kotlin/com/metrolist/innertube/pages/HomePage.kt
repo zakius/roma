@@ -15,37 +15,15 @@ import com.metrolist.innertube.models.SectionListRenderer
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.splitBySeparator
-import com.metrolist.innertube.models.filterExplicit
-import com.metrolist.innertube.models.filterVideoSongs
 import com.metrolist.innertube.utils.parseTime
 import timber.log.Timber
 
-data class HomePage(
-    val chips: List<Chip>?,
+class HomePage(
     val sections: List<Section>,
     val continuation: String? = null,
 ) {
-    data class Chip(
+    class Section(
         val title: String,
-        val endpoint: BrowseEndpoint?,
-        val deselectEndPoint: BrowseEndpoint?,
-    ) {
-        companion object {
-            fun fromChipCloudChipRenderer(renderer: SectionListRenderer.Header.ChipCloudRenderer.Chip): Chip? {
-                return Chip(
-                    title = renderer.chipCloudChipRenderer.text?.runs?.firstOrNull()?.text ?: return null,
-                    endpoint = renderer.chipCloudChipRenderer.navigationEndpoint?.browseEndpoint,
-                    deselectEndPoint = renderer.chipCloudChipRenderer.onDeselectedCommand?.browseEndpoint,
-                )
-            }
-        }
-    }
-
-    data class Section(
-        val title: String,
-        val label: String?,
-        val thumbnail: String?,
-        val endpoint: BrowseEndpoint?,
         val items: List<YTItem>,
     ) {
         companion object {
@@ -92,29 +70,17 @@ data class HomePage(
 
                 return Section(
                     title = title,
-                    label = renderer.header.musicCarouselShelfBasicHeaderRenderer.strapline?.runs?.firstOrNull()?.text,
-                    thumbnail = renderer.header.musicCarouselShelfBasicHeaderRenderer.thumbnail?.getThumbnailUrl(),
-                    endpoint = renderer.header.musicCarouselShelfBasicHeaderRenderer.moreContentButton?.buttonRenderer?.navigationEndpoint?.browseEndpoint,
                     items = items
                 )
             }
 
             private fun fromMusicMultiRowListItemRenderer(renderer: MusicMultiRowListItemRenderer): EpisodeItem? {
                 val subtitleRuns = renderer.subtitle?.runs?.splitBySeparator()
-                val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
 
                 return EpisodeItem(
                     id = renderer.onTap?.watchEndpoint?.videoId ?: return null,
                     title = renderer.title?.runs?.firstOrNull()?.text ?: return null,
-                    author = null,
-                    podcast = null,
-                    duration = subtitleRuns?.lastOrNull()?.firstOrNull()?.text?.parseTime(),
-                    publishDateText = subtitleRuns?.firstOrNull()?.firstOrNull()?.text,
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    explicit = false,
-                    endpoint = renderer.onTap.watchEndpoint,
-                    libraryAddToken = libraryTokens.addToken,
-                    libraryRemoveToken = libraryTokens.removeToken,
                 )
             }
 
@@ -159,10 +125,6 @@ data class HomePage(
                             ?.text
                             ?.parseTime(),
                     thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                    explicit = renderer.badges?.find {
-                        it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                    } != null,
-                    isEpisode = renderer.isEpisode
                 )
             }
 
@@ -214,9 +176,6 @@ data class HomePage(
                             duration = null,
                             thumbnail = renderer.thumbnailRenderer.getThumbnailUrl()
                                 ?: return null,
-                            explicit = renderer.subtitleBadges?.any {
-                                it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                            } == true
                         )
                     }
                     renderer.isAlbum -> {
@@ -237,9 +196,6 @@ data class HomePage(
                             artists = PageHelper.extractArtists(renderer.subtitle?.runs),
                             year = null,
                             thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                            explicit = renderer.subtitleBadges?.find {
-                                it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                            } != null
                         )
                     }
 
@@ -290,16 +246,7 @@ data class HomePage(
                                 renderer.title.runs
                                     ?.firstOrNull()
                                     ?.text ?: return null,
-                            author = PodcastPage.extractPodcastByline(renderer.subtitle?.runs).firstOrNull(),
-                            episodeCountText = null,
                             thumbnail = renderer.thumbnailRenderer.getThumbnailUrl(),
-                            playEndpoint = renderer.thumbnailOverlay
-                                ?.musicItemThumbnailOverlayRenderer?.content
-                                ?.musicPlayButtonRenderer?.playNavigationEndpoint
-                                ?.watchPlaylistEndpoint,
-                            shuffleEndpoint = renderer.menu?.menuRenderer?.items?.find {
-                                it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE"
-                            }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint,
                         )
                     }
 
@@ -317,7 +264,6 @@ data class HomePage(
                         }
 
                         val subtitleRuns = renderer.subtitle?.runs?.splitBySeparator()
-                        val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
 
                         // Find podcast link in subtitle (has isPodcastEndpoint)
                         val podcastRun = renderer.subtitle?.runs?.find {
@@ -334,25 +280,7 @@ data class HomePage(
                         EpisodeItem(
                             id = videoId,
                             title = titleText,
-                            author = PodcastPage.extractPodcastByline(renderer.subtitle?.runs).firstOrNull(),
-                            podcast = podcastAlbum,
-                            duration =
-                                subtitleRuns
-                                    ?.lastOrNull()
-                                    ?.firstOrNull()
-                                    ?.text
-                                    ?.parseTime(),
-                            publishDateText = subtitleRuns?.getOrNull(1)?.firstOrNull()?.text,
                             thumbnail = thumbnail,
-                            explicit = renderer.subtitleBadges?.any {
-                                it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                            } == true,
-                            endpoint = renderer.thumbnailOverlay
-                                .musicItemThumbnailOverlayRenderer.content
-                                .musicPlayButtonRenderer.playNavigationEndpoint
-                                .watchEndpoint,
-                            libraryAddToken = libraryTokens.addToken,
-                            libraryRemoveToken = libraryTokens.removeToken,
                         )
                     }
 
@@ -361,18 +289,4 @@ data class HomePage(
             }
         }
     }
-
-    fun filterExplicit(enabled: Boolean = true) =
-        if (enabled) {
-            copy(sections = sections.map {
-                it.copy(items = it.items.filterExplicit())
-            })
-        } else this
-
-    fun filterVideoSongs(disableVideos: Boolean = false) =
-        if (disableVideos) {
-            copy(sections = sections.map { section ->
-                section.copy(items = section.items.filterVideoSongs(true))
-            })
-        } else this
 }

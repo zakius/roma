@@ -194,9 +194,9 @@ class PlaybackService : MediaBrowserService() {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            .addAction(action(androidx.media3.ui.R.drawable.exo_icon_previous, "Previous", KeyEvent.KEYCODE_MEDIA_PREVIOUS))
-            .addAction(if (p.playWhenReady) action(androidx.media3.ui.R.drawable.exo_icon_pause, "Pause", KeyEvent.KEYCODE_MEDIA_PAUSE) else action(androidx.media3.ui.R.drawable.exo_icon_play, "Play", KeyEvent.KEYCODE_MEDIA_PLAY))
-            .addAction(action(androidx.media3.ui.R.drawable.exo_icon_next, "Next", KeyEvent.KEYCODE_MEDIA_NEXT))
+            .addAction(action(R.drawable.previous, "Previous", KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+            .addAction(if (p.playWhenReady) action(R.drawable.pause, "Pause", KeyEvent.KEYCODE_MEDIA_PAUSE) else action(R.drawable.play, "Play", KeyEvent.KEYCODE_MEDIA_PLAY))
+            .addAction(action(R.drawable.next, "Next", KeyEvent.KEYCODE_MEDIA_NEXT))
             .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
         if (Store.signedIn) b.addAction(
             Notification.Action.Builder(

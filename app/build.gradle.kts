@@ -17,8 +17,8 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 48
-        versionName = "0.1.47"
+        versionCode = 49
+        versionName = "0.1.48"
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.
         buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
@@ -57,7 +57,9 @@ android {
     packaging {
         resources { excludes += setOf("META-INF/*.md", "META-INF/INDEX.LIST", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "kotlin/**", "DebugProbesKt.bin", "META-INF/*.version",
             // Sudachi reads its part-of-speech table only in its command-line tool.
-            "pos.csv") }
+            "pos.csv",
+            // Four copies of the Apache License 2.0, which assets/LICENSE-2.0.txt already carries.
+            "META-INF/androidx/**/LICENSE.txt") }
         // Native libraries compressed in the APK and unpacked at install (extractNativeLibs), as in tennessine.
         jniLibs { useLegacyPackaging = true }
     }
@@ -73,7 +75,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
 
     implementation("androidx.media3:media3-exoplayer:1.11.1")
-    implementation("androidx.media3:media3-ui:1.11.1") // only for its player icons
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2") // ASUS FlipFont skip, App.kt

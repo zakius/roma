@@ -5,17 +5,11 @@ import kotlinx.serialization.Serializable
 @Serializable
 class MusicEditablePlaylistDetailHeaderRenderer(
     val header: Header,
-    val editHeader: EditHeader
 ) {
     @Serializable
     class Header(
         val musicDetailHeaderRenderer: MusicDetailHeaderRenderer?,
         val musicResponsiveHeaderRenderer: MusicResponsiveHeaderRenderer?
-    )
-
-    @Serializable
-    class EditHeader(
-        val musicPlaylistEditHeaderRenderer: MusicPlaylistEditHeaderRenderer?
     )
 }
 
@@ -23,13 +17,7 @@ class MusicEditablePlaylistDetailHeaderRenderer(
 class MusicDetailHeaderRenderer(
     val title: Runs,
     val subtitle: Runs,
-    val secondSubtitle: Runs,
     val description: Runs?,
     val thumbnail: ThumbnailRenderer,
     val menu: Menu,
-)
-
-@Serializable
-class MusicPlaylistEditHeaderRenderer(
-    val editTitle: Runs?
 )

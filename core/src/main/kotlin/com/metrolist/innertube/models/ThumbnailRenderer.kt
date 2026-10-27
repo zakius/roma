@@ -11,8 +11,6 @@ class ThumbnailRenderer(
     @Serializable
     class MusicThumbnailRenderer(
         val thumbnail: Thumbnails,
-        val thumbnailCrop: String?,
-        val thumbnailScale: String?,
     ) {
         fun getThumbnailUrl() = thumbnail.thumbnails.lastOrNull()?.url
     }
@@ -24,7 +22,6 @@ class ThumbnailRenderer(
 
     @Serializable
     class MusicAnimatedThumbnailRenderer(
-        val animatedThumbnail: Thumbnails,
         val backupRenderer: MusicThumbnailRenderer,
     )
 }

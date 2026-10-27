@@ -15,50 +15,15 @@ class MusicResponsiveHeaderRenderer(
 ) {
     @Serializable
     class Button(
-        val musicPlayButtonRenderer: MusicPlayButtonRenderer? = null,
         val menuRenderer: Menu.MenuRenderer? = null,
-        val toggleButtonRenderer: ToggleButtonRenderer? = null,
-    ) {
-        @Serializable
-        class MusicPlayButtonRenderer(
-            val playNavigationEndpoint: NavigationEndpoint? = null,
-        )
-
-        @Serializable
-        class ToggleButtonRenderer(
-            val defaultIcon: Icon? = null,
-            val defaultServiceEndpoint: DefaultServiceEndpoint? = null,
-            val toggledServiceEndpoint: ToggledServiceEndpoint? = null,
-        )
-    }
+    )
 }
 
 @Serializable
 class AvatarStackViewModel(
-    val avatars: List<Avatar>?,
     val text: AvatarText?,
     val rendererContext: RendererContext?,
 ) {
-    @Serializable
-    class Avatar(
-        val avatarViewModel: AvatarViewModel?,
-    )
-
-    @Serializable
-    class AvatarViewModel(
-        val image: AvatarImage?,
-    )
-
-    @Serializable
-    class AvatarImage(
-        val sources: List<ImageSource>?,
-    )
-
-    @Serializable
-    class ImageSource(
-        val url: String?,
-    )
-
     @Serializable
     class AvatarText(
         val content: String?,

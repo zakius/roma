@@ -17,24 +17,19 @@ import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.WatchEndpoint
 import com.metrolist.innertube.utils.parseTime
 import com.metrolist.innertube.models.YTItem
-import com.metrolist.innertube.models.filterExplicit
 import com.metrolist.innertube.models.getItems
 import com.metrolist.innertube.models.splitBySeparator
 
-data class ArtistSection(
+class ArtistSection(
     val title: String,
     val items: List<YTItem>,
-    val moreEndpoint: BrowseEndpoint?,
 )
 
-data class ArtistPage(
+class ArtistPage(
     val artist: ArtistItem,
     val sections: List<ArtistSection>,
-    val description: String?,
     val subscriberCountText: String?,
     val monthlyListenerCount: String? = null,
-    val descriptionRuns: List<Run>? = null,
-    val isSubscribed: Boolean = false,
 ) {
     companion object {
         fun fromSectionListRendererContent(content: SectionListRenderer.Content): ArtistSection? {
@@ -51,7 +46,6 @@ data class ArtistPage(
                 items = renderer.contents?.getItems()?.mapNotNull {
                     fromMusicResponsiveListItemRenderer(it)
                 }?.ifEmpty { null } ?: return null,
-                moreEndpoint = renderer.title?.runs?.firstOrNull()?.navigationEndpoint?.browseEndpoint
             )
         }
 
@@ -65,7 +59,6 @@ data class ArtistPage(
                         fromMusicResponsiveListItemRenderer(listItemRenderer)
                     }
                 }.ifEmpty { null } ?: return null,
-                moreEndpoint = renderer.header.musicCarouselShelfBasicHeaderRenderer.moreContentButton?.buttonRenderer?.navigationEndpoint?.browseEndpoint
             )
         }
 
@@ -101,8 +94,6 @@ data class ArtistPage(
                 ?.text
                 ?.parseTime()
 
-            val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
-
             return SongItem(
                 id = renderer.playlistItemData?.videoId
                     ?: renderer.navigationEndpoint?.watchEndpoint?.videoId
@@ -131,13 +122,6 @@ data class ArtistPage(
                             ?.parseTime(),
                 musicVideoType = renderer.musicVideoType,
                 thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                explicit = renderer.badges?.find {
-                    it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                } != null,
-                endpoint = renderer.overlay?.musicItemThumbnailOverlayRenderer?.content
-                    ?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint,
-                libraryAddToken = libraryTokens.addToken,
-                libraryRemoveToken = libraryTokens.removeToken
             )
         }
 
@@ -163,9 +147,6 @@ data class ArtistPage(
                                 ?.parseTime(),
                         musicVideoType = renderer.musicVideoType,
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                        explicit = renderer.subtitleBadges?.find {
-                            it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                        } != null
                     )
                 }
 
@@ -179,9 +160,6 @@ data class ArtistPage(
                         artists = null,
                         year = renderer.subtitle?.runs?.lastOrNull()?.text?.toIntOrNull(),
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                        explicit = renderer.subtitleBadges?.find {
-                            it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                        } != null
                     )
                 }
 
@@ -217,9 +195,6 @@ data class ArtistPage(
                         id = renderer.navigationEndpoint.browseEndpoint?.browseId ?: return null,
                         title = renderer.title.runs?.lastOrNull()?.text ?: return null,
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                        channelId = renderer.menu?.menuRenderer?.items?.find {
-                            it.toggleMenuServiceItemRenderer?.defaultIcon?.iconType == "SUBSCRIBE"
-                        }?.toggleMenuServiceItemRenderer?.defaultServiceEndpoint?.subscribeEndpoint?.channelIds?.firstOrNull(),
                         shuffleEndpoint = renderer.menu?.menuRenderer?.items?.find {
                             it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE"
                         }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint ?: return null,
@@ -240,10 +215,7 @@ data class ArtistPage(
                             renderer.title.runs
                                 ?.firstOrNull()
                                 ?.text ?: return null,
-                        author = PodcastPage.extractPodcastByline(renderer.subtitle?.runs).firstOrNull(),
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                        endpoint = WatchEndpoint(videoId = videoId),
-                        publishDateText = renderer.subtitle?.runs?.lastOrNull()?.text,
                     )
                 }
 
@@ -254,20 +226,7 @@ data class ArtistPage(
                             renderer.title.runs
                                 ?.firstOrNull()
                                 ?.text ?: return null,
-                        author = PodcastPage.extractPodcastByline(renderer.subtitle?.runs).firstOrNull(),
-                        episodeCountText =
-                            renderer.subtitle
-                                ?.runs
-                                ?.lastOrNull()
-                                ?.text,
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl(),
-                        playEndpoint = renderer.thumbnailOverlay
-                            ?.musicItemThumbnailOverlayRenderer?.content
-                            ?.musicPlayButtonRenderer?.playNavigationEndpoint
-                            ?.watchPlaylistEndpoint,
-                        shuffleEndpoint = renderer.menu?.menuRenderer?.items?.find {
-                            it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE"
-                        }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint,
                     )
                 }
 

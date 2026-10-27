@@ -11,19 +11,13 @@ import com.metrolist.innertube.utils.parseTime
 data class NextResult(
     val title: String? = null,
     val items: List<SongItem>,
-    val currentIndex: Int? = null,
     val lyricsEndpoint: BrowseEndpoint? = null,
-    val relatedEndpoint: BrowseEndpoint? = null,
     val continuation: String?,
-    val endpoint: WatchEndpoint, // current or continuation next endpoint
 )
 
 object NextPage {
     fun fromPlaylistPanelVideoRenderer(renderer: PlaylistPanelVideoRenderer): SongItem? {
         val longByLineRuns = renderer.longBylineText?.runs?.splitBySeparator() ?: return null
-
-        // Extract library tokens using the new method that properly handles multiple toggle items
-        val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
 
         return SongItem(
             id = renderer.videoId
@@ -58,12 +52,6 @@ object NextPage {
                 renderer.thumbnail.thumbnails
                     .lastOrNull()
                     ?.url ?: return null,
-            explicit =
-                renderer.badges?.find {
-                    it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                } != null,
-            libraryAddToken = libraryTokens.addToken,
-            libraryRemoveToken = libraryTokens.removeToken
         )
     }
 }

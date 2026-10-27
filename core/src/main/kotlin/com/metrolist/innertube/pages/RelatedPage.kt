@@ -13,7 +13,7 @@ import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.splitBySeparator
 import com.metrolist.innertube.utils.parseTime
 
-data class RelatedPage(
+class RelatedPage(
     val songs: List<SongItem>,
     val albums: List<AlbumItem>,
     val artists: List<ArtistItem>,
@@ -21,9 +21,6 @@ data class RelatedPage(
 ) {
     companion object {
         fun fromMusicResponsiveListItemRenderer(renderer: MusicResponsiveListItemRenderer): SongItem? {
-            // Extract library tokens using the new method that properly handles multiple toggle items
-            val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
-
             // Split the secondary line by bullet separator to separate artists from other metadata (like views)
             val secondaryLineRuns = renderer.flexColumns
                 .getOrNull(1)
@@ -55,13 +52,6 @@ data class RelatedPage(
                     ?.text?.parseTime(),
                 musicVideoType = renderer.musicVideoType,
                 thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                explicit =
-                    renderer.badges?.find {
-                        it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                    } != null,
-                libraryAddToken = libraryTokens.addToken,
-                libraryRemoveToken = libraryTokens.removeToken,
-                isEpisode = renderer.isEpisode
             )
         }
 
@@ -98,10 +88,6 @@ data class RelatedPage(
                                 ?.text
                                 ?.toIntOrNull(),
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                        explicit =
-                            renderer.subtitleBadges?.find {
-                                it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                            } != null,
                     )
                 renderer.isPlaylist ->
                     PlaylistItem(
@@ -179,20 +165,7 @@ data class RelatedPage(
                             renderer.title.runs
                                 ?.firstOrNull()
                                 ?.text ?: return null,
-                        author = PodcastPage.extractPodcastByline(renderer.subtitle?.runs).firstOrNull(),
-                        episodeCountText =
-                            renderer.subtitle
-                                ?.runs
-                                ?.lastOrNull()
-                                ?.text,
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl(),
-                        playEndpoint = renderer.thumbnailOverlay
-                            ?.musicItemThumbnailOverlayRenderer?.content
-                            ?.musicPlayButtonRenderer?.playNavigationEndpoint
-                            ?.watchPlaylistEndpoint,
-                        shuffleEndpoint = renderer.menu?.menuRenderer?.items?.find {
-                            it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE"
-                        }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint,
                     )
                 }
                 else -> null

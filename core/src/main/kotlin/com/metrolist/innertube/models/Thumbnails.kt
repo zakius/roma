@@ -10,6 +10,4 @@ class Thumbnails(
 @Serializable
 class Thumbnail(
     val url: String,
-    val width: Int?,
-    val height: Int?,
 )

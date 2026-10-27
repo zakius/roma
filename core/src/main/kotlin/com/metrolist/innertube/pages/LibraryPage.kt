@@ -14,10 +14,9 @@ import com.metrolist.innertube.models.oddElements
 import com.metrolist.innertube.models.splitBySeparator
 import com.metrolist.innertube.utils.parseTime
 
-data class LibraryPage(
+class LibraryPage(
     val items: List<YTItem>,
     val continuation: String?,
-    val isUploaded: Boolean = false,
 ) {
     companion object {
         fun fromMusicTwoRowItemRenderer(renderer: MusicTwoRowItemRenderer): YTItem? {
@@ -32,9 +31,6 @@ data class LibraryPage(
                     year = renderer.subtitle?.runs?.lastOrNull()?.text?.toIntOrNull(),
                     thumbnail = renderer.thumbnailRenderer.getThumbnailUrl()
                         ?: return null,
-                    explicit = renderer.subtitleBadges?.find {
-                        it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                    } != null
                 )
 
                 renderer.isPlaylist -> PlaylistItem(
@@ -53,9 +49,6 @@ data class LibraryPage(
                     radioEndpoint = renderer.menu?.menuRenderer?.items?.find {
                         it.menuNavigationItemRenderer?.icon?.iconType == "MIX"
                     }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint,
-                    isEditable = renderer.menu?.menuRenderer?.items?.find {
-                        it.menuNavigationItemRenderer?.icon?.iconType == "EDIT"
-                    } != null
                 )
 
                 renderer.isArtist -> ArtistItem(
@@ -84,34 +77,17 @@ data class LibraryPage(
                 )
 
                 renderer.isPodcast -> {
-                    val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
                     PodcastItem(
                         id = renderer.navigationEndpoint.browseEndpoint?.browseId ?: return null,
                         title =
                             renderer.title.runs
                                 ?.firstOrNull()
                                 ?.text ?: return null,
-                        author = PodcastPage.extractPodcastByline(renderer.subtitle?.runs).firstOrNull(),
-                        episodeCountText =
-                            renderer.subtitle
-                                ?.runs
-                                ?.lastOrNull()
-                                ?.text,
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl(),
-                        playEndpoint = renderer.thumbnailOverlay
-                            ?.musicItemThumbnailOverlayRenderer?.content
-                            ?.musicPlayButtonRenderer?.playNavigationEndpoint
-                            ?.watchPlaylistEndpoint,
-                        shuffleEndpoint = renderer.menu?.menuRenderer?.items?.find {
-                            it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE"
-                        }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint,
-                        libraryAddToken = libraryTokens.addToken,
-                        libraryRemoveToken = libraryTokens.removeToken,
                     )
                 }
 
                 renderer.isEpisode || renderer.isSong -> {
-                    val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
                     val videoId = renderer.thumbnailOverlay
                         ?.musicItemThumbnailOverlayRenderer?.content
                         ?.musicPlayButtonRenderer?.playNavigationEndpoint
@@ -132,16 +108,6 @@ data class LibraryPage(
                         },
                         duration = subtitleRuns?.lastOrNull()?.firstOrNull()?.text?.parseTime(),
                         thumbnail = renderer.thumbnailRenderer.getThumbnailUrl() ?: return null,
-                        explicit = renderer.subtitleBadges?.any {
-                            it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                        } == true,
-                        endpoint = renderer.thumbnailOverlay
-                            .musicItemThumbnailOverlayRenderer.content
-                            .musicPlayButtonRenderer.playNavigationEndpoint
-                            .watchEndpoint,
-                        libraryAddToken = libraryTokens.addToken,
-                        libraryRemoveToken = libraryTokens.removeToken,
-                        isEpisode = renderer.isEpisode,
                     )
                 }
 
@@ -153,9 +119,6 @@ data class LibraryPage(
             renderer: MusicResponsiveListItemRenderer,
             isUploaded: Boolean = false,
         ): YTItem? {
-            // Extract library tokens using the new method that properly handles multiple toggle items
-            val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
-
             return when {
                 renderer.isSong -> {
                     val videoId = renderer.videoId ?: return null
@@ -226,14 +189,6 @@ data class LibraryPage(
                         duration = renderer.fixedColumns?.firstOrNull()?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.firstOrNull()?.text?.parseTime(),
                         musicVideoType = renderer.musicVideoType,
                         thumbnail = thumbnailUrl,
-                        explicit = renderer.badges?.find {
-                            it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                        } != null,
-                        endpoint = renderer.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint,
-                        libraryAddToken = libraryTokens.addToken,
-                        libraryRemoveToken = libraryTokens.removeToken,
-                        isEpisode = renderer.isEpisode,
-                        uploadEntityId = uploadEntityId
                     )
                 }
 
@@ -266,7 +221,6 @@ data class LibraryPage(
                 )
 
                 renderer.isPodcast -> {
-                    val podcastLibraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
                     PodcastItem(
                         id = renderer.navigationEndpoint?.browseEndpoint?.browseId ?: return null,
                         title =
@@ -278,31 +232,7 @@ data class LibraryPage(
                                 ?.firstOrNull()
                                 ?.text
                                 ?: return null,
-                        author =
-                            PodcastPage
-                                .extractPodcastByline(
-                                    renderer.flexColumns
-                                        .getOrNull(1)
-                                        ?.musicResponsiveListItemFlexColumnRenderer
-                                        ?.text
-                                        ?.runs,
-                                ).firstOrNull(),
-                        episodeCountText =
-                            renderer.flexColumns
-                                .getOrNull(
-                                    1,
-                                )?.musicResponsiveListItemFlexColumnRenderer
-                                ?.text
-                                ?.runs
-                                ?.lastOrNull()
-                                ?.text,
                         thumbnail = renderer.thumbnail?.getThumbnailUrl(),
-                        playEndpoint = renderer.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchPlaylistEndpoint,
-                        shuffleEndpoint = renderer.menu?.menuRenderer?.items
-                            ?.find { it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE" }
-                            ?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint,
-                        libraryAddToken = podcastLibraryTokens.addToken,
-                        libraryRemoveToken = podcastLibraryTokens.removeToken,
                     )
                 }
 

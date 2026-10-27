@@ -18,7 +18,6 @@ class MusicQueueRenderer(
     ) {
         @Serializable
         class MusicQueueHeaderRenderer(
-            val title: Runs?,
             val subtitle: Runs?,
         )
     }

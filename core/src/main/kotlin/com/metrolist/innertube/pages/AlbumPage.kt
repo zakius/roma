@@ -9,16 +9,12 @@ import com.metrolist.innertube.models.oddElements
 import com.metrolist.innertube.models.splitBySeparator
 import com.metrolist.innertube.utils.parseTime
 
-data class AlbumPage(
+class AlbumPage(
     val album: AlbumItem,
     val songs: List<SongItem>,
-    val otherVersions: List<AlbumItem>,
 ) {
     companion object {
         fun getSong(renderer: MusicResponsiveListItemRenderer, album: AlbumItem? = null): SongItem? {
-            // Extract library tokens using the new method that properly handles multiple toggle items
-            val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
-
             val subtitle = renderer.flexColumns.getOrNull(1)?.musicResponsiveListItemFlexColumnRenderer?.text?.runs
             val artists = PageHelper.extractArtists(subtitle).ifEmpty {
                 // Art tracks and uploads have a dedicated performer column that can
@@ -77,11 +73,6 @@ data class AlbumPage(
                         ?.parseTime() ?: return null,
                 musicVideoType = renderer.musicVideoType,
                 thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: album?.thumbnail!!,
-                explicit = renderer.badges?.find {
-                    it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                } != null,
-                libraryAddToken = libraryTokens.addToken,
-                libraryRemoveToken = libraryTokens.removeToken
             )
         }
     }

@@ -2,7 +2,6 @@ package roma.core
 
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.response.PlayerResponse
-import com.metrolist.innertubex.InnerTubeLogger
 import com.metrolist.innertubex.cipher.PlayerConfigRepository
 import com.metrolist.innertubex.cipher.RemotePlayerConfigStore
 import com.metrolist.innertubex.cipher.YouTubeCipherService
@@ -197,17 +196,16 @@ object InnerTubeXStreams {
     @Synchronized
     private fun extractor(): InnerTubeExtractor = built ?: run {
         val t = com.metrolist.innertube.YouTube.extractionTransport()
-        val store = RemotePlayerConfigStore(t.httpClient, configRepository, InnerTubeLogger.NONE)
-        val cipher = YouTubeCipherService(t.httpClient, store, InnerTubeLogger.NONE)
-        val parser = YtConfigParserImpl(t.httpClient, t.innerTube, store, InnerTubeLogger.NONE, cipher)
+        val store = RemotePlayerConfigStore(t.httpClient, configRepository)
+        val cipher = YouTubeCipherService(t.httpClient, store)
+        val parser = YtConfigParserImpl(t.httpClient, t.innerTube, store, cipher)
         InnerTubeExtractor(parser, cipher, t.innerTube, tokenProvider = tokenProvider).also { built = it }
     }
 
     /** Blocking. Throws [StreamResolveException] with a plain reason ("This track is age-restricted.") on refusal. */
     fun audio(videoId: String, excludedClients: Set<String> = emptySet()): AudioSource = runBlocking {
-        val hints = ContentHints().withStreamCapabilities(false, false, true) // direct URLs only: no HLS, no SABR
-        val s = extractor().extract(videoId, hints, excludedClients, AudioQuality.HIGH, generateClientPlaybackNonce())
-            ?: throw StreamResolveException(StreamResolveException.Reason.NO_PLAYABLE_STREAM, "No playable stream found for this track.", null, null)
+        val s = extractor().extract(videoId, ContentHints(), excludedClients, AudioQuality.HIGH, generateClientPlaybackNonce())
+            ?: throw StreamResolveException(StreamResolveException.Reason.NO_PLAYABLE_STREAM, "No playable stream found for this track.")
         println("roma streams: $videoId via InnerTubeX ${s.profileId}") // which client, for logcat; no tokens
         s.loudnessDb?.let { Streams.putLoudness(videoId, it.toFloat()) }
         AudioSource(s.audioUrl, s.mimeType ?: "audio/*", s.bitrate ?: 0)

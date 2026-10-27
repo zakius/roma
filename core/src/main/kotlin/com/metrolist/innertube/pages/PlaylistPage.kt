@@ -10,11 +10,10 @@ import com.metrolist.innertube.models.splitBySeparator
 import com.metrolist.innertube.utils.parseTime
 import timber.log.Timber
 
-data class PlaylistPage(
+class PlaylistPage(
     val playlist: PlaylistItem,
     val songs: List<SongItem>,
     val songsContinuation: String?,
-    val continuation: String?,
 ) {
     companion object {
         fun ownerFromDetailSubtitle(runs: List<Run>?): Artist? = ownerFromByline(runs?.splitBySeparator()?.getOrNull(1))
@@ -29,8 +28,6 @@ data class PlaylistPage(
                     ?.let { Artist(it.text.trim(), null) }
 
         fun fromMusicResponsiveListItemRenderer(renderer: MusicResponsiveListItemRenderer): SongItem? {
-            val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
-
             val secondaryLineRuns =
                 renderer.flexColumns
                     .getOrNull(1)
@@ -75,21 +72,7 @@ data class PlaylistPage(
                         ?.parseTime(),
                 musicVideoType = renderer.musicVideoType,
                 thumbnail = renderer.thumbnail?.getThumbnailUrl() ?: return null,
-                explicit =
-                    renderer.badges?.find {
-                        it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
-                    } != null,
-                endpoint =
-                    renderer.overlay
-                        ?.musicItemThumbnailOverlayRenderer
-                        ?.content
-                        ?.musicPlayButtonRenderer
-                        ?.playNavigationEndpoint
-                        ?.watchEndpoint,
                 setVideoId = renderer.playlistSetVideoId ?: return null,
-                libraryAddToken = libraryTokens.addToken,
-                libraryRemoveToken = libraryTokens.removeToken,
-                isEpisode = renderer.isEpisode,
             )
         }
     }

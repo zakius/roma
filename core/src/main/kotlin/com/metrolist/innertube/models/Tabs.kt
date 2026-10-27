@@ -12,7 +12,6 @@ class Tabs(
     ) {
         @Serializable
         class TabRenderer(
-            val title: String?,
             val content: Content?,
             val endpoint: NavigationEndpoint?,
         ) {
