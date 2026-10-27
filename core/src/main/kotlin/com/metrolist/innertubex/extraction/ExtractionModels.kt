@@ -124,7 +124,6 @@ internal data class ClientResult(
     val streamingDataPoToken: String? = null,
     val clientId: Int = 0,
     val clientVersion: String = "",
-    val bearerAuthenticated: Boolean = false,
 ) {
     override fun toString(): String =
         "ClientResult(" +
@@ -133,8 +132,7 @@ internal data class ClientResult(
             "usedPoToken=$usedPoToken, " +
             "streamingDataPoToken=${streamingDataPoToken.presence()}, " +
             "clientId=$clientId, " +
-            "clientVersion=${clientVersion.presence()}, " +
-            "bearerAuthenticated=$bearerAuthenticated)"
+            "clientVersion=${clientVersion.presence()})"
 }
 
 /** Playback-statistics URLs are session data and must not be logged or serialized unintentionally. */

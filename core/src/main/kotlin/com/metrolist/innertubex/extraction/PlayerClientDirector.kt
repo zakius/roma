@@ -1,7 +1,6 @@
 package com.metrolist.innertubex.extraction
 
 import com.metrolist.innertubex.InnerTube
-import com.metrolist.innertubex.bodyAsTextLimited
 import com.metrolist.innertubex.extraction.strategy.CapabilitySupport
 import com.metrolist.innertubex.extraction.strategy.ClientFailureKind
 import com.metrolist.innertubex.extraction.strategy.ClientFallbackStrategy
@@ -26,18 +25,9 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -67,22 +57,6 @@ internal class PlayerClientDirector(
         private val DYNAMIC_WEB_VERSION_CLIENT_NAMES = setOf("WEB", "WEB_EMBEDDED_PLAYER")
         private val TRANSPORT_PROBE_CLIENT_NAMES =
             setOf("IOS_MUSIC", "ANDROID_KIDS", "ANDROID_PRODUCER", "MEDIA_CONNECT_FRONTEND")
-        private val KNOWN_DRM_KEYS =
-            setOf(
-                "contentprotection",
-                "contentprotectionids",
-                "drmfamilies",
-                "drmfamily",
-                "drmparameters",
-                "drmparams",
-                "drmtracktype",
-                "fairplay",
-                "licenseinfo",
-                "licenseinfos",
-                "licenseurl",
-                "playready",
-                "widevine",
-            )
     }
 
     internal val usesAutomaticCatalog: Boolean = fallbackStrategy is ContentAwareFallbackStrategy
@@ -100,7 +74,6 @@ internal class PlayerClientDirector(
         premiumHighQuality: Boolean = false,
         requestBudget: PlayerRequestBudget? = null,
         prefetchedPoToken: PoTokenPrefetch? = null,
-        tvBearerCredential: TvBearerCredential? = null,
     ): PlayerResponseBatch {
         val budget = requestBudget ?: PlayerRequestBudget(if (hints.playbackClientOverrideId != null) 1 else maxPlayerRequests)
         return budget.withTokenScope {
@@ -114,7 +87,6 @@ internal class PlayerClientDirector(
                 premiumHighQuality,
                 budget,
                 prefetchedPoToken,
-                tvBearerCredential,
             )
         }
     }
@@ -129,7 +101,6 @@ internal class PlayerClientDirector(
         premiumHighQuality: Boolean,
         requestBudget: PlayerRequestBudget,
         prefetchedPoToken: PoTokenPrefetch?,
-        tvBearerCredential: TvBearerCredential?,
     ): PlayerResponseBatch {
         val initialSession = innerTube.sessionSnapshot()
         // Embed-page encryptedHostFlags are only honoured with the visitor that fetched that page.
@@ -180,21 +151,7 @@ internal class PlayerClientDirector(
         val playableResults = mutableListOf<ClientResult>()
         val failures = mutableListOf<PlayabilityFailure>()
         val requestFailures = mutableListOf<Throwable>()
-        if (tvBearerCredential != null) {
-            return fetchTvBearerResponse(
-                videoId = videoId,
-                playerConfig = playerConfig,
-                excludedClients = excludedClients,
-                requestBudget = effectiveRequestBudget,
-                initialSession = requestSession,
-                credential = tvBearerCredential,
-                attempts = attempts,
-                failures = failures,
-                requestFailures = requestFailures,
-            )
-        }
         var requestsConsumedInBatch = 0
-        var forceTokenizedTvHtml5 = false
         var onlyAccountGateFailures = true
         var onlyUnavailableFailures =
             !directAudioOnlyClients && playerConfig.playerUrl.isNotBlank() &&
@@ -246,11 +203,7 @@ internal class PlayerClientDirector(
                                 selectedClient.canUsePoTokens() &&
                                 !premiumEntitlement
                         ) ||
-                            untokenizedProfileFailed ||
-                            (
-                                forceTokenizedTvHtml5 &&
-                                    client.clientName == YouTubeClient.TVHTML5.clientName
-                            ),
+                            untokenizedProfileFailed,
                     requestSession = requestSession,
                     requestBudget = effectiveRequestBudget,
                     prefetchedPoToken = prefetchedPoToken,
@@ -359,11 +312,6 @@ internal class PlayerClientDirector(
             } else {
                 attemptResult.failure?.let(failures::add)
                 attemptResult.requestFailure?.let(requestFailures::add)
-                if (client == YouTubeClient.ANDROID_VR_1_43_32 &&
-                    attemptResult.failure?.status == "UNPLAYABLE"
-                ) {
-                    forceTokenizedTvHtml5 = true
-                }
             }
         }
 
@@ -380,124 +328,6 @@ internal class PlayerClientDirector(
             onlyUnavailableFailures = onlyUnavailableFailures && failures.isNotEmpty(),
             onlyBootstrapIndependentFailures = onlyBootstrapIndependentFailures && failures.isNotEmpty(),
         )
-    }
-
-    private suspend fun fetchTvBearerResponse(
-        videoId: String,
-        playerConfig: PlayerConfig,
-        excludedClients: Set<String>,
-        requestBudget: PlayerRequestBudget,
-        initialSession: InnerTube.SessionSnapshot,
-        credential: TvBearerCredential,
-        attempts: MutableList<StreamAttemptDiagnostic>,
-        failures: MutableList<PlayabilityFailure>,
-        requestFailures: MutableList<Throwable>,
-    ): PlayerResponseBatch {
-        val manifest =
-            PlaybackClientCatalog
-                .findManifest(credential.profileId)
-                ?.takeIf { it.client.clientName == "TVHTML5" && it.client.loginSupported }
-                ?: return PlayerResponseBatch(emptyList(), failures, requestFailures, attempts)
-        val bearerProfileId = "${manifest.id}__bearer"
-        if (
-            credential.profileId in excludedClients ||
-            manifest.client.clientName in excludedClients ||
-            bearerProfileId in excludedClients ||
-            !credential.isUsableFor(initialSession.generation, TV_BEARER_MINIMUM_LIFETIME) ||
-            requestBudget.remaining <= 0
-        ) {
-            return PlayerResponseBatch(emptyList(), failures, requestFailures, attempts)
-        }
-        val bearerSession =
-            initialSession.copy(
-                visitorData = credential.visitorData?.takeIf(String::isNotBlank),
-                dataSyncId = null,
-                authUser = "0",
-                cookie = null,
-                sapisid = null,
-                useLoginForBrowse = false,
-            )
-        val attemptResult =
-            try {
-                tryTvBearerPlayer(
-                    client = manifest.client,
-                    videoId = videoId,
-                    playerConfig = playerConfig,
-                    requestSession = bearerSession,
-                    requestBudget = requestBudget,
-                    credential = credential,
-                )
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: PlayerRequestBudgetExhaustedException) {
-                ClientAttemptResult(null, null, budgetExhausted = true)
-            } catch (error: Exception) {
-                ClientAttemptResult(attempt = null, failure = null, requestFailure = error)
-            }
-        val attempt = attemptResult.attempt
-        attempts +=
-            StreamAttemptDiagnostic(
-                clientName = manifest.client.clientName,
-                profileId = bearerProfileId,
-                userAgent = manifest.client.userAgent,
-                outcome =
-                    when {
-                        attempt != null -> "playable_response"
-                        attemptResult.budgetExhausted -> "request_budget_exhausted"
-                        attemptResult.requestFailure != null -> "request:${attemptResult.requestFailure::class.simpleName ?: "unknown"}"
-                        else -> "no_playable_response"
-                    },
-            )
-        if (attempt == null) {
-            attemptResult.failure?.let(failures::add)
-            attemptResult.requestFailure?.let(requestFailures::add)
-            return PlayerResponseBatch(emptyList(), failures, requestFailures, attempts)
-        }
-        return PlayerResponseBatch(
-            listOf(
-                ClientResult(
-                    clientName = manifest.client.clientName,
-                    profileId = bearerProfileId,
-                    userAgent = manifest.client.userAgent,
-                    response = attempt.response,
-                    clientId = manifest.client.clientId.toIntOrNull() ?: 0,
-                    clientVersion = manifest.client.clientVersion,
-                    bearerAuthenticated = true,
-                ),
-            ),
-            failures,
-            requestFailures,
-            attempts,
-        )
-    }
-
-    private suspend fun tryTvBearerPlayer(
-        client: YouTubeClient,
-        videoId: String,
-        playerConfig: PlayerConfig,
-        requestSession: InnerTube.SessionSnapshot,
-        requestBudget: PlayerRequestBudget,
-        credential: TvBearerCredential,
-    ): ClientAttemptResult {
-        val response =
-            requestPlayer(
-                client = client,
-                videoId = videoId,
-                signatureTimestamp = playerConfig.signatureTimestamp,
-                poToken = null,
-                requestSession = requestSession,
-                encryptedHostFlags = null,
-                requestBudget = requestBudget,
-                bearerToken = credential.bearerValue(),
-            ) ?: return ClientAttemptResult(null, null)
-        return if (isPlayable(response, client)) {
-            ClientAttemptResult(ClientAttempt(response, usedPoToken = false), null)
-        } else {
-            ClientAttemptResult(
-                attempt = null,
-                failure = response.playabilityStatus.toFailure(),
-            )
-        }
     }
 
     private suspend fun tryPlayer(
@@ -769,23 +599,17 @@ internal class PlayerClientDirector(
         requestSession: InnerTube.SessionSnapshot,
         encryptedHostFlags: String?,
         requestBudget: PlayerRequestBudget,
-        bearerToken: String? = null,
     ): PlayerResponse? {
-        // Bearer requests are never remembered so the credential cannot outlive its single use.
         val key =
-            if (bearerToken == null) {
-                PlayerRequestKey(
-                    client = client.wireIdentity(),
-                    videoId = videoId,
-                    signatureTimestamp = signatureTimestamp.takeIf { client.useSignatureTimestamp },
-                    poToken = poToken,
-                    requestSession = requestSession,
-                    encryptedHostFlags = encryptedHostFlags.takeIf { client.isEmbedded },
-                )
-            } else {
-                null
-            }
-        if (key != null && requestBudget.hasResponse(key)) {
+            PlayerRequestKey(
+                client = client.wireIdentity(),
+                videoId = videoId,
+                signatureTimestamp = signatureTimestamp.takeIf { client.useSignatureTimestamp },
+                poToken = poToken,
+                requestSession = requestSession,
+                encryptedHostFlags = encryptedHostFlags.takeIf { client.isEmbedded },
+            )
+        if (requestBudget.hasResponse(key)) {
             return requestBudget.response(key)
         }
         requestBudget.consume()
@@ -800,7 +624,6 @@ internal class PlayerClientDirector(
                         poToken = poToken,
                         requestSession = requestSession,
                         encryptedHostFlags = encryptedHostFlags,
-                        bearerToken = bearerToken,
                     )
                 }
             } catch (error: TimeoutCancellationException) {
@@ -811,7 +634,7 @@ internal class PlayerClientDirector(
         if (isConfirmedAgeGate(response?.playabilityStatus?.status, response?.playabilityStatus?.desktopLegacyAgeGateReason)) {
             requestBudget.ageRestricted = true
         }
-        key?.let { requestBudget.remember(it, response) }
+        requestBudget.remember(key, response)
         return response
     }
 
@@ -822,59 +645,28 @@ internal class PlayerClientDirector(
         poToken: String?,
         requestSession: InnerTube.SessionSnapshot,
         encryptedHostFlags: String?,
-        bearerToken: String? = null,
     ): PlayerResponse? {
+        // Non-2xx responses throw InnerTubeHttpException before their bodies are read.
         val payload =
-            if (bearerToken != null) {
-                innerTube.playerWithTvBearerSessionBound(
-                    client = client,
-                    videoId = videoId,
-                    signatureTimestamp = signatureTimestamp,
-                    requestSession = requestSession,
-                    bearerToken = bearerToken,
-                ) ?: return null
-            } else {
-                // Non-2xx responses throw InnerTubeHttpException before their bodies are read.
-                innerTube.playerTextWithSessionBound(
-                    client = client,
-                    videoId = videoId,
-                    signatureTimestamp = signatureTimestamp,
-                    poToken = poToken,
-                    requestSession = requestSession,
-                    encryptedHostFlags = encryptedHostFlags,
-                    maxBytes = MAX_PLAYER_RESPONSE_BYTES,
-                )
-            }
+            innerTube.playerTextWithSessionBound(
+                client = client,
+                videoId = videoId,
+                signatureTimestamp = signatureTimestamp,
+                poToken = poToken,
+                requestSession = requestSession,
+                encryptedHostFlags = encryptedHostFlags,
+                maxBytes = MAX_PLAYER_RESPONSE_BYTES,
+            )
         return withContext(Dispatchers.Default) {
-            parsePlayerResponse(payload, videoId, bearerToken != null)
+            parsePlayerResponse(payload, videoId)
         }
     }
 
-    @OptIn(ExperimentalSerializationApi::class)
     private fun parsePlayerResponse(
         payload: String,
         videoId: String,
-        bearerAuthenticated: Boolean = false,
     ): PlayerResponse? {
-        val parsedRoot =
-            if (bearerAuthenticated) {
-                runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull()
-            } else {
-                null
-            }
-        if (bearerAuthenticated && parsedRoot?.let(::containsKnownDrmMarker) == true) {
-            return null
-        }
-        val decoded =
-            runCatching {
-                if (parsedRoot != null) {
-                    json.decodeFromJsonElement(PlayerResponse.serializer(), parsedRoot)
-                } else {
-                    json.decodeFromString<PlayerResponse>(payload)
-                }
-            }
-        val response = decoded.getOrNull()
-        if (response == null) return null
+        val response = runCatching { json.decodeFromString<PlayerResponse>(payload) }.getOrNull() ?: return null
         if (!response.matchesRequestedVideo(videoId)) {
             return null
         }
@@ -888,43 +680,6 @@ internal class PlayerClientDirector(
         if (formatCount > MAX_PLAYER_FORMATS) return null
         return response
     }
-
-    private fun containsKnownDrmMarker(root: JsonObject): Boolean {
-        val streamingData = root["streamingData"] as? JsonObject ?: return false
-        if (KNOWN_DRM_KEYS.any { key -> knownDrmValue(streamingData, key)?.let(::hasDrmValue) == true }) return true
-        return listOf("formats", "adaptiveFormats").any { key ->
-            (streamingData[key] as? JsonArray).orEmpty().any { format ->
-                (format as? JsonObject)?.let { item ->
-                    KNOWN_DRM_KEYS.any { marker -> knownDrmValue(item, marker)?.let(::hasDrmValue) == true }
-                } == true
-            }
-        }
-    }
-
-    private fun knownDrmValue(
-        objectValue: JsonObject,
-        key: String,
-    ): JsonElement? = objectValue.entries.firstOrNull { it.key.lowercase() == key }?.value
-
-    private fun hasDrmValue(element: JsonElement): Boolean =
-        when (element) {
-            is JsonObject -> {
-                element.isNotEmpty()
-            }
-
-            is JsonArray -> {
-                element.any { value ->
-                    when (value) {
-                        is JsonObject, is JsonArray -> true
-                        is JsonPrimitive -> value.contentOrNull?.let { it.isNotBlank() && it != "false" && it != "0" } == true
-                    }
-                }
-            }
-
-            is JsonPrimitive -> {
-                element.contentOrNull?.let { it.isNotBlank() && it != "false" && it != "0" } == true
-            }
-        }
 
     private fun PlayerResponse.matchesRequestedVideo(videoId: String): Boolean =
         videoDetails?.videoId?.takeIf(String::isNotBlank)?.let { it == videoId } ?: true
@@ -1132,7 +887,7 @@ internal fun YouTubeClient.wireIdentity(): YouTubeClient =
         skipPlayerResponseValidation = false,
     )
 
-/** Every input that can change a non-bearer player response. */
+/** Every input that can change a player response. */
 internal data class PlayerRequestKey(
     val client: YouTubeClient,
     val videoId: String,

@@ -82,7 +82,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.readByteArray
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -120,10 +119,7 @@ class InnerTube(
         private const val ORIGIN_STUDIO = "https://studio.youtube.com"
         private const val REFERER_STUDIO = "$ORIGIN_STUDIO/"
         private const val API_BASE_STUDIO = "$ORIGIN_STUDIO/youtubei/v1"
-        private const val TV_BEARER_PLAYER_ENDPOINT = "$API_BASE_WWW/player"
-        private const val TV_BEARER_TIMEOUT_MS = 8_000L
         private const val MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
-        private const val MAX_TV_BEARER_RESPONSE_BYTES = 4 * 1024 * 1024
 
         private val TRANSIENT_STATUS_CODES = setOf(408, 425, 429, 500, 502, 503, 504)
         private const val MAX_RETRY_AFTER_MS = 5_000L
@@ -916,70 +912,6 @@ class InnerTube(
                 encryptedHostFlags,
                 retryTransientFailures,
             )
-        }
-
-    /**
-     * Sends one bearer-only TV player request. The returned body is bounded and the request never follows
-     * redirects or retries, so the bearer cannot be propagated to another endpoint.
-     */
-    internal suspend fun playerWithTvBearerSessionBound(
-        client: YouTubeClient,
-        videoId: String,
-        signatureTimestamp: Int?,
-        requestSession: SessionSnapshot,
-        bearerToken: String,
-    ): String? =
-        withSessionBoundRequest(requestSession) {
-            require(bearerToken.length in 1..4096 && bearerToken.all { it.code in 0x21..0x7e }) {
-                "TV bearer credential is not header-safe"
-            }
-            val requestClient = client.withLanguage(requestSession.locale.hl)
-            val body =
-                buildPlayerBody(
-                    client = requestClient,
-                    context = requestClient.toContext(requestSession.locale, requestSession.visitorData, null),
-                    videoId = videoId,
-                    signatureTimestamp = signatureTimestamp,
-                )
-            val directClient =
-                HttpClient(httpClient.engine) {
-                    expectSuccess = false
-                    followRedirects = false
-                    install(HttpTimeout)
-                }
-            try {
-                val response =
-                    directClient.postBounded(TV_BEARER_PLAYER_ENDPOINT, keepErrorBody = false) {
-                        contentType(ContentType.Application.Json)
-                        headers {
-                            append("X-Goog-Api-Format-Version", "1")
-                            append("X-YouTube-Client-Name", requestClient.clientId)
-                            append("X-YouTube-Client-Version", requestClient.clientVersion)
-                            append("Origin", ORIGIN_WWW)
-                            append("X-Origin", ORIGIN_WWW)
-                            append("Referer", REFERER_WWW)
-                            append("Accept-Language", requestSession.locale.acceptLanguageHeader())
-                            requestSession.visitorData?.takeIf(String::isNotBlank)?.let { append("X-Goog-Visitor-Id", it) }
-                            append(HttpHeaders.Authorization, "Bearer $bearerToken")
-                        }
-                        parameter("prettyPrint", false)
-                        setBody(Json.encodeToString(PlayerBody.serializer(), body))
-                        userAgent(requestClient.userAgent)
-                        timeout {
-                            requestTimeoutMillis = TV_BEARER_TIMEOUT_MS
-                            connectTimeoutMillis = TV_BEARER_TIMEOUT_MS
-                            socketTimeoutMillis = TV_BEARER_TIMEOUT_MS
-                        }
-                    }
-                if (!response.status.isSuccess()) {
-                    response.bodyAsChannel().cancel(null)
-                    null
-                } else {
-                    response.bodyAsTextLimited(MAX_TV_BEARER_RESPONSE_BYTES)
-                }
-            } finally {
-                directClient.close()
-            }
         }
 
     suspend fun next(
