@@ -6,7 +6,7 @@ import com.metrolist.innertube.models.PodcastItem
 import com.metrolist.innertube.models.Run
 import com.metrolist.innertube.models.splitBySeparator
 
-data class PodcastPage(
+class PodcastPage(
     val podcast: PodcastItem,
     val episodes: List<EpisodeItem>,
     val continuation: String?,

@@ -9,7 +9,7 @@ import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.utils.parseTime
 
-data class ArtistItemsPage(
+class ArtistItemsPage(
     val title: String,
     val items: List<YTItem>,
     val continuation: String?,

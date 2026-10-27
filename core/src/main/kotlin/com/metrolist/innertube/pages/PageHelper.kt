@@ -21,7 +21,7 @@ object PageHelper {
     /**
      * Data class to hold both library feedback tokens extracted from a menu
      */
-    data class LibraryFeedbackTokens(
+    class LibraryFeedbackTokens(
         val addToken: String?, // Token to add song to library (from BOOKMARK_BORDER)
         val removeToken: String?, // Token to remove song from library (from BOOKMARK)
     )

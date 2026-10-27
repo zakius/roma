@@ -48,7 +48,6 @@ import com.metrolist.innertube.pages.AlbumPage
 import com.metrolist.innertube.pages.ArtistItemsContinuationPage
 import com.metrolist.innertube.pages.ArtistItemsPage
 import com.metrolist.innertube.pages.ArtistPage
-import com.metrolist.innertube.pages.BrowseResult
 import com.metrolist.innertube.pages.ChartsPage
 import com.metrolist.innertube.pages.HomePage
 import com.metrolist.innertube.pages.LibraryContinuationPage
@@ -1905,97 +1904,6 @@ object YouTube {
      * Maximum file size for upload (300MB)
      */
     const val MAX_UPLOAD_SIZE = 314572800L
-
-    suspend fun resolveArtistIds(items: List<YTItem>): List<YTItem> {
-        val missingNames = mutableSetOf<String>()
-        for (item in items) {
-            when (item) {
-                is SongItem -> item.artists.filter { it.id == null }.forEach { missingNames.add(it.name) }
-                is AlbumItem -> item.artists?.filter { it.id == null }?.forEach { missingNames.add(it.name) }
-                is PlaylistItem -> item.author?.let { if (it.id == null) missingNames.add(it.name) }
-                is EpisodeItem -> item.author?.let { if (it.id == null) missingNames.add(it.name) }
-                is PodcastItem -> item.author?.let { if (it.id == null) missingNames.add(it.name) }
-                else -> {}
-            }
-        }
-
-        if (missingNames.isEmpty()) return items
-
-        val resolved = coroutineScope {
-            val semaphore = kotlinx.coroutines.sync.Semaphore(8)
-            missingNames.map { name ->
-                async {
-                    semaphore.acquire()
-                    try {
-                        val searchResult = search(name, SearchFilter.FILTER_ARTIST).getOrNull()
-                        val normalizedName = name.trim()
-                        val artistId = searchResult?.items
-                            ?.filterIsInstance<ArtistItem>()
-                            ?.firstOrNull { candidate ->
-                                candidate.title.trim().equals(normalizedName, ignoreCase = true)
-                            }?.id
-                        if (artistId != null) name to artistId else null
-                    } finally {
-                        semaphore.release()
-                    }
-                }
-            }.awaitAll().filterNotNull().toMap()
-        }
-
-        fun Artist.resolve() = if (id == null) resolved[name]?.let { copy(id = it) } ?: this else this
-        return items.map { item ->
-            when (item) {
-                is SongItem -> item.copy(artists = item.artists.map { it.resolve() })
-                is AlbumItem -> item.copy(artists = item.artists?.map { it.resolve() })
-                is PlaylistItem -> item.copy(author = item.author?.resolve())
-                is EpisodeItem -> item.copy(author = item.author?.resolve())
-                is PodcastItem -> item.copy(author = item.author?.resolve())
-                else -> item
-            }
-        }
-    }
-
-    /**
-     * Collects all unique missing artist names from [items], resolves them in parallel,
-     * and returns a name -> id map. Use this when resolving across multiple sections
-     * to avoid duplicate searches for the same artist.
-     */
-    suspend fun resolveArtistIdMap(items: List<YTItem>): Map<String, String> {
-        val missingNames = mutableSetOf<String>()
-        for (item in items) {
-            when (item) {
-                is SongItem -> item.artists.filter { it.id == null }.forEach { missingNames.add(it.name) }
-                is AlbumItem -> item.artists?.filter { it.id == null }?.forEach { missingNames.add(it.name) }
-                is PlaylistItem -> item.author?.let { if (it.id == null) missingNames.add(it.name) }
-                is EpisodeItem -> item.author?.let { if (it.id == null) missingNames.add(it.name) }
-                is PodcastItem -> item.author?.let { if (it.id == null) missingNames.add(it.name) }
-                else -> {}
-            }
-        }
-
-        if (missingNames.isEmpty()) return emptyMap()
-
-        return coroutineScope {
-            val semaphore = kotlinx.coroutines.sync.Semaphore(8)
-            missingNames.map { name ->
-                async {
-                    semaphore.acquire()
-                    try {
-                        val searchResult = search(name, SearchFilter.FILTER_ARTIST).getOrNull()
-                        val normalizedName = name.trim()
-                        val artistId = searchResult?.items
-                            ?.filterIsInstance<ArtistItem>()
-                            ?.firstOrNull { candidate ->
-                                candidate.title.trim().equals(normalizedName, ignoreCase = true)
-                            }?.id
-                        if (artistId != null) name to artistId else null
-                    } finally {
-                        semaphore.release()
-                    }
-                }
-            }.awaitAll().filterNotNull().toMap()
-        }
-    }
 }
 
 internal class UploadProgressInputStream(

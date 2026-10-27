@@ -14,7 +14,7 @@ import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.splitBySeparator
 import com.metrolist.innertube.utils.parseTime
 
-data class SearchResult(
+class SearchResult(
     val items: List<YTItem>,
     val continuation: String? = null,
     // roma: the service's spelling correction. When autoCorrected, items are for correctedQuery and

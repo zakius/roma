@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
 sealed class Endpoint
 
 @Serializable
-data class WatchEndpoint(
+class WatchEndpoint(
     val videoId: String? = null,
     val playlistId: String? = null,
     val playlistSetVideoId: String? = null,
@@ -21,11 +21,11 @@ data class WatchEndpoint(
 ) : Endpoint() {
 
     @Serializable
-    data class WatchEndpointMusicSupportedConfigs(
+    class WatchEndpointMusicSupportedConfigs(
         val watchEndpointMusicConfig: WatchEndpointMusicConfig,
     ) {
         @Serializable
-        data class WatchEndpointMusicConfig(
+        class WatchEndpointMusicConfig(
             val musicVideoType: String,
         ) {
             companion object {
@@ -38,7 +38,7 @@ data class WatchEndpoint(
 }
 
 @Serializable
-data class BrowseEndpoint(
+class BrowseEndpoint(
     val browseId: String,
     val params: String? = null,
     val browseEndpointContextSupportedConfigs: BrowseEndpointContextSupportedConfigs? = null,
@@ -54,11 +54,11 @@ data class BrowseEndpoint(
         get() = browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType == MUSIC_PAGE_TYPE_PODCAST_SHOW_DETAIL_PAGE
 
     @Serializable
-    data class BrowseEndpointContextSupportedConfigs(
+    class BrowseEndpointContextSupportedConfigs(
         val browseEndpointContextMusicConfig: BrowseEndpointContextMusicConfig,
     ) {
         @Serializable
-        data class BrowseEndpointContextMusicConfig(
+        class BrowseEndpointContextMusicConfig(
             val pageType: String,
         ) {
             companion object {
@@ -78,27 +78,27 @@ data class BrowseEndpoint(
 }
 
 @Serializable
-data class SearchEndpoint(
+class SearchEndpoint(
     val params: String?,
 ) : Endpoint()
 
 @Serializable
-data class FeedbackEndpoint(
+class FeedbackEndpoint(
     val feedbackToken: String
 ) : Endpoint()
 
 @Serializable
-data class DefaultServiceEndpoint(
+class DefaultServiceEndpoint(
     var subscribeEndpoint: SubscribeEndpoint?,
     var feedbackEndpoint: FeedbackEndpoint?
 ) : Endpoint() {
     @Serializable
-    data class SubscribeEndpoint(
+    class SubscribeEndpoint(
         val channelIds: List<String>,
     ) : Endpoint()
 }
 
 @Serializable
-data class ToggledServiceEndpoint(
+class ToggledServiceEndpoint(
     var feedbackEndpoint: FeedbackEndpoint?
 ) : Endpoint()

@@ -2,11 +2,11 @@ package com.metrolist.innertube.pages
 
 import com.metrolist.innertube.models.*
 
-data class ChartsPage(
+class ChartsPage(
     val sections: List<ChartSection>,
     val continuation: String?
 ) {
-    data class ChartSection(
+    class ChartSection(
         val title: String,
         val items: List<YTItem>,
         val chartType: ChartType

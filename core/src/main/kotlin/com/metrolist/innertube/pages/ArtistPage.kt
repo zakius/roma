@@ -21,13 +21,13 @@ import com.metrolist.innertube.models.filterExplicit
 import com.metrolist.innertube.models.getItems
 import com.metrolist.innertube.models.splitBySeparator
 
-data class ArtistSection(
+class ArtistSection(
     val title: String,
     val items: List<YTItem>,
     val moreEndpoint: BrowseEndpoint?,
 )
 
-data class ArtistPage(
+class ArtistPage(
     val artist: ArtistItem,
     val sections: List<ArtistSection>,
     val description: String?,

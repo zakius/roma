@@ -20,12 +20,12 @@ import com.metrolist.innertube.models.filterVideoSongs
 import com.metrolist.innertube.utils.parseTime
 import timber.log.Timber
 
-data class HomePage(
+class HomePage(
     val chips: List<Chip>?,
     val sections: List<Section>,
     val continuation: String? = null,
 ) {
-    data class Chip(
+    class Chip(
         val title: String,
         val endpoint: BrowseEndpoint?,
         val deselectEndPoint: BrowseEndpoint?,
@@ -41,7 +41,7 @@ data class HomePage(
         }
     }
 
-    data class Section(
+    class Section(
         val title: String,
         val label: String?,
         val thumbnail: String?,
@@ -361,18 +361,4 @@ data class HomePage(
             }
         }
     }
-
-    fun filterExplicit(enabled: Boolean = true) =
-        if (enabled) {
-            copy(sections = sections.map {
-                it.copy(items = it.items.filterExplicit())
-            })
-        } else this
-
-    fun filterVideoSongs(disableVideos: Boolean = false) =
-        if (disableVideos) {
-            copy(sections = sections.map { section ->
-                section.copy(items = section.items.filterVideoSongs(true))
-            })
-        } else this
 }

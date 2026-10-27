@@ -10,17 +10,17 @@ sealed class YTItem {
     abstract val shareLink: String
 }
 
-data class Artist(
+class Artist(
     val name: String,
     val id: String?,
 )
 
-data class Album(
+class Album(
     val name: String,
     val id: String,
 )
 
-data class SongItem(
+class SongItem(
     override val id: String,
     override val title: String,
     val artists: List<Artist>,
@@ -60,7 +60,7 @@ data class AlbumItem(
         get() = "https://music.youtube.com/playlist?list=$playlistId"
 }
 
-data class PlaylistItem(
+class PlaylistItem(
     override val id: String,
     override val title: String,
     val author: Artist?,
@@ -80,7 +80,7 @@ data class PlaylistItem(
         get() = "https://music.youtube.com/playlist?list=$id"
 }
 
-data class ArtistItem(
+class ArtistItem(
     override val id: String,
     override val title: String,
     override val thumbnail: String?,
@@ -96,7 +96,7 @@ data class ArtistItem(
         get() = "https://music.youtube.com/channel/$id"
 }
 
-data class PodcastItem(
+class PodcastItem(
     override val id: String,
     override val title: String,
     val author: Artist?,
@@ -127,7 +127,7 @@ data class PodcastItem(
     )
 }
 
-data class EpisodeItem(
+class EpisodeItem(
     override val id: String,
     override val title: String,
     val author: Artist?,

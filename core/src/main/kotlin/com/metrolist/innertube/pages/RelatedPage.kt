@@ -13,7 +13,7 @@ import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.splitBySeparator
 import com.metrolist.innertube.utils.parseTime
 
-data class RelatedPage(
+class RelatedPage(
     val songs: List<SongItem>,
     val albums: List<AlbumItem>,
     val artists: List<ArtistItem>,
