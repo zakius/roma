@@ -4,17 +4,17 @@ package com.metrolist.innertube.models.response
  import kotlinx.serialization.Serializable
  
  @Serializable
- data class ContinuationResponse(
+ class ContinuationResponse(
      val onResponseReceivedActions: List<ResponseAction>?,
  ) {
  
      @Serializable
-     data class ResponseAction(
+     class ResponseAction(
          val appendContinuationItemsAction: ContinuationItems?,
      )
  
      @Serializable
-     data class ContinuationItems(
+     class ContinuationItems(
          val continuationItems: List<MusicShelfRenderer.Content>?,
      )
  }

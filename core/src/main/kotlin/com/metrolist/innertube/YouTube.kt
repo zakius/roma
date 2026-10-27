@@ -81,7 +81,6 @@ import kotlinx.serialization.json.Json
 import timber.log.Timber
 import java.io.FilterInputStream
 import java.io.InputStream
-import java.net.Proxy
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -115,17 +114,6 @@ object YouTube {
         get() = innerTube.cookie
         set(value) {
             innerTube.cookie = value
-        }
-    var proxy: Proxy?
-        get() = innerTube.proxy
-        set(value) {
-            innerTube.proxy = value
-        }
-
-    var proxyAuth: String?
-        get() = innerTube.proxyAuth
-        set(value) {
-            innerTube.proxyAuth = value
         }
     var useLoginForBrowse: Boolean
         get() = innerTube.useLoginForBrowse

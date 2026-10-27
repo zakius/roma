@@ -28,9 +28,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -226,15 +223,15 @@ private class PoTokenView private constructor(context: Context, private val read
     private fun botguard(url: String, body: String, then: (String) -> Unit) {
         Thread {
             try {
-                val request = Request.Builder().url(url).post(body.toRequestBody())
-                    .header("User-Agent", USER_AGENT)
-                    .header("Accept", "application/json")
-                    .header("Content-Type", "application/json+protobuf")
-                    .header("x-goog-api-key", API_KEY)
-                    .header("x-user-agent", "grpc-web-javascript/0.1")
-                    .build()
-                val text = http.newCall(request).execute().use { if (it.isSuccessful) it.body?.string().orEmpty() else "" }
-                if (text.isEmpty()) throw PoTokenException("BotGuard request failed: $url")
+                val headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Accept" to "application/json",
+                    "Content-Type" to "application/json+protobuf",
+                    "x-goog-api-key" to API_KEY,
+                    "x-user-agent" to "grpc-web-javascript/0.1",
+                )
+                val (code, text) = roma.core.httpCall(url, body.toByteArray(), headers)
+                if (code !in 200..299 || text.isEmpty()) throw PoTokenException("BotGuard request failed: $url")
                 then(text)
             } catch (e: Exception) {
                 fail(e)
@@ -262,7 +259,6 @@ private class PoTokenView private constructor(context: Context, private val read
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.3"
         private const val INIT_TIMEOUT_MS = 30_000L
         private const val MINT_TIMEOUT_MS = 5_000L
-        private val http = OkHttpClient()
 
         suspend fun create(context: Context): PoTokenView {
             var created: PoTokenView? = null

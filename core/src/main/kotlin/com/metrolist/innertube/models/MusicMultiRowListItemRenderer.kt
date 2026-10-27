@@ -4,7 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class MusicMultiRowListItemRenderer(
+class MusicMultiRowListItemRenderer(
     val title: Runs?,
     val subtitle: Runs?,
     @SerialName("secondSubtitle")
@@ -18,7 +18,7 @@ data class MusicMultiRowListItemRenderer(
     val menu: Menu?,
 ) {
     @Serializable
-    data class PlaybackProgress(
+    class PlaybackProgress(
         val value: Float? = null,
     )
 }

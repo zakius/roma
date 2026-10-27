@@ -6,12 +6,12 @@ import kotlinx.serialization.json.JsonNames
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class Continuation(
+class Continuation(
     @JsonNames("nextContinuationData", "nextRadioContinuationData")
     val nextContinuationData: NextContinuationData?,
 ) {
     @Serializable
-    data class NextContinuationData(
+    class NextContinuationData(
         val continuation: String,
     )
 }

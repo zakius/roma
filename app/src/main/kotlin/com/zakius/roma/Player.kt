@@ -53,12 +53,6 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.outlined.ThumbUp
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -95,7 +89,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
 import androidx.compose.ui.platform.LocalContext
-import coil3.compose.AsyncImage
 import roma.core.Line
 import roma.core.Lyrics
 import roma.core.attachTranslation
@@ -223,11 +216,8 @@ fun PlayerScreen() {
 @Composable
 private fun LyricsBackdrop(thumb: String?) {
     if (thumb == null) return
-    val context = LocalContext.current
-    // EXACT: otherwise Coil hands back the full-size art from its memory cache (the player just showed it), and the
-    // backdrop is a sharp full-screen picture instead of a blur.
-    val request = coil3.request.ImageRequest.Builder(context).data(bigThumb(thumb)).size(16).precision(coil3.size.Precision.EXACT).build()
-    AsyncImage(request, null, Modifier.fillMaxSize(), alpha = 0.2f, contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+    // 16 pixels across, stretched over the screen: a blur.
+    ThumbPx(bigThumb(thumb), 16, Modifier.fillMaxSize(), alpha = 0.2f, contentScale = androidx.compose.ui.layout.ContentScale.Crop, exact = true)
     val bg = MaterialTheme.colorScheme.surface
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to bg, 0.15f to Color.Transparent, 0.85f to Color.Transparent, 1f to bg)))
 }
@@ -262,7 +252,7 @@ private fun SeekPreview(line: Line, modifier: Modifier) {
 @Composable
 private fun SleepDialog(onDone: () -> Unit) {
     val active = Playback.sleepAt != 0L || Playback.sleepAfterSong
-    androidx.compose.material3.AlertDialog(
+    AlertDialog(
         onDismissRequest = onDone,
         title = { Text("Sleep timer") },
         text = {
@@ -454,12 +444,12 @@ private fun neighbour(i: Int, dir: Int): Int {
 private fun SongPage(s: roma.core.Song, current: Boolean, modifier: Modifier) {
     Column(modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         // Until the large art arrives, the list's thumbnail of this song (row or card size) stands in, if it's in memory.
-        val context = LocalContext.current
-        val small = listOf(shownThumb(s.thumb, 48.dp), shownThumb(s.thumb, 56.dp), shownThumb(s.thumb, 128.dp))
-        val memory = coil3.SingletonImageLoader.get(context).memoryCache
-        val placeholder = small.firstOrNull { it != null && memory?.get(coil3.memory.MemoryCache.Key(it)) != null }
-        val art = coil3.request.ImageRequest.Builder(context).data(s.thumb?.let(::bigThumb)).placeholderMemoryCacheKey(placeholder).build()
-        AsyncImage(art, null, Modifier.weight(1f, fill = false).aspectRatio(1f).clip(RoundedCornerShape(8.dp)))
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val placeholder = listOf(48.dp, 56.dp, 128.dp).firstNotNullOfOrNull { d ->
+            val px = with(density) { d.roundToPx() }
+            thumbAt(s.thumb, px)?.let { Images.peek(it, px) }
+        }
+        ThumbPx(s.thumb?.let(::bigThumb), BIG_PX, Modifier.weight(1f, fill = false).aspectRatio(1f).clip(RoundedCornerShape(8.dp)), placeholder = placeholder)
         Spacer(Modifier.height(16.dp))
         // Tapping the title opens its album, the artist their page (as More → Go to album / artist). Long-pressing either
         // opens the correction dialog, the same as More → Correct romanization.

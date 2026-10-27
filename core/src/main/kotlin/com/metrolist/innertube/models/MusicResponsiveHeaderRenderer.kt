@@ -3,7 +3,7 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class MusicResponsiveHeaderRenderer(
+class MusicResponsiveHeaderRenderer(
     val thumbnail: ThumbnailRenderer? = null,
     val buttons: List<Button> = emptyList(),
     val title: Runs = Runs(null),
@@ -14,18 +14,18 @@ data class MusicResponsiveHeaderRenderer(
     val facepile: FacepileWrapper? = null,
 ) {
     @Serializable
-    data class Button(
+    class Button(
         val musicPlayButtonRenderer: MusicPlayButtonRenderer? = null,
         val menuRenderer: Menu.MenuRenderer? = null,
         val toggleButtonRenderer: ToggleButtonRenderer? = null,
     ) {
         @Serializable
-        data class MusicPlayButtonRenderer(
+        class MusicPlayButtonRenderer(
             val playNavigationEndpoint: NavigationEndpoint? = null,
         )
 
         @Serializable
-        data class ToggleButtonRenderer(
+        class ToggleButtonRenderer(
             val defaultIcon: Icon? = null,
             val defaultServiceEndpoint: DefaultServiceEndpoint? = null,
             val toggledServiceEndpoint: ToggledServiceEndpoint? = null,
@@ -34,68 +34,68 @@ data class MusicResponsiveHeaderRenderer(
 }
 
 @Serializable
-data class AvatarStackViewModel(
+class AvatarStackViewModel(
     val avatars: List<Avatar>?,
     val text: AvatarText?,
     val rendererContext: RendererContext?,
 ) {
     @Serializable
-    data class Avatar(
+    class Avatar(
         val avatarViewModel: AvatarViewModel?,
     )
 
     @Serializable
-    data class AvatarViewModel(
+    class AvatarViewModel(
         val image: AvatarImage?,
     )
 
     @Serializable
-    data class AvatarImage(
+    class AvatarImage(
         val sources: List<ImageSource>?,
     )
 
     @Serializable
-    data class ImageSource(
+    class ImageSource(
         val url: String?,
     )
 
     @Serializable
-    data class AvatarText(
+    class AvatarText(
         val content: String?,
     )
 
     @Serializable
-    data class RendererContext(
+    class RendererContext(
         val commandContext: CommandContext?,
     )
 
     @Serializable
-    data class CommandContext(
+    class CommandContext(
         val onTap: OnTap?,
     )
 
     @Serializable
-    data class OnTap(
+    class OnTap(
         val innertubeCommand: InnerTubeBrowseCommand?,
     )
 
     @Serializable
-    data class InnerTubeBrowseCommand(
+    class InnerTubeBrowseCommand(
         val browseEndpoint: BrowseEndpoint?,
     )
 
     @Serializable
-    data class BrowseEndpoint(
+    class BrowseEndpoint(
         val browseId: String?,
     )
 }
 
 @Serializable
-data class DescriptionWrapper(
+class DescriptionWrapper(
     val musicDescriptionShelfRenderer: MusicDescriptionShelfRenderer?,
 )
 
 @Serializable
-data class FacepileWrapper(
+class FacepileWrapper(
     val avatarStackViewModel: AvatarStackViewModel?,
 )

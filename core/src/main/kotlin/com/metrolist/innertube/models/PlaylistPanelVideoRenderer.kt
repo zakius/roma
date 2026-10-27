@@ -3,7 +3,7 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class PlaylistPanelVideoRenderer(
+class PlaylistPanelVideoRenderer(
     val title: Runs?,
     val lengthText: Runs?,
     val longBylineText: Runs?,

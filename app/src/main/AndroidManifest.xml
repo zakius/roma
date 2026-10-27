@@ -46,7 +46,6 @@
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
-                <action android:name="androidx.media3.session.MediaSessionService" />
                 <!-- The system's media controls bind this to offer "resume" after a restart. -->
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
@@ -56,8 +55,8 @@
         <provider android:name="androidx.startup.InitializationProvider" android:authorities="${applicationId}.androidx-startup" tools:node="merge">
             <meta-data android:name="androidx.emoji2.text.EmojiCompatInitializer" tools:node="remove" />
         </provider>
-        <!-- A headset's or car's Play button when roma isn't running: Media3 starts the service and resumes. -->
-        <receiver android:name="androidx.media3.session.MediaButtonReceiver" android:exported="true">
+        <!-- A headset's or car's Play button when roma isn't running: it starts the service, which resumes. -->
+        <receiver android:name=".MediaButtons" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>

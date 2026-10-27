@@ -3,16 +3,16 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class SearchSuggestionsSectionRenderer(
+class SearchSuggestionsSectionRenderer(
     val contents: List<Content>,
 ) {
     @Serializable
-    data class Content(
+    class Content(
         val searchSuggestionRenderer: SearchSuggestionRenderer?,
         val musicResponsiveListItemRenderer: MusicResponsiveListItemRenderer?,
     ) {
         @Serializable
-        data class SearchSuggestionRenderer(
+        class SearchSuggestionRenderer(
             val suggestion: Runs,
             val navigationEndpoint: NavigationEndpoint,
         )

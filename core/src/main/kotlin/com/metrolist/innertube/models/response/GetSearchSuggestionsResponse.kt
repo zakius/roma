@@ -4,11 +4,11 @@ import com.metrolist.innertube.models.SearchSuggestionsSectionRenderer
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class GetSearchSuggestionsResponse(
+class GetSearchSuggestionsResponse(
     val contents: List<Content>?,
 ) {
     @Serializable
-    data class Content(
+    class Content(
         val searchSuggestionsSectionRenderer: SearchSuggestionsSectionRenderer,
     )
 }

@@ -22,7 +22,7 @@ import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
-import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.RenderersFactory
@@ -35,13 +35,6 @@ import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.mp4.FragmentedMp4Extractor
 import androidx.media3.extractor.mp4.Mp4Extractor
 import androidx.media3.extractor.text.SubtitleParser
-import androidx.media3.session.CommandButton
-import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
-import androidx.media3.session.SessionCommand
-import androidx.media3.session.SessionResult
-import com.google.common.util.concurrent.Futures
-import com.google.common.util.concurrent.ListenableFuture
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.ArtistItem
 import com.metrolist.innertube.models.WatchEndpoint
@@ -56,7 +49,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.OkHttpClient
 import roma.core.LastFm
 import roma.core.Lyrics
 import roma.core.LyricsProviders
@@ -120,7 +112,7 @@ object Playback {
         Streams.refuseVisionOs = BuildConfig.REFUSE_VISIONOS
         InnerTubeXStreams.tokenProvider = PoTokens(c)
         cache = SimpleCache(File(c.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(1L shl 30), StandaloneDatabaseProvider(c))
-        val http = OkHttpDataSource.Factory(OkHttpClient())
+        val http = DefaultHttpDataSource.Factory()
         // Media items carry roma://<videoId>; the stream URL is looked up only when bytes are needed and not cached.
         val resolving = ResolvingDataSource.Factory(http) { spec ->
             if (spec.uri.scheme != "roma") spec else spec.withUri(Uri.parse(streamUrl(spec.uri.host!!)))
@@ -261,7 +253,7 @@ object Playback {
         val next = (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song ?: return
         if (next.id == prefetched) return
         prefetched = next.id
-        next.thumb?.let { coil3.SingletonImageLoader.get(appContext).enqueue(coil3.request.ImageRequest.Builder(appContext).data(bigThumb(it)).build()) }
+        next.thumb?.let { Images.prefetch(bigThumb(it), BIG_PX) }
         scope.launch {
             precacheAsync(next.id).await()
             withContext(Dispatchers.IO) { runCatching { if (romanizedLyrics(next) == null && romanizedOnDisk(next) == null) romanize(next, lyricsResult(next)) } }
@@ -729,7 +721,7 @@ object Playback {
         // When the player is the screen a start shows, its art is decoded into the memory cache now, so the first
         // frame has it; requested only in the first frame, it came 2 to 3 frames later.
         if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_PLAYER) song.thumb?.let {
-            coil3.SingletonImageLoader.get(appContext).enqueue(coil3.request.ImageRequest.Builder(appContext).data(bigThumb(it)).build())
+            Images.prefetch(bigThumb(it), BIG_PX)
         }
         return Restored(saved, index, if (position?.first == song.id) position.second else 0L,
             saved.songs.mapIndexed { i, s -> mediaItem(Entry(s, saved.sections.getOrElse(i) { "queued" })) })
@@ -1137,78 +1129,14 @@ private class AheadLoadControl(val load: DefaultLoadControl) : androidx.media3.e
         load.shouldContinuePreloading(id, t, period, bufferedDurationUs)
 }
 
-class PlaybackService : MediaSessionService() {
-    private lateinit var session: MediaSession
-    private val likeCommand = SessionCommand("roma.like", Bundle.EMPTY)
-
-    companion object {
-        var instance: PlaybackService? = null
-    }
-
-    override fun onCreate() {
-        Startup.go() // started without a screen (a headset's Play, the system's resume): nothing waits for a frame
-        super.onCreate()
-        instance = this
-        session = MediaSession.Builder(this, Playback.player)
-            .setCallback(object : MediaSession.Callback {
-                override fun onConnect(s: MediaSession, c: MediaSession.ControllerInfo): MediaSession.ConnectionResult =
-                    MediaSession.ConnectionResult.AcceptedResultBuilder(s)
-                        .setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().add(likeCommand).build())
-                        .build()
-
-                // Play from a headset, a car or the system's media controls after the app was closed or the phone
-                // restarted: the queue saved before is back (Playback.restore); hand it over once it is.
-                override fun onPlaybackResumption(s: MediaSession, c: MediaSession.ControllerInfo, isForPlayback: Boolean): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-                    val result = com.google.common.util.concurrent.SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
-                    Playback.afterRestore {
-                        val p = Playback.player
-                        if (p.mediaItemCount == 0) result.setException(UnsupportedOperationException("nothing saved"))
-                        else result.set(MediaSession.MediaItemsWithStartPosition((0 until p.mediaItemCount).map { p.getMediaItemAt(it) }, p.currentMediaItemIndex, p.currentPosition))
-                    }
-                    return result
-                }
-
-                override fun onCustomCommand(s: MediaSession, c: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
-                    if (command.customAction == likeCommand.customAction) Playback.toggleLike()
-                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-                }
-            })
-            .build()
-        updateLikeButton()
-        Playback.player.addListener(object : Player.Listener {
-            override fun onMediaItemTransition(item: MediaItem?, reason: Int) = updateLikeButton()
-        })
-    }
-
-    /** Notification and lock screen: prev, play/pause, next from the system, plus Like. Never is left out on purpose. */
-    fun updateLikeButton() {
-        val liked = Playback.current()?.song?.id in Playback.liked
-        val button = CommandButton.Builder(if (liked) CommandButton.ICON_THUMB_UP_FILLED else CommandButton.ICON_THUMB_UP_UNFILLED)
-            .setDisplayName(if (liked) "Unlike" else "Like")
-            .setSessionCommand(likeCommand)
-            .setEnabled(Store.signedIn)
-            .build()
-        session.setMediaButtonPreferences(listOf(button))
-    }
-
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
-
-    override fun onTaskRemoved(rootIntent: android.content.Intent?) {
-        if (!Playback.player.isPlaying) stopSelf()
-    }
-
-    override fun onDestroy() {
-        instance = null
-        session.release()
-        super.onDestroy()
-    }
-}
-
 /**
  * Lists get small thumbnails (60–120 px); the player and the media notification need a large one.
  * Google-hosted art takes its size in the URL; YouTube video stills come in fixed sizes, hqdefault (480 px) always exists.
  */
 fun bigThumb(url: String) = url.replace(BIG_WH, "=w544-h544").replace(SMALL_STILL, "/hqdefault.jpg")
+
+/** The player's art: bigThumb's size. */
+const val BIG_PX = 544
 
 // Compiled once: a 1,000-song playlist builds 1,000 media items on the main thread when it starts.
 private val BIG_WH = Regex("=w\\d+-h\\d+")

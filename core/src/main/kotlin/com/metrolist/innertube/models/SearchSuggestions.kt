@@ -1,6 +1,6 @@
 package com.metrolist.innertube.models
 
-data class SearchSuggestions(
+class SearchSuggestions(
     val queries: List<String>,
     val recommendedItems: List<YTItem>,
 )

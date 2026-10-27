@@ -3,13 +3,13 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class ThumbnailRenderer(
+class ThumbnailRenderer(
     val musicThumbnailRenderer: MusicThumbnailRenderer?,
     val musicAnimatedThumbnailRenderer: MusicAnimatedThumbnailRenderer?,
     val croppedSquareThumbnailRenderer: MusicThumbnailRenderer?,
 ) {
     @Serializable
-    data class MusicThumbnailRenderer(
+    class MusicThumbnailRenderer(
         val thumbnail: Thumbnails,
         val thumbnailCrop: String?,
         val thumbnailScale: String?,
@@ -23,7 +23,7 @@ data class ThumbnailRenderer(
             ?: croppedSquareThumbnailRenderer?.getThumbnailUrl()
 
     @Serializable
-    data class MusicAnimatedThumbnailRenderer(
+    class MusicAnimatedThumbnailRenderer(
         val animatedThumbnail: Thumbnails,
         val backupRenderer: MusicThumbnailRenderer,
     )

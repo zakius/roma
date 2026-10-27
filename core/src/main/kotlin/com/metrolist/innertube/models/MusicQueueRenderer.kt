@@ -3,21 +3,21 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class MusicQueueRenderer(
+class MusicQueueRenderer(
     val content: Content?,
     val header: Header?,
 ) {
     @Serializable
-    data class Content(
+    class Content(
         val playlistPanelRenderer: PlaylistPanelRenderer,
     )
 
     @Serializable
-    data class Header(
+    class Header(
         val musicQueueHeaderRenderer: MusicQueueHeaderRenderer?,
     ) {
         @Serializable
-        data class MusicQueueHeaderRenderer(
+        class MusicQueueHeaderRenderer(
             val title: Runs?,
             val subtitle: Runs?,
         )

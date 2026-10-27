@@ -3,12 +3,12 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Thumbnails(
+class Thumbnails(
     val thumbnails: List<Thumbnail>,
 )
 
 @Serializable
-data class Thumbnail(
+class Thumbnail(
     val url: String,
     val width: Int?,
     val height: Int?,

@@ -7,31 +7,31 @@ import com.metrolist.innertube.models.Thumbnail
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class AccountMenuResponse(
+class AccountMenuResponse(
     val actions: List<Action>,
 ) {
     @Serializable
-    data class Action(
+    class Action(
         val openPopupAction: OpenPopupAction,
     ) {
         @Serializable
-        data class OpenPopupAction(
+        class OpenPopupAction(
             val popup: Popup,
         ) {
             @Serializable
-            data class Popup(
+            class Popup(
                 val multiPageMenuRenderer: MultiPageMenuRenderer,
             ) {
                 @Serializable
-                data class MultiPageMenuRenderer(
+                class MultiPageMenuRenderer(
                     val header: Header?,
                 ) {
                     @Serializable
-                    data class Header(
+                    class Header(
                         val activeAccountHeaderRenderer: ActiveAccountHeaderRenderer,
                     ) {
                         @Serializable
-                        data class ActiveAccountHeaderRenderer(
+                        class ActiveAccountHeaderRenderer(
                             val accountName: Runs,
                             val email: Runs?,
                             val channelHandle: Runs?,

@@ -5,25 +5,25 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonNames
 
 @Serializable
-data class SectionListRenderer(
+class SectionListRenderer(
     val header: Header?,
     val contents: List<Content>?,
     val continuations: List<Continuation>?,
 ) {
     @Serializable
-    data class Header(
+    class Header(
         val chipCloudRenderer: ChipCloudRenderer?,
     ) {
         @Serializable
-        data class ChipCloudRenderer(
+        class ChipCloudRenderer(
             val chips: List<Chip>,
         ) {
             @Serializable
-            data class Chip(
+            class Chip(
                 val chipCloudChipRenderer: ChipCloudChipRenderer,
             ) {
                 @Serializable
-                data class ChipCloudChipRenderer(
+                class ChipCloudChipRenderer(
                     val isSelected: Boolean = false,
                     val navigationEndpoint: NavigationEndpoint? = null,
                     val onDeselectedCommand: NavigationEndpoint? = null,
@@ -37,7 +37,7 @@ data class SectionListRenderer(
 
     @OptIn(ExperimentalSerializationApi::class)
     @Serializable
-    data class Content(
+    class Content(
         @JsonNames("musicImmersiveCarouselShelfRenderer")
         val musicCarouselShelfRenderer: MusicCarouselShelfRenderer?,
         val musicShelfRenderer: MusicShelfRenderer?,
@@ -52,12 +52,12 @@ data class SectionListRenderer(
 }
 
 @Serializable
-data class ItemSectionRenderer(
+class ItemSectionRenderer(
     val contents: List<Content>?,
     val header: Header? = null,
 ) {
     @Serializable
-    data class Content(
+    class Content(
         val musicResponsiveListItemRenderer: MusicResponsiveListItemRenderer? = null,
         val musicShelfRenderer: MusicShelfRenderer? = null,
         val musicPlaylistShelfRenderer: MusicPlaylistShelfRenderer? = null,
@@ -68,18 +68,18 @@ data class ItemSectionRenderer(
     )
 
     @Serializable
-    data class Correction(
+    class Correction(
         val correctedQuery: Runs? = null,
         val originalQueryEndpoint: NavigationEndpoint? = null,
     )
 
     @Serializable
-    data class Header(
+    class Header(
         val itemSectionTabbedHeaderRenderer: ItemSectionTabbedHeaderRenderer?,
     )
 
     @Serializable
-    data class ItemSectionTabbedHeaderRenderer(
+    class ItemSectionTabbedHeaderRenderer(
         val title: Runs?,
     )
 }

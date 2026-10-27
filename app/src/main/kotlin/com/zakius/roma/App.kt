@@ -1,8 +1,6 @@
 package com.zakius.roma
 
 import android.app.Application
-import coil3.network.okhttp.OkHttpNetworkFetcherFactory
-import coil3.serviceLoaderEnabled
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
@@ -29,7 +27,7 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import kotlin.concurrent.thread
 
-class App : Application(), coil3.SingletonImageLoader.Factory {
+class App : Application() {
     @android.annotation.SuppressLint("MissingSuperCall") // called on the fonts thread
     override fun onCreate() {
         // Set-up the first frame would otherwise wait for, done beside the rest of start-up: the RenderThread, which
@@ -56,6 +54,7 @@ class App : Application(), coil3.SingletonImageLoader.Factory {
         // lock, so the activity waits for it there.
         thread(name = "fonts") { superOnCreate() }
         Store.init(this)
+        Images.init(this)
         if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME) Home.preload()
         Dictionary.init(this)
         Playback.init(this)
@@ -67,16 +66,10 @@ class App : Application(), coil3.SingletonImageLoader.Factory {
                 Store.romanizer.warmUp()
                 android.util.Log.i("roma", "Sudachi dictionary ready in ${(System.nanoTime() - t0) / 1_000_000} ms")
             }
-            thread(name = "images") { coil3.SingletonImageLoader.get(this) } // built before the first picture needs it
         }
     }
 
     private fun superOnCreate() = super.onCreate()
-
-    // Coil asks the application for its image loader when the first picture needs it, so start-up registers nothing.
-    // The network fetcher is named here instead of found by a ServiceLoader scan of the APK.
-    override fun newImageLoader(context: coil3.PlatformContext) =
-        coil3.ImageLoader.Builder(context).serviceLoaderEnabled(false).components { add(OkHttpNetworkFetcherFactory()) }.build()
 }
 
 /** Work the first frame doesn't need waits until it is drawn, so it doesn't compete with it for the CPU or the main thread. */
@@ -153,6 +146,7 @@ object Store {
         indexThread.execute {
             listOf(files, cache).flatMap { it.listFiles().orEmpty().toList() }.filter { it.name.startsWith("sudachi") }.forEach { it.delete() }
             for (n in listOf("index.json", "liked.json", "streams.txt")) File(files, n).takeIf { it.exists() }?.let { runCatching { it.copyTo(File(cache, n), true) }; it.delete() }
+            File(cache, "http_cache").deleteRecursively() // OkHttp's cache, up to 0.1.39
             prefs.edit().remove("home.mixes").apply()
         }
         romanizer.settings = romanizeSettings()

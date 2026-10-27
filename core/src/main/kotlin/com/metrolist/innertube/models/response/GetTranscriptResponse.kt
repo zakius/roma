@@ -3,53 +3,53 @@ package com.metrolist.innertube.models.response
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class GetTranscriptResponse(
+class GetTranscriptResponse(
     val actions: List<Action>?,
 ) {
     @Serializable
-    data class Action(
+    class Action(
         val updateEngagementPanelAction: UpdateEngagementPanelAction,
     ) {
         @Serializable
-        data class UpdateEngagementPanelAction(
+        class UpdateEngagementPanelAction(
             val content: Content,
         ) {
             @Serializable
-            data class Content(
+            class Content(
                 val transcriptRenderer: TranscriptRenderer,
             ) {
                 @Serializable
-                data class TranscriptRenderer(
+                class TranscriptRenderer(
                     val body: Body,
                 ) {
                     @Serializable
-                    data class Body(
+                    class Body(
                         val transcriptBodyRenderer: TranscriptBodyRenderer,
                     ) {
                         @Serializable
-                        data class TranscriptBodyRenderer(
+                        class TranscriptBodyRenderer(
                             val cueGroups: List<CueGroup>,
                         ) {
                             @Serializable
-                            data class CueGroup(
+                            class CueGroup(
                                 val transcriptCueGroupRenderer: TranscriptCueGroupRenderer,
                             ) {
                                 @Serializable
-                                data class TranscriptCueGroupRenderer(
+                                class TranscriptCueGroupRenderer(
                                     val cues: List<Cue>,
                                 ) {
                                     @Serializable
-                                    data class Cue(
+                                    class Cue(
                                         val transcriptCueRenderer: TranscriptCueRenderer,
                                     ) {
                                         @Serializable
-                                        data class TranscriptCueRenderer(
+                                        class TranscriptCueRenderer(
                                             val cue: SimpleText,
                                             val startOffsetMs: Long,
                                             val durationMs: Long,
                                         ) {
                                             @Serializable
-                                            data class SimpleText(
+                                            class SimpleText(
                                                 val simpleText: String,
                                             )
                                         }

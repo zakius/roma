@@ -3,7 +3,7 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class UrlEndpoint(
+class UrlEndpoint(
     val url: String? = null,
     val target: String? = null,
 )

@@ -4,12 +4,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.FormBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.io.File
 import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
 
 /** One finished listen, in original (not romanized) metadata so it matches Last.fm's database. */
 @Serializable
@@ -20,8 +16,6 @@ fun shouldScrobble(durationSec: Int, playedSec: Int) = durationSec > 30 && playe
 
 /** Last.fm API calls. The user registers the key and secret; the session key comes from the browser auth flow. */
 class LastFm(private val apiKey: String, private val secret: String) {
-    private val http = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
-
     fun authUrl(callback: String) = "https://www.last.fm/api/auth/?api_key=$apiKey&cb=$callback"
 
     /** Trades the token from the auth callback for a session key. */
@@ -61,15 +55,12 @@ class LastFm(private val apiKey: String, private val secret: String) {
 
     private fun call(params: Map<String, String>): kotlinx.serialization.json.JsonElement {
         val all = params + ("api_key" to apiKey)
-        val form = FormBody.Builder()
-        for ((k, v) in all) form.add(k, v)
-        form.add("api_sig", sign(all)).add("format", "json")
-        http.newCall(Request.Builder().url("https://ws.audioscrobbler.com/2.0/").post(form.build()).build()).execute().use { r ->
-            val body = r.body.string()
-            val json = Json.parseToJsonElement(body)
-            if (!r.isSuccessful || json.jsonObject["error"] != null) error("Last.fm: ${json.jsonObject["message"]?.jsonPrimitive?.content ?: r.code}")
-            return json
-        }
+        val form = (all + ("api_sig" to sign(all)) + ("format" to "json")).entries
+            .joinToString("&") { (k, v) -> java.net.URLEncoder.encode(k, "UTF-8") + "=" + java.net.URLEncoder.encode(v, "UTF-8") }
+        val (code, body) = httpCall("https://ws.audioscrobbler.com/2.0/", form.toByteArray(), mapOf("Content-Type" to "application/x-www-form-urlencoded"))
+        val json = Json.parseToJsonElement(body)
+        if (code !in 200..299 || json.jsonObject["error"] != null) error("Last.fm: ${json.jsonObject["message"]?.jsonPrimitive?.content ?: code}")
+        return json
     }
 }
 

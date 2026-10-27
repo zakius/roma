@@ -3,7 +3,7 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class NavigationEndpoint(
+class NavigationEndpoint(
     val watchEndpoint: WatchEndpoint? = null,
     val watchPlaylistEndpoint: WatchEndpoint? = null,
     val browseEndpoint: BrowseEndpoint? = null,
@@ -16,36 +16,36 @@ data class NavigationEndpoint(
     val confirmDialogEndpoint: ConfirmDialogEndpoint? = null,
 ) {
     @Serializable
-    data class DeletePrivatelyOwnedEntityCommand(
+    class DeletePrivatelyOwnedEntityCommand(
         val entityId: String,
     )
 
     @Serializable
-    data class ConfirmDialogEndpoint(
+    class ConfirmDialogEndpoint(
         val content: ConfirmDialogContent? = null,
     ) {
         @Serializable
-        data class ConfirmDialogContent(
+        class ConfirmDialogContent(
             val confirmDialogRenderer: ConfirmDialogRenderer? = null,
         )
 
         @Serializable
-        data class ConfirmDialogRenderer(
+        class ConfirmDialogRenderer(
             val confirmButton: ConfirmButton? = null,
         )
 
         @Serializable
-        data class ConfirmButton(
+        class ConfirmButton(
             val buttonRenderer: ConfirmButtonRenderer? = null,
         )
 
         @Serializable
-        data class ConfirmButtonRenderer(
+        class ConfirmButtonRenderer(
             val command: ConfirmCommand? = null,
         )
 
         @Serializable
-        data class ConfirmCommand(
+        class ConfirmCommand(
             val musicDeletePrivatelyOwnedEntityCommand: DeletePrivatelyOwnedEntityCommand? = null,
         )
     }

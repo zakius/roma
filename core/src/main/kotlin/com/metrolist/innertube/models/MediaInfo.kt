@@ -1,6 +1,6 @@
 package com.metrolist.innertube.models
 
-data class MediaInfo(
+class MediaInfo(
     val videoId: String,
     val title: String? = null,
     val author: String? = null,

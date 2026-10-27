@@ -13,13 +13,5 @@ HSPLio/ktor/**->**(**)**
 Lio/ktor/**;
 HSPLkotlinx/serialization/**->**(**)**
 Lkotlinx/serialization/**;
-HSPLokhttp3/**->**(**)**
-Lokhttp3/**;
-HSPLokio/**->**(**)**
-Lokio/**;
 HSPLandroidx/media3/**->**(**)**
 Landroidx/media3/**;
-HSPLcoil3/**->**(**)**
-Lcoil3/**;
-HSPLandroidx/compose/material3/**->**(**)**
-Landroidx/compose/material3/**;

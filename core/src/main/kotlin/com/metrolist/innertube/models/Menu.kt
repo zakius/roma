@@ -3,35 +3,35 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Menu(
+class Menu(
     val menuRenderer: MenuRenderer,
 ) {
     @Serializable
-    data class MenuRenderer(
+    class MenuRenderer(
         val items: List<Item>?,
         val topLevelButtons: List<TopLevelButton>?,
     ) {
         @Serializable
-        data class Item(
+        class Item(
             val menuNavigationItemRenderer: MenuNavigationItemRenderer?,
             val menuServiceItemRenderer: MenuServiceItemRenderer?,
             val toggleMenuServiceItemRenderer: ToggleMenuServiceRenderer?,
         ) {
             @Serializable
-            data class MenuNavigationItemRenderer(
+            class MenuNavigationItemRenderer(
                 val text: Runs,
                 val icon: Icon,
                 val navigationEndpoint: NavigationEndpoint,
             )
 
             @Serializable
-            data class MenuServiceItemRenderer(
+            class MenuServiceItemRenderer(
                 val text: Runs,
                 val icon: Icon,
                 val serviceEndpoint: NavigationEndpoint,
             )
             @Serializable
-            data class ToggleMenuServiceRenderer(
+            class ToggleMenuServiceRenderer(
                 val defaultIcon: Icon,
                 val defaultServiceEndpoint: DefaultServiceEndpoint,
                 val toggledServiceEndpoint: ToggledServiceEndpoint?,
@@ -40,11 +40,11 @@ data class Menu(
         }
 
         @Serializable
-        data class TopLevelButton(
+        class TopLevelButton(
             val buttonRenderer: ButtonRenderer?,
         ) {
             @Serializable
-            data class ButtonRenderer(
+            class ButtonRenderer(
                 val icon: Icon,
                 val navigationEndpoint: NavigationEndpoint,
             )

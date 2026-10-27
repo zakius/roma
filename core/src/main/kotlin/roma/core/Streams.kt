@@ -179,10 +179,9 @@ object InnerTubeXStreams {
 
     /** Hands PoTokens to the clients that need one (a WebView BotGuard generator in the app); none by default. */
     @Volatile var tokenProvider: TokenProvider? = null
-        set(value) { field = value; bundle = null }
+        set(value) { field = value; built = null }
 
-    private class Bundle(val generation: Long, val extractor: InnerTubeExtractor)
-    @Volatile private var bundle: Bundle? = null
+    @Volatile private var built: InnerTubeExtractor? = null
 
     // The cipher config, kept for the process; RemotePlayerConfigStore refreshes it when a player hash is missing.
     private val configRepository = object : PlayerConfigRepository {
@@ -195,15 +194,13 @@ object InnerTubeXStreams {
         override var cachedEtag = ""
     }
 
-    // Rebuilt when innertube recreates its HTTP client (a proxy change), as Metrolist does.
     @Synchronized
-    private fun extractor(): InnerTubeExtractor {
+    private fun extractor(): InnerTubeExtractor = built ?: run {
         val t = com.metrolist.innertube.YouTube.extractionTransport()
-        bundle?.takeIf { it.generation == t.generation }?.let { return it.extractor }
         val store = RemotePlayerConfigStore(t.httpClient, configRepository, InnerTubeLogger.NONE)
         val cipher = YouTubeCipherService(t.httpClient, store, InnerTubeLogger.NONE)
         val parser = YtConfigParserImpl(t.httpClient, t.innerTube, store, InnerTubeLogger.NONE, cipher)
-        return InnerTubeExtractor(parser, cipher, t.innerTube, tokenProvider = tokenProvider).also { bundle = Bundle(t.generation, it) }
+        InnerTubeExtractor(parser, cipher, t.innerTube, tokenProvider = tokenProvider).also { built = it }
     }
 
     /** Blocking. Throws [StreamResolveException] with a plain reason ("This track is age-restricted.") on refusal. */

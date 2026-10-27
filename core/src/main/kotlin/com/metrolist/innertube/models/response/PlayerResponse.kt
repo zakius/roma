@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
  * PlayerResponse with [com.metrolist.innertube.models.YouTubeClient.WEB_REMIX] client
  */
 @Serializable
-data class PlayerResponse(
+class PlayerResponse(
     val responseContext: ResponseContext,
     val playabilityStatus: PlayabilityStatus,
     val playerConfig: PlayerConfig?,
@@ -19,30 +19,30 @@ data class PlayerResponse(
     val playbackTracking: PlaybackTracking?,
 ) {
     @Serializable
-    data class PlayabilityStatus(
+    class PlayabilityStatus(
         val status: String,
         val reason: String?,
     )
 
     @Serializable
-    data class PlayerConfig(
+    class PlayerConfig(
         val audioConfig: AudioConfig,
     ) {
         @Serializable
-        data class AudioConfig(
+        class AudioConfig(
             val loudnessDb: Double?,
             val perceptualLoudnessDb: Double?,
         )
     }
 
     @Serializable
-    data class StreamingData(
+    class StreamingData(
         val formats: List<Format>?,
         val adaptiveFormats: List<Format>,
         val expiresInSeconds: Int,
     ) {
         @Serializable
-        data class Format(
+        class Format(
             val itag: Int,
             val url: String?,
             val mimeType: String,
@@ -70,7 +70,7 @@ data class PlayerResponse(
                 get() = audioTrack?.isAutoDubbed == null
 
             @Serializable
-            data class AudioTrack(
+            class AudioTrack(
                 val displayName: String?,
                 val id: String?,
                 val isAutoDubbed: Boolean?,
@@ -79,7 +79,7 @@ data class PlayerResponse(
     }
 
     @Serializable
-    data class VideoDetails(
+    class VideoDetails(
         val videoId: String,
         val title: String?,
         val author: String?,
@@ -91,7 +91,7 @@ data class PlayerResponse(
     )
 
     @Serializable
-    data class PlaybackTracking(
+    class PlaybackTracking(
         @SerialName("videostatsPlaybackUrl")
         val videostatsPlaybackUrl: VideostatsPlaybackUrl?,
         @SerialName("videostatsWatchtimeUrl")
@@ -100,17 +100,17 @@ data class PlayerResponse(
         val atrUrl: AtrUrl?,
     ) {
         @Serializable
-        data class VideostatsPlaybackUrl(
+        class VideostatsPlaybackUrl(
             @SerialName("baseUrl")
             val baseUrl: String?,
         )
         @Serializable
-        data class VideostatsWatchtimeUrl(
+        class VideostatsWatchtimeUrl(
             @SerialName("baseUrl")
             val baseUrl: String?,
         )
         @Serializable
-        data class AtrUrl(
+        class AtrUrl(
             @SerialName("baseUrl")
             val baseUrl: String?,
         )

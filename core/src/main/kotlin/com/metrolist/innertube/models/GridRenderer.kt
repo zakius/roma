@@ -3,23 +3,23 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class GridRenderer(
+class GridRenderer(
     val header: Header?,
     val items: List<Item>,
     val continuations: List<Continuation>?,
 ) {
     @Serializable
-    data class Header(
+    class Header(
         val gridHeaderRenderer: GridHeaderRenderer,
     ) {
         @Serializable
-        data class GridHeaderRenderer(
+        class GridHeaderRenderer(
             val title: Runs,
         )
     }
 
     @Serializable
-    data class Item(
+    class Item(
         val musicNavigationButtonRenderer: MusicNavigationButtonRenderer?,
         val musicTwoRowItemRenderer: MusicTwoRowItemRenderer?,
     )

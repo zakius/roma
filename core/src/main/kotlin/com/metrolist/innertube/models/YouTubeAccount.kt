@@ -7,7 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 
-data class YouTubeAccount(
+class YouTubeAccount(
     val name: String,
     val byline: String?,
     val channelHandle: String?,

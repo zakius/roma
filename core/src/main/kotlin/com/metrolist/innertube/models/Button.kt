@@ -3,11 +3,11 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Button(
+class Button(
     val buttonRenderer: ButtonRenderer,
 ) {
     @Serializable
-    data class ButtonRenderer(
+    class ButtonRenderer(
         val text: Runs,
         val navigationEndpoint: NavigationEndpoint?,
         val command: NavigationEndpoint?,

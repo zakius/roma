@@ -3,15 +3,15 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class ContinuationItemRenderer(
+class ContinuationItemRenderer(
     val continuationEndpoint: ContinuationEndpoint?,
 ) {
     @Serializable
-    data class ContinuationEndpoint(
+    class ContinuationEndpoint(
         val continuationCommand: ContinuationCommand?,
     ) {
         @Serializable
-        data class ContinuationCommand(
+        class ContinuationCommand(
             val token: String?,
         )
     }

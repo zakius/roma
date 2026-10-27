@@ -10,8 +10,10 @@ import com.metrolist.innertubex.InnerTubeHttpException
 import com.metrolist.innertubex.models.response.PlayerResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.cache.HttpCache
+import io.ktor.client.plugins.cache.storage.FileStorage
 import io.ktor.client.plugins.compression.ContentEncoding
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
@@ -34,9 +36,7 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
-import java.net.Proxy
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 /**
  * Compatibility facade that keeps Metrolist's parsed response models while InnerTubeX owns
@@ -45,9 +45,7 @@ import java.util.concurrent.TimeUnit
 class InnerTube(
     client: HttpClient? = null,
 ) {
-    private var configuredProxy: Proxy? = null
-    private var configuredProxyAuth: String? = null
-    // Built on first use, not here: Ktor, OkHttp and InnerTubeX take tens of ms to set up, and roma sets the session
+    // Built on first use, not here: Ktor and InnerTubeX take tens of ms to set up, and roma sets the session
     // on the main thread at start. Settings made before then wait in [pending] and are applied when it's built.
     private val givenClient = client
     @Volatile private var built: InnerTubeX? = null
@@ -70,12 +68,10 @@ class InnerTube(
 
     @Synchronized
     private fun configure(f: (InnerTubeX) -> Unit) { built?.let(f) ?: pending.add(f) }
-    private var transportGeneration = 0L
 
     class ExtractionTransport internal constructor(
         val innerTube: InnerTubeX,
         val httpClient: HttpClient,
-        val generation: Long,
     )
 
     var locale: YouTubeLocale
@@ -108,22 +104,6 @@ class InnerTube(
             configure { it.cookie = value }
         }
 
-    var proxy: Proxy?
-        get() = configuredProxy
-        set(value) {
-            if (configuredProxy == value) return
-            configuredProxy = value
-            recreateTransport()
-        }
-
-    var proxyAuth: String?
-        get() = configuredProxyAuth
-        set(value) {
-            if (configuredProxyAuth == value) return
-            configuredProxyAuth = value
-            if (configuredProxy != null) recreateTransport()
-        }
-
     var useLoginForBrowse: Boolean
         get() = innerTubeX.useLoginForBrowse
         set(value) {
@@ -131,38 +111,15 @@ class InnerTube(
         }
 
     @Synchronized
-    private fun recreateTransport() {
-        if (built == null) return // the first build reads the proxy
-        val session = innerTubeX.sessionSnapshot()
-        innerTubeX.close()
-        httpClient.close()
-        httpClient = createClient()
-        innerTubeX =
-            InnerTubeX(httpClient).also { replacement ->
-                replacement.locale = session.locale
-                replacement.replaceSession(
-                    cookie = session.cookie,
-                    visitorData = session.visitorData,
-                    dataSyncId = session.dataSyncId,
-                    authUser = session.authUser,
-                    useLoginForBrowse = session.useLoginForBrowse,
-                )
-                replacement.regionOverrideActive = session.regionOverrideActive
-            }
-        transportGeneration++
-    }
-
-    @Synchronized
     fun extractionTransport(): ExtractionTransport =
         ExtractionTransport(
             innerTube = innerTubeX,
             httpClient = httpClient,
-            generation = transportGeneration,
         )
 
     @OptIn(ExperimentalSerializationApi::class)
     private fun createClient() =
-        HttpClient(OkHttp) {
+        HttpClient(Android) {
             // InnerTubeX handles endpoint-specific status validation and transient retries.
             expectSuccess = false
 
@@ -181,25 +138,18 @@ class InnerTube(
                 deflate(0.8F)
             }
 
+            // Android's HttpURLConnection: HTTP/1.1 only, which measured the same as OkHttp's HTTP/2 for Home's requests
+            // and covers.
             engine {
-                config {
-                    connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
-                    connectTimeout(30, TimeUnit.SECONDS)
-                    readTimeout(60, TimeUnit.SECONDS)
-                    writeTimeout(60, TimeUnit.SECONDS)
-                    protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))
-                    retryOnConnectionFailure(true)
-                    cache(okhttp3.Cache(File(System.getProperty("java.io.tmpdir"), "http_cache"), 50L * 1024L * 1024L))
-                    configuredProxy?.let(::proxy)
-                    configuredProxyAuth?.let { auth ->
-                        proxyAuthenticator { _, response ->
-                            response.request
-                                .newBuilder()
-                                .header("Proxy-Authorization", auth)
-                                .build()
-                        }
-                    }
-                }
+                connectTimeout = 30_000
+                socketTimeout = 60_000
+            }
+
+            // On disk, so a new process revalidates InnerTubeX's 3 MB player script instead of downloading it again.
+            install(HttpCache) {
+                val dir = FileStorage(File(System.getProperty("java.io.tmpdir"), "ktor_cache"))
+                publicStorage(dir)
+                privateStorage(dir)
             }
 
             install(HttpTimeout) {

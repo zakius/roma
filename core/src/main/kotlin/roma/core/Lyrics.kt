@@ -12,10 +12,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.Base64
@@ -354,16 +350,9 @@ fun withTranslation(lines: List<Line>, translationLrc: String?): List<Line> {
 
 // ---- Providers ----
 
-private val http = OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
-
 /** Throws on an HTTP error, so a provider that couldn't answer isn't taken for one that has no lyrics. */
-private fun get(url: String, vararg headers: Pair<String, String>): String = call(Request.Builder().url(url), headers)
-
-private fun call(b: Request.Builder, headers: Array<out Pair<String, String>>): String {
-    if (headers.none { it.first == "User-Agent" }) b.header("User-Agent", "Mozilla/5.0 roma")
-    for ((k, v) in headers) b.header(k, v)
-    http.newCall(b.build()).execute().use { r -> if (r.isSuccessful) return r.body.string() else throw IOException("HTTP ${r.code}") }
-}
+private fun get(url: String, vararg headers: Pair<String, String>, body: String? = null): String =
+    httpText(url, body?.toByteArray(), mapOf("User-Agent" to "Mozilla/5.0 roma") + headers, timeoutMs = 12_000)
 
 private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 private fun JsonElement?.str(): String? = (this as? JsonPrimitive)?.takeIf { it.isString || it.content != "null" }?.content
@@ -484,8 +473,7 @@ object YouTubeLyrics : LyricsProvider {
     /** Null when the mobile response has no timedLyricsModel; plain lines when it has text without cueRange. */
     fun timed(browseId: String): Lyrics? {
         val body = """{"context":{"client":{"clientName":"ANDROID_MUSIC","clientVersion":"7.21.50","androidSdkVersion":34,"hl":"en"}},"browseId":"$browseId"}"""
-        val req = Request.Builder().url("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false").post(body.toRequestBody("application/json".toMediaType()))
-        val root = Json.parseToJsonElement(call(req, mobile)).obj()
+        val root = Json.parseToJsonElement(get("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false", *mobile, "Content-Type" to "application/json", body = body)).obj()
         val data = listOf("contents", "elementRenderer", "newElement", "type", "componentType", "model", "timedLyricsModel", "lyricsData")
             .fold(root as JsonElement?) { e, k -> e.obj()?.get(k) }.obj() ?: return null
         val rows = data["timedLyricsData"].arr()?.mapNotNull { it.obj() } ?: return null

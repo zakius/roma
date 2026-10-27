@@ -3,12 +3,12 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Runs(
+class Runs(
     val runs: List<Run>?,
 )
 
 @Serializable
-data class Run(
+class Run(
     val text: String,
     val navigationEndpoint: NavigationEndpoint?,
 )

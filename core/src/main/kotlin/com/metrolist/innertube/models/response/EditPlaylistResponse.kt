@@ -3,6 +3,6 @@ package com.metrolist.innertube.models.response
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class EditPlaylistResponse(
+class EditPlaylistResponse(
     val newHeader: BrowseResponse.Header?,
 )

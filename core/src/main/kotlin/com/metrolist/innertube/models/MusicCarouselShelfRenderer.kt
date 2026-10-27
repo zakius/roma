@@ -3,18 +3,18 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class MusicCarouselShelfRenderer(
+class MusicCarouselShelfRenderer(
     val header: Header?,
     val contents: List<Content>,
     val itemSize: String,
     val numItemsPerColumn: Int?,
 ) {
     @Serializable
-    data class Header(
+    class Header(
         val musicCarouselShelfBasicHeaderRenderer: MusicCarouselShelfBasicHeaderRenderer,
     ) {
         @Serializable
-        data class MusicCarouselShelfBasicHeaderRenderer(
+        class MusicCarouselShelfBasicHeaderRenderer(
             val strapline: Runs?,
             val title: Runs,
             val thumbnail: ThumbnailRenderer?,
@@ -23,7 +23,7 @@ data class MusicCarouselShelfRenderer(
     }
 
     @Serializable
-    data class Content(
+    class Content(
         val musicTwoRowItemRenderer: MusicTwoRowItemRenderer?,
         val musicResponsiveListItemRenderer: MusicResponsiveListItemRenderer?,
         val musicMultiRowListItemRenderer: MusicMultiRowListItemRenderer?,

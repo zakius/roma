@@ -20,7 +20,7 @@ import kotlinx.serialization.json.JsonNames
  * Appears in quick picks, search results, table items, etc.
  */
 @Serializable
-data class MusicResponsiveListItemRenderer(
+class MusicResponsiveListItemRenderer(
     val badges: List<Badges>?,
     val fixedColumns: List<FlexColumn>?,
     val flexColumns: List<FlexColumn>,
@@ -111,36 +111,36 @@ data class MusicResponsiveListItemRenderer(
                 ?.playNavigationEndpoint?.watchEndpoint?.playlistSetVideoId
 
     @Serializable
-    data class FlexColumn(
+    class FlexColumn(
         @JsonNames("musicResponsiveListItemFixedColumnRenderer")
         val musicResponsiveListItemFlexColumnRenderer: MusicResponsiveListItemFlexColumnRenderer,
     ) {
         @Serializable
-        data class MusicResponsiveListItemFlexColumnRenderer(
+        class MusicResponsiveListItemFlexColumnRenderer(
             val text: Runs?,
         )
     }
 
     @Serializable
-    data class PlaylistItemData(
+    class PlaylistItemData(
         val playlistSetVideoId: String?,
         val videoId: String,
     )
 
     @Serializable
-    data class Overlay(
+    class Overlay(
         val musicItemThumbnailOverlayRenderer: MusicItemThumbnailOverlayRenderer,
     ) {
         @Serializable
-        data class MusicItemThumbnailOverlayRenderer(
+        class MusicItemThumbnailOverlayRenderer(
             val content: Content,
         ) {
             @Serializable
-            data class Content(
+            class Content(
                 val musicPlayButtonRenderer: MusicPlayButtonRenderer,
             ) {
                 @Serializable
-                data class MusicPlayButtonRenderer(
+                class MusicPlayButtonRenderer(
                     val playNavigationEndpoint: NavigationEndpoint?,
                 )
             }

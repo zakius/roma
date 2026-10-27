@@ -1,6 +1,5 @@
 package com.zakius.roma
 
-import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -21,16 +20,6 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -49,9 +38,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
-import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.runtime.snapshotFlow
@@ -60,8 +46,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import roma.core.LastFm
-import coil3.toBitmap
-import coil3.request.allowHardware
 
 /** A page opened from a list: an album, playlist or artist, or the sign-in page. [fromPlayer]: Back returns to the player. */
 class Page(val kind: String, val id: String, val fromPlayer: Boolean = false)
@@ -97,8 +81,6 @@ object Nav {
 }
 
 class MainActivity : ComponentActivity() {
-    private var controller: ListenableFuture<MediaController>? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // The splash goes the moment roma's first frame is ready, instead of after Android's fade-out (about 130 ms).
@@ -137,14 +119,13 @@ class MainActivity : ComponentActivity() {
         handleLastFm(intent)
     }
 
-    // Binding a controller starts the service, which then shows the media notification while playing. After the first
-    // frame: bound from onStart, the service and its media session were created before roma's first frame.
+    // The media session runs while roma is open, so the system's controls have it. After the first frame: started from
+    // onStart, the service and its media session were created before roma's first frame.
     override fun onStart() {
         super.onStart()
         Home.start() // back in the foreground: a Home older than 30 minutes loads again behind the shown one
         window.decorView.post {
-            if (controller == null && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))
-                controller = MediaController.Builder(this, SessionToken(this, ComponentName(this, PlaybackService::class.java))).buildAsync()
+            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) PlaybackService.start(this)
         }
     }
 
@@ -154,11 +135,6 @@ class MainActivity : ComponentActivity() {
         window.decorView.post { Dictionary.ensure(this) } // package manager calls, and maybe a dialog: after the first frame
     }
 
-    override fun onStop() {
-        controller?.let { MediaController.releaseFuture(it) }
-        controller = null
-        super.onStop()
-    }
 
     // Last.fm's browser auth returns to roma://lastfm?token=...
     private fun handleLastFm(intent: Intent?) {
@@ -205,8 +181,7 @@ fun Theme(content: @Composable () -> Unit) {
 
 /** The art's most colourful average: pixels weighted by saturation, so a grey background doesn't wash it out. */
 private suspend fun artColor(c: android.content.Context, thumb: String): Int? {
-    val request = coil3.request.ImageRequest.Builder(c).data(bigThumb(thumb)).size(24).allowHardware(false).build() // pixels are read below
-    val bitmap = (coil3.SingletonImageLoader.get(c).execute(request) as? coil3.request.SuccessResult)?.image?.toBitmap() ?: return null
+    val bitmap = Images.load(bigThumb(thumb), 24, exact = true, software = true) ?: return null // pixels are read below
     var r = 0.0; var g = 0.0; var b = 0.0; var w = 0.0
     val hsl = FloatArray(3)
     for (x in 0 until bitmap.width) for (y in 0 until bitmap.height) {
@@ -220,7 +195,7 @@ private suspend fun artColor(c: android.content.Context, thumb: String): Int? {
 }
 
 /** The scheme's accents in the art's hue, at the lightness the theme needs for contrast. */
-private fun accentScheme(s: androidx.compose.material3.ColorScheme, seed: Int, dark: Boolean): androidx.compose.material3.ColorScheme {
+private fun accentScheme(s: ColorScheme, seed: Int, dark: Boolean): ColorScheme {
     val hsl = FloatArray(3)
     androidx.core.graphics.ColorUtils.colorToHSL(seed, hsl)
     fun tone(sat: Float, light: Float) = androidx.compose.ui.graphics.Color(androidx.core.graphics.ColorUtils.HSLToColor(floatArrayOf(hsl[0], sat, light)))

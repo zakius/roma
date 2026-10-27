@@ -3,7 +3,7 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class MusicShelfRenderer(
+class MusicShelfRenderer(
     val title: Runs?,
     val contents: List<Content>?,
     val continuations: List<Continuation>?,
@@ -11,7 +11,7 @@ data class MusicShelfRenderer(
     val moreContentButton: Button?,
 ) {
     @Serializable
-    data class Content(
+    class Content(
         val musicResponsiveListItemRenderer: MusicResponsiveListItemRenderer?,
         val musicMultiRowListItemRenderer: MusicMultiRowListItemRenderer?,
         val continuationItemRenderer: ContinuationItemRenderer?,

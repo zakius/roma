@@ -3,7 +3,7 @@ package com.metrolist.innertube.models
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class MusicCardShelfRenderer(
+class MusicCardShelfRenderer(
     val title: Runs,
     val subtitle: Runs,
     val thumbnail: ThumbnailRenderer,
@@ -14,17 +14,17 @@ data class MusicCardShelfRenderer(
     val subtitleBadges: List<Badges>?,
 ) {
     @Serializable
-    data class Header(
+    class Header(
         val musicCardShelfHeaderBasicRenderer: MusicCardShelfHeaderBasicRenderer,
     ) {
         @Serializable
-        data class MusicCardShelfHeaderBasicRenderer(
+        class MusicCardShelfHeaderBasicRenderer(
             val title: Runs,
         )
     }
 
     @Serializable
-    data class Content(
+    class Content(
         val musicResponsiveListItemRenderer: MusicResponsiveListItemRenderer?,
     )
 }

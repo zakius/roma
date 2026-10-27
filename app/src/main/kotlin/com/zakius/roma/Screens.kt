@@ -48,22 +48,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
@@ -93,7 +77,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import coil3.compose.AsyncImage
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
 import kotlinx.coroutines.CoroutineScope
@@ -165,7 +148,7 @@ fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: 
         Modifier.fillMaxWidth().lookUpOnPress(s).clickable(onClick = onClick).padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(shownThumb(s.thumb, 48.dp), null, Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
+        Thumb(shownThumb(s.thumb, 48.dp), 48.dp, Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             val style = if (highlight) MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) else MaterialTheme.typography.bodyLarge
@@ -180,7 +163,7 @@ fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: 
 @Composable
 fun ItemRow(item: Item, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().lookUpOnPress(item.playable).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(shownThumb(item.thumb, 56.dp), null, Modifier.size(56.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(4.dp)))
+        Thumb(shownThumb(item.thumb, 56.dp), 56.dp, Modifier.size(56.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(4.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Name(item.title, Store.listMode)
@@ -192,7 +175,7 @@ fun ItemRow(item: Item, onClick: () -> Unit) {
 @Composable
 private fun Card(item: Item, onClick: () -> Unit) {
     Column(Modifier.width(140.dp).lookUpOnPress(item.playable).clickable(onClick = onClick).padding(6.dp)) {
-        AsyncImage(shownThumb(item.thumb, 128.dp), null, Modifier.size(128.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
+        Thumb(shownThumb(item.thumb, 128.dp), 128.dp, Modifier.size(128.dp).clip(if (item.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
         Spacer(Modifier.height(4.dp))
         Name(item.title, Store.listMode, MaterialTheme.typography.bodyMedium)
         if (item.subtitle.latin.isNotBlank()) Text(item.subtitle.latin, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -216,7 +199,6 @@ fun openItem(item: Item) {
     } else Nav.open(Page(item.kind, item.id))
 }
 
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 /** The ⋯ menu of a song: the same items in the same order everywhere; unavailable ones are dimmed. */
 @Composable
 fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
@@ -227,7 +209,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     val context = LocalContext.current
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Fully open at once: half open, the bans at the bottom would need a drag first.
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(bottom = 24.dp)) {
             Column(Modifier.padding(horizontal = 24.dp)) {
                 Name(s.title, "both", MaterialTheme.typography.titleMedium)
@@ -564,9 +546,8 @@ object Home {
     // rebuild (App) slowed that, and the first frame waits for it.
     private fun decodeFirstPictures(c: android.content.Context, mixes: List<Item>?, shelves: List<Section>?) {
         val px = (128 * c.resources.displayMetrics.density).roundToInt()
-        val loader = coil3.SingletonImageLoader.get(c)
         (mixes.orEmpty().take(4) + shelves.orEmpty().take(4).flatMap { it.items.take(4) }).forEach { item ->
-            thumbAt(item.thumb, px)?.let { loader.enqueue(coil3.request.ImageRequest.Builder(c).data(it).build()) }
+            thumbAt(item.thumb, px)?.let { Images.prefetch(it, px) }
         }
     }
 
@@ -844,7 +825,7 @@ fun PageScreen(p: Page) {
         LazyColumn(Modifier.fillMaxSize(), list) {
             item {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(shownThumb(d.thumb, 96.dp), null, Modifier.size(96.dp).clip(if (p.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
+                    Thumb(shownThumb(d.thumb, 96.dp), 96.dp, Modifier.size(96.dp).clip(if (p.kind == "artist") CircleShape else RoundedCornerShape(6.dp)))
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
                         Name(d.title, Store.listMode, MaterialTheme.typography.titleLarge)
@@ -1000,7 +981,7 @@ fun SettingsScreen() {
         items(SCRIPTS) { (k, label) ->
             val read = Store.readScripts
             Row(Modifier.fillMaxWidth().clickable { Store.setReads(k, k !in read) }.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.Checkbox(k in read, null, Modifier.padding(end = 8.dp))
+                Checkbox(k in read, null, Modifier.padding(end = 8.dp))
                 Text(label)
             }
         }
@@ -1116,14 +1097,14 @@ fun SetupScreen() {
         Text("The others show as written. You can change this in Settings.", Modifier.padding(top = 8.dp, bottom = 16.dp), style = MaterialTheme.typography.bodyMedium)
         SCRIPTS.forEach { (k, label) ->
             Row(Modifier.fillMaxWidth().clickable { Store.set(Store.READ_KEY, (if (k in read) read - k else read + k).joinToString(",")) }, verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.Checkbox(k !in read, null, Modifier.padding(end = 8.dp))
+                Checkbox(k !in read, null, Modifier.padding(end = 8.dp))
                 Column {
                     Text(label)
                     if (k == "ja") Text(if (Dictionary.installed) "Dictionary installed" else "Needs the Japanese dictionary: ${Dictionary.DOWNLOAD}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
-        androidx.compose.material3.Button(
+        Button(
             onClick = {
                 Store.set("setup.done", true)
                 if ("ja" !in read) Dictionary.install(Store.context)

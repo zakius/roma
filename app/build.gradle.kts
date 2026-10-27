@@ -17,8 +17,8 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 40
-        versionName = "0.1.39"
+        versionCode = 41
+        versionName = "0.1.40"
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.
         buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
@@ -69,16 +69,11 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.ui:ui:1.12.1")
     implementation("androidx.compose.foundation:foundation:1.12.1")
-    implementation("androidx.compose.material3:material3:1.4.0")
     implementation("androidx.compose.material:material-icons-core:1.7.8")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
 
     implementation("androidx.media3:media3-exoplayer:1.11.1")
-    implementation("androidx.media3:media3-session:1.11.1")
-    implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1") // only for its player icons
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
-    implementation("io.coil-kt.coil3:coil-compose:3.6.3")
-    implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
 }

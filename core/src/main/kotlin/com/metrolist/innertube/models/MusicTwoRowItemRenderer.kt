@@ -15,7 +15,7 @@ import kotlinx.serialization.Serializable
  * Item type: song, video, album, playlist, artist
  */
 @Serializable
-data class MusicTwoRowItemRenderer(
+class MusicTwoRowItemRenderer(
     val title: Runs,
     val subtitle: Runs?,
     val subtitleBadges: List<Badges>?,
