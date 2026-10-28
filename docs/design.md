@@ -43,8 +43,9 @@ Step 0, before writing code: check that both libraries are maintained, that they
 - Han text, Japanese or Chinese? Decide in this order:
   1. Kana in the string means Japanese.
   2. Kana in a sibling field (artist, album) means Japanese.
-  3. Otherwise use the user's default language (setting).
-  - In lyrics this is decided once per song, from the whole lyrics: kana in any line makes every line Japanese, so a kanji-only line in a J-pop song by a Latin-named artist is still read as Japanese.
+  3. With Japanese as the default, Chinese evidence in the string or a sibling means Chinese (`Romanizer.looksChinese`), from standards and the dictionary, never from a list of words: a Han character outside JIS X 0208, Japan's standard character set (說, 你, every Simplified form); a Han word the Japanese dictionary doesn't know (瓷); or three one-character Han words in a row, since Chinese names and phrases fall apart into characters (周|杰|倫, 不|會|飛) where Japanese compounds are dictionary words. Variant forms Japanese names use (﨑, 𠮷) are never evidence. Measured 2026-10-28: none of 120 Japanese titles and names without kana matched; about 60% of Chinese titles did, and most Chinese artist names, which then decide all their songs. The dictionary's two rules need the dictionary.
+  4. Otherwise use the user's default language (setting). Known limit: a Chinese title that is also a Japanese word (晴天, 江南), by an artist with no evidence, is read as Japanese.
+  - In lyrics this is decided once per song, from the whole lyrics: kana in any line makes every line Japanese, so a kanji-only line in a J-pop song by a Latin-named artist is still read as Japanese; otherwise Chinese evidence in any line makes every line Chinese.
 - Capitalization:
   - Titles and names get title case. Japanese particles (part of speech 助詞 in Sudachi, and だ as に/な/で after a na-adjective) stay lowercase: "Yoru ni Kakeru", "Kimi no Na wa". Korean, Chinese and other caseless scripts capitalize every word ("Qíng Tiān": Chinese stays one word per syllable). Cyrillic and Greek keep the original's capitals ("Gruppa krovi").
   - The first word is always capitalized, in any script (βίος → "Bios", "の歌" → "No uta").
