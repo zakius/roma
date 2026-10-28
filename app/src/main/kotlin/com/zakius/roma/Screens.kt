@@ -286,7 +286,9 @@ val Song.romanizable get() = !title.isLatin || artists.any { !it.name.isLatin } 
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun CorrectDialog(s: Song, onDone: () -> Unit) {
+fun CorrectDialog(song: Song, onDone: () -> Unit) {
+    // The song it was opened for, even if the player moves on to the next one meanwhile.
+    val s = remember { song }
     // Only names with something to romanize, each saying what it is: a title and its album are often the same string.
     val named = (listOf("Title" to s.title) + s.artists.map { "Artist" to it.name } + listOfNotNull(s.album?.name?.let { "Album" to it })).filter { !it.second.isLatin }
     val fields = named.map { it.second }
@@ -298,7 +300,7 @@ fun CorrectDialog(s: Song, onDone: () -> Unit) {
     // The field's words, each a button that opens its reading: only when there is more than one to choose from.
     val words = remember(field) {
         val f = fields[field]
-        if (f.isLatin) emptyList() else Store.romanizer.pieces(f.original, fields.map { it.original }).map { it.trim() }.filter { Romanizer.hasNonLatin(it) }
+        Store.romanizer.pieces(f.original, fields.map { it.original }).map { it.trim() }.filter { Romanizer.hasNonLatin(it) }
     }
     AlertDialog(
         onDismissRequest = onDone,
@@ -312,7 +314,7 @@ fun CorrectDialog(s: Song, onDone: () -> Unit) {
                 }
                 HorizontalDivider()
                 Choice("Only this song", scope == "song") { scope = "song" }
-                if (s.firstArtistId != null) Choice("This artist's songs", scope == "artist") { scope = "artist" }
+                Choice("This artist's songs", scope == "artist", enabled = s.firstArtistId != null) { scope = "artist" }
                 Choice("Everywhere", scope == "text") { scope = "text" }
                 OutlinedTextField(latin, { latin = it }, label = "Latin form (empty: automatic)")
             }
@@ -392,9 +394,9 @@ fun TextInputDialog(title: String, initial: String, onDone: () -> Unit, onSave: 
 }
 
 @Composable
-private fun Choice(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected, onClick)
+private fun Choice(label: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(enabled, onClick = onClick).dim(if (enabled) 1f else 0.4f).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected, onClick.takeIf { enabled })
         Text(label)
     }
 }
@@ -1224,7 +1226,10 @@ private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
         }
     }
     item { Text("All are asked at once. YouTube Music's text is the reference: word timing that matches it wins, then its own timed lyrics, then matching line timing, then its plain text. The order above only matters when YouTube Music has no lyrics.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
-    item { Row1("Search lyrics again for this song", "After changing the providers", enabled = Playback.current()?.song != null) { Playback.refetchLyrics() } }
+    item {
+        Playback.tick // the song can start or end while this page is open
+        Row1("Search lyrics again for this song", "After changing the providers", enabled = Playback.current()?.song != null) { Playback.refetchLyrics() }
+    }
 }
 
 @Composable
@@ -1257,7 +1262,7 @@ private fun LastFmSettings() {
     LazyColumn(Modifier.fillMaxSize()) {
         item { Header("Last.fm") }
         item { Row1("API key", Store.str("lastfm.key", "").ifBlank { "Not set" }) { editing = "lastfm.key" to "Last.fm API key" } }
-        if (Store.str("lastfm.key", "").isBlank()) item {
+        item {
             Row1("Create an API key", "Opens last.fm/api/account/create; it gives the key and the shared secret") {
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.last.fm/api/account/create")))
             }

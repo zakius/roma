@@ -155,7 +155,8 @@ fun PlayerScreen() {
                     }
                 }
             }
-            SleepChip(Modifier.align(Alignment.TopCenter)) { sleepOpen = true }
+            // Top left, clear of Translate on the right even with a large font; the lists start below the chips.
+            SleepChip(Modifier.align(Alignment.TopStart)) { sleepOpen = true }
             val line = if (seekPreview >= 0 && lyrics != null && lyrics.synced) lyrics.lines.lastOrNull { it.startMs <= seekPreview } else null
             if (line != null && line.text.isNotBlank()) SeekPreview(line, Modifier.align(Alignment.BottomCenter))
         }
@@ -544,7 +545,7 @@ private fun QueueView() {
     if (queued.isEmpty() && radio.isEmpty()) rows.add((if (Store.stopAtEnd) "Nothing next: autoplay is off" else "Nothing next yet") to -1)
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     PrefetchCovers(all.drop(cur + 1).map { it.song.thumb }, 48.dp, list)
-    Box { LazyColumn(Modifier.fillMaxSize(), list) {
+    Box { LazyColumn(Modifier.fillMaxSize().padding(top = CHIP_STRIP), list) {
         itemsIndexed(rows, contentType = { _, (header, _) -> header == null }) { _, (header, i) ->
             if (header != null) {
                 Text(header, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
@@ -936,8 +937,9 @@ private fun CommentRow(s: ShownComment, list: CommentList, avatar: androidx.comp
     }
 }
 
-/** The top of the lyrics and comments, where the Translate and sleep chips sit. */
-private val CHIP_STRIP = 36.dp
+/** The top of the lyrics, comments and queue, where the Translate and sleep chips sit: a chip's height, which grows with the font. */
+private val CHIP_STRIP: androidx.compose.ui.unit.Dp
+    @Composable get() = with(LocalDensity.current) { MaterialTheme.typography.labelMedium.lineHeight.toDp() } + 20.dp
 
 @Composable
 fun Centered(text: String) {
