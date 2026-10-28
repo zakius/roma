@@ -1,6 +1,5 @@
 package com.metrolist.innertubex.models
 
-import com.metrolist.innertubex.models.response.GetTranscriptResponse
 import com.metrolist.innertubex.models.response.PlayerResponse
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
@@ -42,13 +41,3 @@ internal open class BoundedListSerializer<T>(
 /** Callers reject more than 2,048 formats in total; each list stops at that size while decoding. */
 internal object PlayerFormatListSerializer :
     BoundedListSerializer<PlayerResponse.StreamingData.Format>(PlayerResponse.StreamingData.Format.serializer(), 2_048)
-
-internal object TranscriptActionListSerializer :
-    BoundedListSerializer<GetTranscriptResponse.Action>(GetTranscriptResponse.Action.serializer(), 64)
-
-/** Matches the 20,000-cue limit applied by transcript parsing. */
-internal object TranscriptCueGroupListSerializer :
-    BoundedListSerializer<GetTranscriptResponse.CueGroup>(GetTranscriptResponse.CueGroup.serializer(), 20_000)
-
-internal object TranscriptCueListSerializer :
-    BoundedListSerializer<GetTranscriptResponse.Cue>(GetTranscriptResponse.Cue.serializer(), 64)

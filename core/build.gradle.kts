@@ -15,12 +15,9 @@ java {
 kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_21; optIn.add("kotlin.ExperimentalStdlibApi") } }
 
 dependencies {
-    // YouTube Music API: the vendored com.metrolist.innertube sources sit on top of InnerTubeX (vendored too).
-    api("io.ktor:ktor-client-core:3.6.0")
-    implementation("io.ktor:ktor-client-android:3.6.0")
-    implementation("io.ktor:ktor-client-content-negotiation:3.6.0")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.6.0")
-    implementation("io.ktor:ktor-client-encoding:3.6.0")
+    // YouTube Music API: the vendored com.metrolist.innertube sources sit on top of InnerTubeX (vendored too), over
+    // HttpURLConnection (Http.kt).
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     // Japanese words and readings. The dictionary isn't in the jar: see sudachiDict below.
     implementation("com.worksap.nlp:sudachi:0.8.2")
     // Sudachi's own trie, for roma's dictionary format (RomaDictionary.kt); the version Sudachi depends on.

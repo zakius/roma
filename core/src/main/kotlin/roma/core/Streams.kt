@@ -172,8 +172,7 @@ object InnerTubeXStreams {
 
     @Synchronized
     private fun fallback(): Fallback = built ?: run {
-        val t = com.metrolist.innertube.YouTube.extractionTransport()
-        Fallback(t.innerTube, t.httpClient, tokenProvider).also { built = it }
+        Fallback(com.metrolist.innertube.YouTube.extractionTransport(), tokenProvider).also { built = it }
     }
 
     /** Blocking. Throws [StreamResolveException] with a plain reason ("This track is age-restricted.") on refusal. */
