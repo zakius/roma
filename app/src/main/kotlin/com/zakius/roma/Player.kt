@@ -252,6 +252,29 @@ private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
     }
 }
 
+/**
+ * Top right of the lyrics, always there: Translate asks Google for this song's lyrics in the first translation
+ * language. Dimmed while it works, once the song has a translation in that language, when it has no lyrics, or when
+ * translations are switched off. Settings → Search lyrics again drops it.
+ */
+@Composable
+private fun TranslateChip(found: LyricsState, lyricsShown: Boolean, modifier: Modifier) {
+    val context = LocalContext.current
+    var busy by remember(found.songId) { mutableStateOf(false) }
+    val lang = Store.translationLanguages().first()
+    val enabled = !busy && lyricsShown && found.translations.none { it.language == lang }
+    Surface(modifier.padding(4.dp).dim(if (enabled) 1f else 0.38f), shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer) {
+        Text(
+            if (busy) "Translating…" else "Translate",
+            Modifier.clickable(enabled) {
+                busy = true
+                Playback.googleTranslate(found.songId) { msg -> busy = false; if (msg != null) android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show() }
+            }.padding(horizontal = 12.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
 /** The lyric line at the seek bar's drag position, over the bottom of the upper area: where the drag would land. */
 @Composable
 private fun SeekPreview(line: Line, modifier: Modifier) {
@@ -539,7 +562,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     val showTranslation = Store.bool("lyrics.layer.translation", true)
     val wantedLang = Store.str("lyrics.translationLang", "device")
     val shown = remember(found, showTranslation, wantedLang) {
-        attachTranslation(bare, if (showTranslation) pickTranslation(bare, found.translations, Store::translationWanted) else null)
+        attachTranslation(bare, if (showTranslation) pickTranslation(bare, found.translations, Store.translationLanguages()) else null)
     }
     val lines = shown.lines
     val synced = shown.synced
@@ -579,7 +602,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     var fixWord by remember { mutableStateOf<Pair<String, String>?>(null) } // word, its romaji in the line
     // At the start line the list is already in place, so this first run doesn't move it.
     LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = state) {
+    Box { LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = state, contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 28.dp)) {
         itemsIndexed(lines) { i, line ->
             val active = i == current
             val alpha = if (!synced || active) 1f else 0.45f
@@ -625,6 +648,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
             }
         }
     }
+    TranslateChip(found, lines.any { it.text.isNotBlank() } && showTranslation, Modifier.align(Alignment.TopEnd)) }
     fixWord?.let { (w, latin) -> if (songId != null) WordDialog(w, latin, songId) { fixWord = null } }
 }
 

@@ -74,7 +74,7 @@ interface LyricsProvider {
 class LyricsSearch(val result: LyricsResult?, val complete: Boolean)
 
 object LyricsProviders {
-    val all: List<LyricsProvider> = listOf(NetEase, KuGou, LrcLib, YouTubeLyrics)
+    val all: List<LyricsProvider> = listOf(NetEase, KuGou, LrcLib, LyricsPlus, YouTubeLyrics)
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "lyrics").apply { isDaemon = true } }
 
     /** Asks every provider at once, each for at most [timeoutMs], then picks by [chooseLyrics]. */
@@ -199,12 +199,12 @@ private fun translationOf(l: Lyrics): Translation? {
 }
 
 /**
- * The translation to show: one whose language is wanted, preferring the one from the same source as the lyrics,
- * then the first found.
+ * The translation to show: one in the first of the [wanted] languages that has any, preferring the one from the same
+ * source as the lyrics, then the first found.
  */
-fun pickTranslation(l: Lyrics, translations: List<Translation>, wanted: (String) -> Boolean): Translation? {
-    val ok = translations.filter { wanted(it.language) }
-    return ok.firstOrNull { l.source == it.source } ?: ok.firstOrNull()
+fun pickTranslation(l: Lyrics, translations: List<Translation>, wanted: List<String>): Translation? {
+    val ok = wanted.firstNotNullOfOrNull { lang -> translations.filter { it.language == lang }.ifEmpty { null } } ?: return null
+    return ok.firstOrNull { l.source == it.source } ?: ok.first()
 }
 
 /**
@@ -487,6 +487,46 @@ object KuGou : LyricsProvider {
 }
 
 /**
+ * LyricsPlus, the YouLy+ backend: free, no key. Its server searches Apple Music, QQ Music, Musixmatch and others by
+ * title, artist and duration and sends the best as JSON: word timing as syllables, sometimes an English translation
+ * per line. The source names the server's own source ("LyricsPlus · Apple"). 404 means nothing found.
+ */
+object LyricsPlus : LyricsProvider {
+    override val id = "lyricsplus"
+    override val name = "LyricsPlus"
+
+    // ponytail: the main server only; YouLy+ lists mirrors (lyricsplus.atomix.one, …) to try if it goes down
+    override fun fetch(q: LyricsQuery): Lyrics? {
+        val (code, body) = httpCall("https://lyricsplus.prjktla.my.id/v2/lyrics/get?title=${enc(q.title)}&artist=${enc(q.artist)}&duration=${q.durationSec}", headers = mapOf("User-Agent" to "Mozilla/5.0 roma"), timeoutMs = 12_000)
+        if (code == 404) return null
+        if (code != 200) throw IOException("HTTP $code")
+        return parse(body, q)
+    }
+
+    fun parse(body: String, q: LyricsQuery): Lyrics? {
+        val root = Json.parseToJsonElement(body).obj() ?: return null
+        val meta = root["metadata"].obj()
+        // The server names the song only for some sources; when it does, it must be this one.
+        meta?.get("title").str()?.let { if (!sameTitle(it, q.title)) return null }
+        fun ms(e: JsonElement?) = e.str()?.toDoubleOrNull()?.toLong() ?: 0
+        val lines = root["lyrics"].arr()?.mapNotNull { it.obj() }?.map { r ->
+            val words = r["syllabus"].arr().orEmpty().mapNotNull { it.obj() }
+                .map { s -> ms(s["time"]).let { t -> Word(t, t + ms(s["duration"]), s["text"].str() ?: "") } }
+                .filter { it.text.isNotEmpty() }
+            val text = if (words.isEmpty()) r["text"].str().orEmpty().trim() else words.joinToString("") { it.text }.trim()
+            Line(ms(r["time"]), text, words, r["translation"].obj()?.get("text").str()?.takeIf { it.isNotBlank() })
+        } ?: return null
+        // The server matched the song on its own: its timing must fit this recording, ending at most 45 s after it and
+        // not before its middle with over 90 s left (LastWave's bounds, LyricsRepository.plausibleDuration).
+        val end = lines.maxOfOrNull { l -> l.words.lastOrNull()?.endMs ?: l.startMs } ?: return null
+        val song = q.durationSec * 1000L
+        if (song >= 60_000 && end > 0 && end !in minOf(song / 2, song - 90_000)..song + 45_000) return null
+        val source = meta?.get("source").str()?.let { "$name · $it" } ?: name
+        return Lyrics(source, lines, lines.any { it.startMs > 0 })
+    }
+}
+
+/**
  * YouTube Music's own lyrics, as the Android app gets them: the lyrics browse ID through the ANDROID_MUSIC client
  * gives line timing (timedLyricsData with cueRange) when there is any, otherwise the plain text from the web client.
  * The source names YTM's own source ("Source: LyricFind").
@@ -515,5 +555,39 @@ object YouTubeLyrics : LyricsProvider {
         val synced = rows.all { it["cueRange"] != null }
         val lines = rows.map { Line(if (synced) it["cueRange"].obj()?.get("startTimeMilliseconds").str()?.toLongOrNull() ?: 0 else 0, it["lyricLine"].str() ?: "") }
         return if (lines.isEmpty()) null else Lyrics(source, lines, synced)
+    }
+}
+
+/**
+ * Google Translate through the free endpoint browser extensions use (translate_a/single): no key, unofficial, so it
+ * may change or stop. Only on the user's tap, per song, since it sends the lyrics to Google. Each distinct line is
+ * sent once, 40 to a request (Google takes 5,000 characters), each on its own line between private-use \uE000 marks,
+ * which Google keeps, so each translation lands on its own line.
+ */
+object GoogleTranslate {
+    const val SOURCE = "Google Translate"
+
+    /** The lyrics' layer in [lang]. Null when Google finds them already in that language; throws when it couldn't answer. */
+    fun layer(l: Lyrics, lang: String): Translation? {
+        val texts = l.lines.map { it.text.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (texts.isEmpty()) return null
+        val answers = texts.chunked(40).map { translate(it, lang) }
+        if (answers[0].second.substringBefore('-').equals(lang, ignoreCase = true)) return null
+        val byText = texts.zip(answers.flatMap { it.first }).toMap()
+        val lines = l.lines.filter { it.text.isNotBlank() }.map { line ->
+            // A line Google leaves as it was (a name, an English line in a J-pop song) gets no translation.
+            Line(line.startMs, line.text, translation = byText[line.text.trim()]?.takeIf { it.isNotBlank() && it != line.text.trim() })
+        }
+        return Translation(SOURCE, lang, lines, l.synced)
+    }
+
+    /** One batch: its translations in order, and the language Google detected. */
+    private fun translate(texts: List<String>, lang: String): Pair<List<String>, String> {
+        val form = "client=gtx&sl=auto&tl=${enc(lang)}&dt=t&q=${enc(texts.joinToString("\n\uE000\n"))}"
+        val root = Json.parseToJsonElement(get("https://translate.googleapis.com/translate_a/single", body = form)).jsonArray
+        val text = root[0].arr().orEmpty().joinToString("") { it.arr()?.getOrNull(0).str().orEmpty() }
+        val parts = text.split('\uE000').map { it.trim() }
+        if (parts.size != texts.size) throw IOException("Google Translate: ${parts.size} lines back for ${texts.size}")
+        return parts to (root.getOrNull(2).str() ?: "")
     }
 }

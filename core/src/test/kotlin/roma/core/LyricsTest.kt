@@ -45,6 +45,22 @@ class LyricsTest {
         assertEquals("it's \"A\" \\n", unescapeQuotes("it\\'s \\\"A\\\" \\n"))
     }
 
+    @Test fun lyricsPlus() {
+        val body = """{"type":"Word","metadata":{"source":"Apple","title":"Spring Day"},"lyrics":[
+            {"time":1000,"duration":2000,"text":"보고 싶다 (보고 싶다)","syllabus":[{"time":1000,"duration":500,"text":"보고 "},{"time":1500,"duration":500,"text":"싶다 "},{"time":2000,"duration":1000,"text":"(보고 싶다)","isBackground":true}],"translation":{"lang":"en","text":"I miss you"}},
+            {"time":4000,"duration":1000,"text":"Line only"}]}"""
+        val q = LyricsQuery("v", "Spring Day", "BTS", null, 0) // duration unknown: the timing isn't checked
+        val l = LyricsPlus.parse(body, q)!!
+        assertEquals("LyricsPlus · Apple", l.source)
+        assertEquals("보고 싶다 (보고 싶다)", l.lines[0].text)
+        assertEquals(listOf(1000L to 1500L, 1500L to 2000L, 2000L to 3000L), l.lines[0].words.map { it.startMs to it.endMs })
+        assertEquals("I miss you", l.lines[0].translation)
+        assertEquals("Line only", l.lines[1].text)
+        assertTrue(l.synced && l.wordLevel)
+        assertEquals(null, LyricsPlus.parse(body, LyricsQuery("v", "Lemon", "BTS", null, 0))) // the server matched another song
+        assertEquals(null, LyricsPlus.parse(body, LyricsQuery("v", "Spring Day", "BTS", null, 600))) // over at 0:05 of a 10-minute song
+    }
+
     @Test fun translationMerge() {
         val l = withTranslation(parseLrc("[00:01.00]君の声"), "[00:01.00]your voice")
         assertEquals("your voice", l[0].translation)
@@ -156,9 +172,11 @@ class LyricsChoiceTest {
         val en1 = Translation("LRCLIB", "en", emptyList(), true)
         val en2 = Translation("NetEase", "en", emptyList(), true)
         val l = synced("NetEase", JA)
-        assertEquals("NetEase", pickTranslation(l, listOf(zh, en1, en2)) { it == "en" }?.source)
-        assertEquals("LRCLIB", pickTranslation(synced("YTM", JA), listOf(zh, en1, en2)) { it == "en" }?.source)
-        assertEquals(null, pickTranslation(l, listOf(zh)) { it == "pl" })
+        assertEquals("NetEase", pickTranslation(l, listOf(zh, en1, en2), listOf("en"))?.source)
+        assertEquals("LRCLIB", pickTranslation(synced("YTM", JA), listOf(zh, en1, en2), listOf("en"))?.source)
+        assertEquals(null, pickTranslation(l, listOf(zh), listOf("pl")))
+        val pl = Translation(GoogleTranslate.SOURCE, "pl", emptyList(), true)
+        assertEquals("pl", pickTranslation(l, listOf(en2, pl), listOf("pl", "en"))?.language) // the device language before English
     }
 
     @Test fun parallelFindCachesOnlyCompleteSearches() {
