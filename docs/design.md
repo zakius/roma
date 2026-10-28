@@ -64,7 +64,7 @@ Step 0, before writing code: check that both libraries are maintained, that they
 - Overrides: the user can correct any string. Scope is this string, this song or this artist. Stored locally and exportable as one file.
 - Word readings (scope "word"): the reading of one word, in one song or everywhere (私 → watashi where the dictionary says watakushi). It applies inside any string, titles and lyric lines alike, wherever the word is a whole dictionary token or a run of whole tokens; never inside a longer token (私立 stays shiritsu). Japanese matches Sudachi tokens; other scripts match a word between spaces or a run of one script. A song's own reading wins over the everywhere one. Title and sentence case apply to it like any word. Set from a long-press on a lyric word or from the correction dialog's word buttons; listed in Settings and part of the export.
 - Scripts you read (setting, none by default): text only in those scripts shows as written, in lists, the player, the notification and the lyrics (no romanization line).
-- Display modes: Romanized, Both (Latin with the original small underneath), Ruby (reading above the original), Original. Defaults: lists show Both; the player shows the Latin title with the original underneath.
+- Display modes: Romanized, Both (Latin with the original small underneath), Ruby (reading above the original), Original. One setting places romanization everywhere: under the original (Both, and a line under each lyric line; the default), above each word (Ruby in lists, the player and lyrics), or custom, which shows a choice per surface: lists, the player (any of the four modes) and lyrics (a line under, or above each word). Someone who had set a per-surface choice before that setting existed starts on custom.
 - Search: the local index includes the romanized forms, so "kimi no" finds 君の声. Remote search sends the query as typed; YouTube's own spelling correction applies (see Search).
 
 ## Lyrics
@@ -121,6 +121,7 @@ Bottom block of the player, the same on the song, lyrics and queue views (only t
 - Long lists (library, album and playlist pages, the queue; over three screens) show a fast-scroll thumb on the right edge while they scroll and for 1.5 s after. Only then does it take touches, so the rows' ⋯ buttons under it work otherwise.
 - Display options, off by default: true black in dark mode (OLED), and an accent colour from the playing song's art (a saturation-weighted average of a 24 px copy; grey art keeps the usual colours).
 - Large system fonts: the fixed rows (player controls, nav bar) follow the font size up to 1.3×, so their labels and times are never cut off; everything else scales fully. Search filters wrap onto a second line in the same order.
+- Settings: the tab shows one row per category (YouTube, Romanization, Lyrics, Queue and radio, Appearance, Banned, Last.fm), each with what it holds now (sign-in, the placement, the number of corrections, whether Last.fm scrobbles). A row opens its page on the Settings tab's stack, so Back returns to the list. Romanization holds everything about it: its placement, the schemes, scripts you read, the dictionary, and Corrections one level deeper. An available update shows above the categories.
 - Errors say what to do: no connection → "Check Wi-Fi or mobile data, then Retry"; a timeout → "Retry in a moment". A song that can't play offers Retry and "Play the next song".
 
 ## Queue and radio
@@ -274,7 +275,7 @@ Decisions taken while building v1, where the spec left room or turned out differ
 
 - A guess prepares a song the way a tap would: its stream URL and first 32 KB (`Playback.prepare`). Guessed: an opened album, playlist or artist page's first song (Play and the first row), Search's top row ("Seen before" first, then YouTube's top song), and the next three songs when the queue view opens. One at a time, at most 60 an hour; none while the current song is loading or a picked song is being prepared.
 - Cost: about 45 KB a guess (a lookup of about 12 KB and 32 KB of audio; nothing for a song already cached), under 3 MB an hour at the cap, against about 60 MB an hour of audio. Battery: a few short requests, no timers or polling.
-- Guesses run only on an unmetered network outside Battery Saver. The setting "Get likely songs ready on mobile data and in Battery Saver" (off by default) lifts that.
+- Guesses run only on an unmetered network outside Battery Saver. The setting "Preload on mobile data" (off by default) lifts that.
 - A song needed the InnerTubeX fallback in the last 7 days: the app start also warms that path (player script, cipher config, PoToken WebView) with that song, within the same network and battery limits. One lookup per start.
 - Play on a generated playlist's page (RD…) plays the songs the page already holds instead of loading the playlist again; radio follows when they run out.
 - Coming back to the foreground loads a Home older than 30 minutes again behind the shown one.
