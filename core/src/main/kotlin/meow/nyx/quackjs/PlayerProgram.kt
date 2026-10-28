@@ -32,6 +32,8 @@ public class PlayerProgram private constructor(
             return output
         } catch (error: JsThrown) {
             unsupported("Transform threw: ${if (error.value is String) error.value.take(160) else "JavaScript exception"}")
+        } catch (_: StackOverflowError) {
+            unsupported("Transform exceeded the thread stack")
         }
     }
 
@@ -40,7 +42,14 @@ public class PlayerProgram private constructor(
          * Throws [UnsupportedPlayerException] for unsupported dependencies or resource limits.
          * Source is capped at 8 Mi UTF-16 units; individual challenges at 16,384 units.
          */
-        public fun compile(playerJs: String, hints: PlayerHints? = null): PlayerProgram {
+        public fun compile(playerJs: String, hints: PlayerHints? = null): PlayerProgram = try {
+            compileUnchecked(playerJs, hints)
+        } catch (_: StackOverflowError) {
+            // The depth caps bound what QuackJS builds, not the thread it runs on: callers catch only Exception.
+            unsupported("Player compilation exceeded the thread stack")
+        }
+
+        private fun compileUnchecked(playerJs: String, hints: PlayerHints?): PlayerProgram {
             if (playerJs.length > 8 * 1024 * 1024) unsupported("Player source limit exceeded")
             val derived = hints ?: derive(playerJs)
             val source = SourceIndex(playerJs, derived.nClass)

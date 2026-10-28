@@ -1,7 +1,6 @@
 package roma.core
 
-import com.metrolist.innertubex.extraction.StreamResolveException
-import com.metrolist.innertubex.extraction.StreamResolveException.Reason
+import roma.core.StreamResolveException.Reason
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

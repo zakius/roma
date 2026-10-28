@@ -7,7 +7,7 @@ import kotlinx.serialization.json.JsonNames
 
 @Serializable
 @OptIn(ExperimentalSerializationApi::class)
-data class PlayerResponse(
+class PlayerResponse(
     val playabilityStatus: PlayabilityStatus,
     val streamingData: StreamingData? = null,
     val videoDetails: VideoDetails? = null,
@@ -15,7 +15,7 @@ data class PlayerResponse(
     val playerConfig: PlayerConfig? = null,
 ) {
     @Serializable
-    data class PlayabilityStatus(
+    class PlayabilityStatus(
         val status: String,
         val reason: String? = null,
     ) {
@@ -24,7 +24,7 @@ data class PlayerResponse(
     }
 
     @Serializable
-    data class StreamingData(
+    class StreamingData(
         @Serializable(with = PlayerFormatListSerializer::class)
         val formats: List<Format>? = null,
         @Serializable(with = PlayerFormatListSerializer::class)
@@ -32,7 +32,7 @@ data class PlayerResponse(
         val hlsManifestUrl: String? = null,
     ) {
         @Serializable
-        data class Format(
+        class Format(
             val itag: Int = -1,
             val url: String? = null,
             val mimeType: String = "",
@@ -51,8 +51,12 @@ data class PlayerResponse(
             val isAudio: Boolean
                 get() = width == null
 
+            /** This format with a solved [url]: no cipher left. */
+            fun withUrl(url: String?) =
+                Format(itag, url, mimeType, bitrate, width, contentLength, audioSampleRate, audioChannels, loudnessDb, xtags, audioTrack)
+
             @Serializable
-            data class AudioTrack(
+            class AudioTrack(
                 val audioIsDefault: Boolean? = null,
             )
         }
@@ -64,22 +68,22 @@ data class PlayerResponse(
             private set
 
         @Serializable
-        data class AudioConfig(
+        class AudioConfig(
             val loudnessDb: Double? = null,
         )
     }
 
     @Serializable
-    data class VideoDetails(
+    class VideoDetails(
         val videoId: String = "",
     )
 
     @Serializable
-    data class PlaybackTracking(
+    class PlaybackTracking(
         val videostatsPlaybackUrl: VideostatsUrl? = null,
     ) {
         @Serializable
-        data class VideostatsUrl(
+        class VideostatsUrl(
             val baseUrl: String,
         )
     }

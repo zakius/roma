@@ -9,10 +9,6 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import com.metrolist.innertubex.extraction.PoTokenResult
-import com.metrolist.innertubex.extraction.TokenProvider
-import com.metrolist.innertubex.extraction.TokenProviderCapabilities
-import com.metrolist.innertubex.extraction.strategy.PoTokenProviderKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -36,6 +32,8 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import roma.core.PoTokenResult
+import roma.core.TokenProvider
 
 /**
  * PoTokens for InnerTubeX's web clients (WEB_REMIX and others), minted by YouTube's BotGuard in a hidden WebView.
@@ -52,8 +50,6 @@ class PoTokens(context: Context) : TokenProvider {
     private var visitor: String? = null
     private var streamingToken: String? = null
     @Volatile private var broken = false // the system WebView can't run the page; don't try again this run
-
-    override val capabilities = TokenProviderCapabilities(providers = setOf(PoTokenProviderKind.WEB_BOTGUARD), usesWebView = true)
 
     override suspend fun getPoToken(videoId: String, visitorData: String, cookie: String?): PoTokenResult? {
         if (broken) return null
@@ -100,8 +96,6 @@ class PoTokens(context: Context) : TokenProvider {
         withContext(Dispatchers.Main) { view?.close() }
         view = null; streamingToken = null; visitor = null
     }
-
-    override suspend fun close() = reset()
 
     private companion object {
         // A cold start (WebView, BotGuard, first token) takes 2-5 s; past this the song falls back to other clients.
