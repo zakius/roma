@@ -42,8 +42,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -71,7 +69,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
@@ -315,7 +312,7 @@ fun CorrectDialog(s: Song, onDone: () -> Unit) {
                 Choice("Only this song", scope == "song") { scope = "song" }
                 Choice("This artist's songs", scope == "artist") { scope = "artist" }
                 Choice("Everywhere", scope == "text") { scope = "text" }
-                OutlinedTextField(latin, { latin = it }, label = { Text("Latin form (empty: automatic)") })
+                OutlinedTextField(latin, { latin = it }, label = "Latin form (empty: automatic)")
             }
         },
         confirmButton = {
@@ -365,7 +362,7 @@ fun WordDialog(word: String, inContext: String?, songId: String, onDone: () -> U
                     val base = if (t.dictionaryForm != t.surface) " · from ${t.dictionaryForm} (${t.dictionaryRomaji})" else ""
                     Text("${t.surface}  ${t.kana} · ${t.romaji} · ${t.partOfSpeech}$base", style = MaterialTheme.typography.bodySmall, color = dim)
                 }
-                OutlinedTextField(latin, { latin = it }, Modifier.padding(top = 8.dp), singleLine = true, label = { Text("Reading (empty: automatic)") })
+                OutlinedTextField(latin, { latin = it }, Modifier.padding(top = 8.dp), singleLine = true, label = "Reading (empty: automatic)")
                 Choice("In this song", !everywhere) { everywhere = false }
                 Choice("Everywhere: every song, title and line", everywhere) { everywhere = true }
             }
@@ -813,10 +810,9 @@ fun SearchScreen() {
         OutlinedTextField(
             query, { query = it },
             Modifier.fillMaxWidth().padding(12.dp).focusRequester(focus),
-            placeholder = { Text("Songs, albums, artists") },
+            placeholder = "Songs, albums, artists",
             singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { search(query) }),
+            onSearch = { search(query) },
         )
         // Fixed order; videos are left out on purpose. With a large system font they wrap onto a second line, in the
         // same order, instead of squeezing the last one into a column of letters.

@@ -17,8 +17,8 @@ android {
         applicationId = "com.zakius.roma"
         minSdk = 26
         targetSdk = 36
-        versionCode = 51
-        versionName = "0.1.50"
+        versionCode = 52
+        versionName = "0.1.51"
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.
         buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
@@ -29,10 +29,6 @@ android {
         buildConfigField("String", "DICT_PACKAGE", "\"com.zakius.roma.dict\"")
         manifestPlaceholders["dictPackage"] = "com.zakius.roma.dict"
     }
-
-    // One APK for both: phones are arm64, the emulator x86_64. The only native code is androidx's tiny path library
-    // (about 10 KB per architecture), so per-architecture APKs aren't worth it (user, 2026-10-24).
-    defaultConfig { ndk { abiFilters += setOf("arm64-v8a", "x86_64") } }
 
     buildTypes {
         debug {
@@ -60,8 +56,9 @@ android {
             "pos.csv",
             // Four copies of the Apache License 2.0, which assets/LICENSE-2.0.txt already carries.
             "META-INF/androidx/**/LICENSE.txt") }
-        // Native libraries compressed in the APK and unpacked at install (extractNativeLibs), as in tennessine.
-        jniLibs { useLegacyPackaging = true }
+        // androidx.graphics.path's native PathIterator for Android 13 and older: Compose ships it, R8 removes every caller.
+        // Without it the APK has no native code, so it suits every architecture.
+        jniLibs { excludes += "**/libandroidx.graphics.path.so" }
     }
 }
 

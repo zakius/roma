@@ -1,25 +1,11 @@
 package roma.core
 
 import com.metrolist.innertubex.InnerTube
-import com.metrolist.innertubex.bodyAsTextLimited
 import com.metrolist.innertubex.models.YouTubeClient
 import com.metrolist.innertubex.models.response.PlayerResponse
 import com.metrolist.innertubex.models.response.PlayerResponse.StreamingData.Format
 import com.metrolist.innertubex.utils.decodeQueryComponent
 import com.metrolist.innertubex.utils.encodeQueryComponent
-import io.ktor.client.HttpClient
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.plugins.timeout
-import io.ktor.client.request.HttpRequestBuilder
-import io.ktor.client.request.header
-import io.ktor.client.request.prepareGet
-import io.ktor.client.statement.bodyAsChannel
-import io.ktor.http.HttpHeaders
-import io.ktor.http.URLBuilder
-import io.ktor.http.Url
-import io.ktor.http.isSuccess
-import io.ktor.http.takeFrom
-import io.ktor.util.sha256
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -34,11 +20,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import java.net.URI
 import meow.nyx.quackjs.PlayerProgram
 import kotlin.io.encoding.Base64
 import kotlin.random.Random
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -69,7 +55,7 @@ class StreamResolveException(val reason: Reason, message: String, cause: Throwab
  * Left out of InnerTubeX's: the 60 s cache of refusals (roma keeps its own, [Streams]) and cancelling a lookup when
  * the session changes.
  */
-internal class Fallback(private val innerTube: InnerTube, private val http: HttpClient, private val tokens: TokenProvider?) {
+internal class Fallback(private val innerTube: InnerTube, private val tokens: TokenProvider?) {
     /** One of InnerTubeX's playback client manifests, the fields roma's lookups read. */
     class Manifest internal constructor(
         val id: String,
@@ -261,7 +247,7 @@ internal class Fallback(private val innerTube: InnerTube, private val http: Http
     }
 
     private fun identity(login: Boolean) = innerTube.sessionSnapshot().let { s ->
-        Pair<Any, String?>(s.locale, s.cookie?.takeIf { login }?.let { sha256(it.encodeToByteArray()).toHexString() })
+        Pair<Any, String?>(s.locale, s.cookie?.takeIf { login }?.let { java.security.MessageDigest.getInstance("SHA-256").digest(it.encodeToByteArray()).toHexString() })
     }
 
     // Under configMutex.
@@ -599,18 +585,17 @@ internal class Fallback(private val innerTube: InnerTube, private val http: Http
         val cookie = innerTube.cookie?.takeIf { login }?.split(';')?.map { it.trim() }
             ?.filter { it.isNotEmpty() && !it.startsWith("PREF=", ignoreCase = true) }?.joinToString("; ")?.takeIf { it.isNotEmpty() }
         // The fields sit in the first ~60 KB of a ~1.4 MB streamed page; STS often only near its middle.
-        val done: suspend (String) -> Boolean = { html ->
+        val done: (String) -> Boolean = { html ->
             playerUrl(html) != null && VISITOR.find(html) != null && CLIENT_VERSION.find(html) != null &&
                 (!embed || HOST_FLAGS.find(html) != null) && sts(html) != null
         }
-        suspend fun page(c: String?) = getText(Url(pageUrl), 4 * 1024 * 1024, done) {
-            header(HttpHeaders.UserAgent, YouTubeClient.USER_AGENT_WEB)
-            header(HttpHeaders.Accept, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            if (embed) header("Referer", "https://www.reddit.com/")
-            c?.let { header(HttpHeaders.Cookie, it) }
-            header(HttpHeaders.AcceptLanguage, innerTube.locale.acceptLanguageHeader())
-            timeout { requestTimeoutMillis = 10_000; connectTimeoutMillis = 10_000; socketTimeoutMillis = 10_000 }
-        }
+        suspend fun page(c: String?) = getText(pageUrl, 4 * 1024 * 1024, 10_000, done, buildMap {
+            put("User-Agent", YouTubeClient.USER_AGENT_WEB)
+            put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            if (embed) put("Referer", "https://www.reddit.com/")
+            c?.let { put("Cookie", it) }
+            put("Accept-Language", innerTube.locale.acceptLanguageHeader())
+        })
         val html = try {
             page(cookie)
         } catch (e: CancellationException) {
@@ -632,10 +617,7 @@ internal class Fallback(private val innerTube: InnerTube, private val http: Http
     }
 
     private suspend fun iframePlayerUrl(): String? = try {
-        val api = getText(Url("https://www.youtube.com/iframe_api"), 1024 * 1024) {
-            header(HttpHeaders.UserAgent, YouTubeClient.USER_AGENT_WEB)
-            timeout { requestTimeoutMillis = 8_000; connectTimeoutMillis = 8_000; socketTimeoutMillis = 8_000 }
-        }
+        val api = getText("https://www.youtube.com/iframe_api", 1024 * 1024, 8_000, null, mapOf("User-Agent" to YouTubeClient.USER_AGENT_WEB))
         Regex("/s/player/([a-zA-Z0-9_-]+)/").find(api.replace("\\/", "/"))?.groupValues?.get(1)
             ?.let { validPlayerUrl("https://www.youtube.com/s/player/$it/player_ias.vflset/en_GB/base.js") }
     } catch (e: CancellationException) {
@@ -655,27 +637,24 @@ internal class Fallback(private val innerTube: InnerTube, private val http: Http
 
     private fun sts(text: String) = STS.asSequence().mapNotNull { it.find(text)?.groupValues?.get(1)?.toIntOrNull() }.firstOrNull()
 
-    private fun validPlayerUrl(value: String): String? = runCatching { Url(value) }.getOrNull()
-        ?.takeIf { it.protocol.name == "https" && it.port == 443 && youTubeHost(it.host) && it.user == null && it.password == null && PLAYER_PATH.matches(it.encodedPath) }
-        ?.toString()
+    private fun validPlayerUrl(value: String): String? = httpsUrl(value, ::youTubeHost, PLAYER_PATH::matches)?.toString()
 
     /** GET that follows at most 3 redirects, each only to an approved YouTube page. */
-    private suspend fun getText(url: Url, maxBytes: Int, stopWhen: (suspend (String) -> Boolean)? = null, configure: HttpRequestBuilder.() -> Unit): String {
+    private suspend fun getText(url: String, maxBytes: Int, timeoutMs: Int, stopWhen: ((String) -> Boolean)?, headers: Map<String, String>): String {
         var current = url
         repeat(4) { redirects ->
-            val (status, location, body) = http.getWithoutRedirects(current, maxBytes, stopWhen, configure)
-            if (body != null) return body
-            current = location?.takeIf { status in REDIRECTS && redirects < 3 }
-                ?.let { runCatching { URLBuilder(current).takeFrom(it).build() }.getOrNull() }
+            val r = http(current, headers, timeoutMs = timeoutMs, totalMs = timeoutMs.toLong(), maxBytes = maxBytes, errorBody = false, redirects = false, stopWhen = stopWhen)
+            if (r.ok) return r.text()
+            current = r.header("Location")?.takeIf { r.status in REDIRECTS && redirects < 3 }
+                ?.let { runCatching { URI(current).resolve(it).toString() }.getOrNull() }
                 ?.takeIf { u ->
-                    u.protocol.name == "https" && u.port == 443 && youTubeHost(u.host) && u.user == null && u.password == null &&
-                        (u.encodedPath == "/watch" || u.encodedPath == "/iframe_api" || EMBED_PATH.matches(u.encodedPath) || PLAYER_PATH.matches(u.encodedPath))
-                } ?: error("HTTP $status")
+                    httpsUrl(u, ::youTubeHost) { it == "/watch" || it == "/iframe_api" || EMBED_PATH.matches(it) || PLAYER_PATH.matches(it) } != null
+                } ?: error("HTTP ${r.status}")
         }
         error("Too many redirects")
     }
 
-    private val cipher = Cipher(http)
+    private val cipher = Cipher()
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
@@ -699,9 +678,7 @@ private fun youTubeHost(host: String) =
 private fun mediaHost(host: String) =
     host == "googlevideo.com" || host.endsWith(".googlevideo.com") || host == "youtube.com" || host.endsWith(".youtube.com")
 
-private fun allowedMedia(value: String): Boolean = value.length in 1..16 * 1024 && runCatching { Url(value) }.getOrNull()?.let {
-    it.protocol.name == "https" && it.port == 443 && mediaHost(it.host) && it.encodedPath == "/videoplayback" && it.user == null && it.password == null
-} == true
+private fun allowedMedia(value: String): Boolean = value.length in 1..16 * 1024 && httpsUrl(value, ::mediaHost) { it == "/videoplayback" } != null
 
 private fun String.withPoToken(token: String?): String {
     if (token.isNullOrBlank() || contains("&pot=") || contains("?pot=")) return this
@@ -715,11 +692,8 @@ private const val CPN_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRST
 internal fun playbackNonce() = buildString(16) { repeat(16) { append(CPN_ALPHABET[Random.nextInt(CPN_ALPHABET.length)]) } }
 
 private fun withCpn(url: String, cpn: String): String {
-    val u = runCatching { Url(url) }.getOrNull()?.takeIf {
-        it.protocol.name == "https" && it.port == 443 && (it.host == "googlevideo.com" || it.host.endsWith(".googlevideo.com")) &&
-            it.encodedPath == "/videoplayback" && it.user == null && it.password == null
-    } ?: return url
-    if (u.parameters.contains("cpn")) return url
+    val u = httpsUrl(url, { it == "googlevideo.com" || it.endsWith(".googlevideo.com") }) { it == "/videoplayback" } ?: return url
+    if (u.rawQuery?.split('&')?.any { it.substringBefore('=') == "cpn" } == true) return url
     val end = url.indexOf('#').takeIf { it >= 0 } ?: url.length
     val head = url.substring(0, end)
     return head + (if ('?' in head) "&cpn=$cpn" else "?cpn=$cpn") + url.substring(end)
@@ -791,38 +765,6 @@ private fun protoFields(b: ByteArray): List<Pair<Int, ByteArray?>> {
     return out
 }
 
-private class TextResponse(val status: Int, val location: String?, val body: String?) {
-    operator fun component1() = status
-    operator fun component2() = location
-    operator fun component3() = body
-}
-
-/**
- * A GET on the caller's engine without its redirect policy. The body is streamed, so [maxBytes] bounds memory and
- * [stopWhen] can end the download early; null unless the status is 2xx.
- */
-private suspend fun HttpClient.getWithoutRedirects(
-    url: Url, maxBytes: Int, stopWhen: (suspend (String) -> Boolean)? = null, configure: HttpRequestBuilder.() -> Unit,
-): TextResponse {
-    val direct = HttpClient(engine) {
-        expectSuccess = false
-        followRedirects = false
-        install(HttpTimeout) { requestTimeoutMillis = 30_000; connectTimeoutMillis = 10_000; socketTimeoutMillis = 10_000 }
-    }
-    return try {
-        direct.prepareGet(url, configure).execute { r ->
-            if (r.status.isSuccess()) {
-                TextResponse(r.status.value, null, r.bodyAsTextLimited(maxBytes, stopWhen))
-            } else {
-                r.bodyAsChannel().cancel(null)
-                TextResponse(r.status.value, r.headers[HttpHeaders.Location], null)
-            }
-        }
-    } finally {
-        direct.close()
-    }
-}
-
 private val LOCALIZED_IAS = Regex("^https://www\\.youtube\\.com/s/player/([A-Za-z0-9_-]+)/player_ias\\.vflset/[A-Za-z]{2,3}(?:_[A-Za-z]{2,4})?/base\\.js$")
 private val PLAYER_HASH = listOf(Regex("/player/([a-f0-9]{8})/"), Regex("player_ias\\.vflset/[^/]+/([a-f0-9]{8})/"), Regex("/s/player/([a-f0-9]{8})/"))
 
@@ -835,7 +777,7 @@ private fun canonical(url: String) =
  * that client's response is skipped: no stream from it, not a crash. Compiled programs are kept for the 4 latest
  * players, a compile failure for 60 s, a download failure for 15 s.
  */
-private class Cipher(private val http: HttpClient) {
+private class Cipher {
     private val mutex = Mutex()
     private val programs = LinkedHashMap<String, Any>() // a PlayerProgram, or the TimeMark of a compile failure
     private var code: Pair<String, String>? = null
@@ -847,28 +789,25 @@ private class Cipher(private val http: HttpClient) {
     private suspend fun download(playerUrl: String): String {
         code?.takeIf { it.first == playerUrl }?.let { return it.second }
         downloadFailed[playerUrl]?.takeIf { it.elapsedNow() < 15.seconds }?.let { error("Player script download recently failed") }
-        val url = Url(playerUrl)
-        require(url.protocol.name == "https" && url.port == 443 && url.user == null && url.password == null && youTubeHost(url.host) &&
-            url.encodedPath.startsWith("/s/player/") && url.encodedPath.endsWith(".js")) { "Player script URL must use an approved YouTube HTTPS endpoint" }
+        require(httpsUrl(playerUrl, ::youTubeHost) { it.startsWith("/s/player/") && it.endsWith(".js") } != null) {
+            "Player script URL must use an approved YouTube HTTPS endpoint"
+        }
         try {
             var last: Exception? = null
             for (attempt in 0..2) {
                 if (attempt > 0) delay(250L shl (attempt - 1))
                 val r = try {
-                    http.getWithoutRedirects(url, 8 * 1024 * 1024) {
-                        header(HttpHeaders.UserAgent, "okhttp/5.4.0")
-                        header(HttpHeaders.Accept, "*/*")
-                        header("Referer", "https://www.youtube.com/")
-                    }
+                    http(playerUrl, mapOf("User-Agent" to "okhttp/5.4.0", "Accept" to "*/*", "Referer" to "https://www.youtube.com/"),
+                        timeoutMs = 10_000, totalMs = 30_000, maxBytes = 8 * 1024 * 1024, errorBody = false, redirects = false)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: com.metrolist.innertubex.ResponseTooLargeException) {
+                } catch (e: ResponseTooLargeException) {
                     throw e
                 } catch (e: Exception) {
                     last = e
                     continue
                 }
-                r.body?.let { code = playerUrl to it; downloadFailed.remove(playerUrl); return it }
+                if (r.ok) r.text().let { code = playerUrl to it; downloadFailed.remove(playerUrl); return it }
                 last = IllegalStateException("Player script request failed with HTTP ${r.status}")
                 if (r.status !in setOf(408, 425, 429, 500, 502, 503, 504)) break
             }

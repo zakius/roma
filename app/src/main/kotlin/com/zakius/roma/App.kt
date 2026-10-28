@@ -165,6 +165,7 @@ object Store {
             listOf(files, cache).flatMap { it.listFiles().orEmpty().toList() }.filter { it.name.startsWith("sudachi") }.forEach { it.delete() }
             for (n in listOf("index.json", "liked.json", "streams.txt")) File(files, n).takeIf { it.exists() }?.let { runCatching { it.copyTo(File(cache, n), true) }; it.delete() }
             File(cache, "http_cache").deleteRecursively() // OkHttp's cache, up to 0.1.39
+            File(cache, "ktor_cache").deleteRecursively() // Ktor's cache, up to 0.1.50
             prefs.edit().remove("home.mixes").apply()
         }
         romanizer.settings = romanizeSettings()

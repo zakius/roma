@@ -1,6 +1,9 @@
 package com.zakius.roma
 
 import android.content.Context
+import android.view.View
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.LinearEasing
@@ -41,9 +44,6 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -59,22 +59,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -88,6 +88,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -486,43 +487,96 @@ fun ModalBottomSheet(onDismissRequest: () -> Unit, sheetState: SheetState, conte
     }
 }
 
+/**
+ * A text field: Android's EditText in an outlined box. Compose's own text field brings in about 120 KB of the APK (its
+ * text input, selection and context menu); EditText is in the platform. Text set from outside (a picked search
+ * suggestion) puts the caret at its end. [onSearch] gives the keyboard a Search key.
+ */
 @Composable
 fun OutlinedTextField(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     singleLine: Boolean = false,
-    label: (@Composable () -> Unit)? = null,
-    placeholder: (@Composable () -> Unit)? = null,
-    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
-    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    label: String? = null,
+    placeholder: String? = null,
+    onSearch: (() -> Unit)? = null,
 ) {
     val s = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(4.dp)
-    // Text set from outside (a picked search suggestion) puts the caret at its end; the String BasicTextField kept it
-    // at the old offset, somewhere inside the new text.
-    var edited by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(value, androidx.compose.ui.text.TextRange(value.length))) }
-    if (edited.text != value) edited = androidx.compose.ui.text.input.TextFieldValue(value, androidx.compose.ui.text.TextRange(value.length))
-    BasicTextField(
-        edited, { edited = it; if (it.text != value) onValueChange(it.text) }, modifier.onFocusChanged { focused = it.isFocused },
-        singleLine = singleLine,
-        textStyle = MaterialTheme.typography.bodyLarge.copy(color = s.onSurface),
-        cursorBrush = SolidColor(s.primary),
-        keyboardOptions = keyboardOptions,
-        keyboardActions = keyboardActions,
-        decorationBox = { field ->
-            Column(
-                Modifier.defaultMinSize(minWidth = 280.dp, minHeight = 56.dp)
-                    .border(if (focused) 2.dp else 1.dp, if (focused) s.primary else s.outline, shape).padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                if (label != null) CompositionLocalProvider(LocalContentColor provides if (focused) s.primary else s.onSurfaceVariant, LocalTextStyle provides MaterialTheme.typography.bodySmall, content = label)
-                Box {
-                    if (value.isEmpty() && placeholder != null) CompositionLocalProvider(LocalContentColor provides s.onSurfaceVariant, LocalTextStyle provides MaterialTheme.typography.bodyLarge, content = placeholder)
-                    field()
+    val change by rememberUpdatedState(onValueChange)
+    val search by rememberUpdatedState(onSearch)
+    var edit by remember { mutableStateOf<EditText?>(null) }
+    // Made when the field is first on screen: an EditText made in a tab built hidden (buildAhead) stays blank, no
+    // hint or caret, the first time the tab is shown.
+    val shown = remember { BooleanArray(1) }
+    if (LocalTabShown.current) shown[0] = true
+    Column(
+        modifier.defaultMinSize(minWidth = 280.dp, minHeight = 56.dp)
+            .border(if (focused) 2.dp else 1.dp, if (focused) s.primary else s.outline, shape)
+            // The whole box takes a tap, as Compose's field did, not only the line of text.
+            .pointerInput(Unit) { detectTapGestures { edit?.let { it.requestFocus(); it.showKeyboard() } } }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        if (label != null) Text(label, Modifier.clearAndSetSemantics {}, color = if (focused) s.primary else s.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        val style = MaterialTheme.typography.bodyLarge
+        if (shown[0]) AndroidView(
+            factory = { c ->
+                EditText(c).apply {
+                    background = null
+                    setPadding(0, 0, 0, 0)
+                    includeFontPadding = false
+                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, style.fontSize.value)
+                    letterSpacing = style.letterSpacing.value / style.fontSize.value
+                    if (Build.VERSION.SDK_INT >= 28) lineHeight = (style.lineHeight.value * resources.displayMetrics.scaledDensity).toInt()
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
+                        (if (singleLine) 0 else android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE)
+                    if (singleLine) maxLines = 1
+                    imeOptions = when {
+                        onSearch != null -> android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+                        singleLine -> android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                        else -> 0
+                    }
+                    // TalkBack reads the label with the field, as it did when the label was inside Compose's field.
+                    if (label != null) accessibilityDelegate = object : View.AccessibilityDelegate() {
+                        override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                            super.onInitializeAccessibilityNodeInfo(host, info)
+                            info.hintText = label
+                        }
+                    }
+                    setOnEditorActionListener { _, action, _ ->
+                        (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH).also { if (it) search?.invoke() }
+                    }
+                    setText(value)
+                    setSelection(value.length)
+                    addTextChangedListener(object : android.text.TextWatcher {
+                        override fun beforeTextChanged(t: CharSequence?, start: Int, count: Int, after: Int) {}
+                        override fun onTextChanged(t: CharSequence?, start: Int, before: Int, count: Int) {}
+                        override fun afterTextChanged(t: android.text.Editable) = change(t.toString())
+                    })
+                    // Focus from code (a new search) brings the keyboard up too, and leaving the field puts it away.
+                    setOnFocusChangeListener { v, f -> focused = f; if (f) v.showKeyboard() else v.context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(v.windowToken, 0) }
+                    edit = this
                 }
-            }
-        },
-    )
+            },
+            Modifier.fillMaxWidth(),
+            update = { e ->
+                if (e.text.toString() != value) { e.setText(value); e.setSelection(value.length) }
+                e.setTextColor(s.onSurface.toArgb())
+                e.setHintTextColor(s.onSurfaceVariant.toArgb())
+                e.hint = placeholder
+                e.highlightColor = s.primary.copy(alpha = 0.4f).toArgb()
+                if (Build.VERSION.SDK_INT >= 29) {
+                    e.textCursorDrawable = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(s.primary.toArgb()); setSize((2 * e.resources.displayMetrics.density).toInt(), 0)
+                    }
+                    listOf(e.textSelectHandle, e.textSelectHandleLeft, e.textSelectHandleRight).forEach { it?.setTint(s.primary.toArgb()) }
+                }
+            },
+        )
+    }
 }
+
+private fun View.showKeyboard() = post { context.getSystemService(InputMethodManager::class.java).showSoftInput(this, 0) }
