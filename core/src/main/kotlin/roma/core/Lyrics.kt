@@ -581,6 +581,15 @@ object GoogleTranslate {
         return Translation(SOURCE, lang, lines, l.synced)
     }
 
+    /**
+     * One text, such as a comment, in [lang]. Null when Google finds it already in that language or leaves it as it
+     * was; throws when it couldn't answer. ponytail: cut at 4,500 characters, under Google's 5,000.
+     */
+    fun text(s: String, lang: String): String? {
+        val (t, from) = translate(listOf(s.take(4500)), lang)
+        return t[0].takeUnless { from.substringBefore('-').equals(lang, ignoreCase = true) || it.isBlank() || it == s.trim() }
+    }
+
     /** One batch: its translations in order, and the language Google detected. */
     private fun translate(texts: List<String>, lang: String): Pair<List<String>, String> {
         val form = "client=gtx&sl=auto&tl=${enc(lang)}&dt=t&q=${enc(texts.joinToString("\n\uE000\n"))}"
