@@ -228,12 +228,13 @@ fun attachTranslation(l: Lyrics, t: Translation?): Lyrics {
 }
 
 /**
- * Lines in sentence case. The language is decided once per song: kana in any line makes every line Japanese,
- * and the Cyrillic language comes from the whole lyrics, so a line without Kazakh letters in a Kazakh song is Kazakh;
+ * Lines in sentence case. The language is decided once per song: kana in any line makes every line Japanese, else
+ * Chinese evidence in any line ([Romanizer.looksChinese]) makes every Han line Chinese, and the Cyrillic language comes from the whole lyrics, so a line without Kazakh letters in a Kazakh song is Kazakh;
  * a line with a letter the song's language lacks uses its own (see Romanizer.cyrillicLanguageOfLine).
  */
 fun Romanizer.romanizeLyrics(l: Lyrics, siblings: List<String>, songId: String): Lyrics {
-    val sib = siblings + l.lines.map { it.text }.filter { it.any(Romanizer::isKana) }.take(1)
+    val texts = l.lines.map { it.text }
+    val sib = siblings + listOfNotNull(texts.firstOrNull { it.any(Romanizer::isKana) } ?: texts.firstOrNull(::looksChinese))
     val cyr = Romanizer.cyrillicLanguage(l.lines.joinToString("\n") { it.text })
     return Lyrics(
         l.source,

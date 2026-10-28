@@ -135,6 +135,20 @@ class RomanizeTest {
         assertEquals("Qing Tian", Romanizer(jvmIcu, RomanizeSettings(hanDefault = "zh", chineseTones = false)).machine("晴天"))
     }
 
+    @Test fun chineseEvidence() {
+        // With Japanese as the default, Han text without kana is Chinese only on evidence: a character outside
+        // JIS X 0208 (說, 伦), a word the dictionary doesn't know (瓷), or characters that don't form words (周|杰|倫).
+        for (s in listOf("不能說的秘密", "周杰伦", "青花瓷", "周杰倫", "超人不會飛", "張學友")) assertTrue(r.looksChinese(s), s)
+        // Japanese without kana: names, compounds, rare kanji and variant forms.
+        for (s in listOf("米津玄師", "紅蓮華", "千本桜", "薔薇", "津軽海峡冬景色", "椎名林檎", "倖田來未", "山﨑", "𠮷野家")) assertFalse(r.looksChinese(s), s)
+        // A sibling's evidence decides the title: every song by 周杰倫 is Chinese.
+        assertFalse(r.isJapanese("晴天", listOf("周杰倫")))
+        assertTrue(r.isJapanese("晴天", emptyList()))
+        assertEquals("Zhōu Jié Lún", r.machine("周杰倫"))
+        // Kana still wins.
+        assertTrue(r.isJapanese("晴天", listOf("周杰倫", "あいみょん")))
+    }
+
     @Test fun korean() {
         assertEquals("Saranghae", r.machine("사랑해"))
         assertEquals("Hangugeo", r.machine("한국어"))

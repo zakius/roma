@@ -217,7 +217,40 @@ class Romanizer(
         s.any(::isKana) -> true
         siblings.any { sib -> sib.any(::isKana) } -> true
         !hasHan(s) -> false
-        else -> settings.hanDefault == "ja"
+        settings.hanDefault != "ja" -> false
+        else -> !looksChinese(s) && siblings.none(::looksChinese)
+    }
+
+    /**
+     * Evidence that Han text is Chinese, from the standards and the dictionary rather than from words: a character
+     * outside JIS X 0208, Japan's standard set; a Han word the Japanese dictionary doesn't know (both leave out the
+     * variant forms Japanese names use, such as 﨑 and 𠮷); or three one-character Han
+     * words in a row, as Chinese names and phrases fall apart into characters (周|杰|倫, 不|會|飛) where Japanese
+     * compounds are dictionary words. Measured 2026-10-28: none of 120 Japanese titles and names without kana
+     * matched; about 60% of Chinese titles did, and most artist names, which then decide their songs as siblings.
+     */
+    fun looksChinese(s: String): Boolean {
+        if (!hasHan(s)) return false
+        synchronized(chinese) { chinese[s] }?.let { return it }
+        val jis = SHIFT_JIS.newEncoder()
+        val outsideJis = s.codePoints().anyMatch { c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN && !variant(c) && !jis.canEncode(c.toChar()) }
+        // The dictionary's evidence counts only with the dictionary: without it every run of kanji is unknown.
+        val dictionary = loaded ?: tokenizer()
+        val result = outsideJis || dictionary != null && tokens(s).let { tokens ->
+            var run = 0
+            tokens.any { t -> hasHan(t.surface) && t.reading.none(::isKana) && t.surface.codePoints().noneMatch(::variant) } ||
+                tokens.any { t -> run = if (t.surface.length == 1 && hasHan(t.surface)) run + 1 else 0; run >= 3 }
+        }
+        if (dictionary != null) synchronized(chinese) { chinese[s] = result }
+        return result
+    }
+
+    /** A compatibility ideograph or a supplementary-plane character: variant forms that Japanese names use (﨑, 𠮷). */
+    private fun variant(c: Int) = c >= 0x10000 || c in 0xF900..0xFAFF
+
+    // ponytail: the last 512 strings; looksChinese runs again for each song's artist otherwise.
+    private val chinese = object : LinkedHashMap<String, Boolean>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>) = size > 512
     }
 
     // Non-Japanese text: convert each run of one script, keep a space between words. Stylized words stay as they are.
@@ -662,6 +695,8 @@ class Romanizer(
     companion object {
         private const val NO_DICTIONARY = "辞書なし"
         fun isKana(c: Char) = (c in 'ぁ'..'ヺ') || c in 'ㇰ'..'ㇿ' || c in 'ｦ'..'ﾝ'
+        private val SHIFT_JIS = charset("Shift_JIS")
+
         fun hasHan(s: String) = s.codePoints().anyMatch { Character.UnicodeScript.of(it) == Character.UnicodeScript.HAN }
         fun hasNonLatin(s: String) = s.codePoints().anyMatch {
             val sc = Character.UnicodeScript.of(it)
