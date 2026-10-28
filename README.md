@@ -2,6 +2,8 @@
 
 An Android client for YouTube Music. It romanizes every non-Latin title, artist and lyric line, and its controls stay in the same place.
 
+https://github.com/user-attachments/assets/a9b0ed15-224c-46ec-89f7-82014df466c7
+
 Tiny and fast: the whole app is a 1.7 MB download; romanizing Japanese needs an optional dictionary, downloaded separately. Install it and tap around; that shows the speed better than a benchmark.
 
 - **Romanization everywhere:** lists, player, queue, search, lyrics, notification.
