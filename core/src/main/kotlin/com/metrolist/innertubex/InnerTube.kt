@@ -354,9 +354,12 @@ class InnerTube(
         block: Request.() -> Unit,
     ): HttpResponse = Request(url).apply(block).send(maxBytes, true, null)
 
-    /** [keepErrorBody] = false skips downloading non-2xx bodies; use it only where callers never read them. */
+    /**
+     * [keepErrorBody] = false skips downloading non-2xx bodies; use it only where callers never read them. A POST's
+     * redirect is an error, not a GET elsewhere carrying the account's cookie.
+     */
     private suspend fun Request.send(maxBytes: Int, keepErrorBody: Boolean, emptyBody: ByteArray?) =
-        http(url, headers, body ?: emptyBody, maxBytes = maxBytes, errorBody = keepErrorBody)
+        http(url, headers, body ?: emptyBody, maxBytes = maxBytes, errorBody = keepErrorBody, redirects = emptyBody == null)
 
     private suspend fun executeRequest(
         operation: String = "request",

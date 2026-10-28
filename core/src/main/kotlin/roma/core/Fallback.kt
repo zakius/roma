@@ -643,7 +643,7 @@ internal class Fallback(private val innerTube: InnerTube, private val tokens: To
     private suspend fun getText(url: String, maxBytes: Int, timeoutMs: Int, stopWhen: ((String) -> Boolean)?, headers: Map<String, String>): String {
         var current = url
         repeat(4) { redirects ->
-            val r = http(current, headers, timeoutMs = timeoutMs, maxBytes = maxBytes, errorBody = false, redirects = false, stopWhen = stopWhen)
+            val r = http(current, headers, timeoutMs = timeoutMs, totalMs = timeoutMs.toLong(), maxBytes = maxBytes, errorBody = false, redirects = false, stopWhen = stopWhen)
             if (r.ok) return r.text()
             current = r.header("Location")?.takeIf { r.status in REDIRECTS && redirects < 3 }
                 ?.let { runCatching { URI(current).resolve(it).toString() }.getOrNull() }
@@ -798,7 +798,7 @@ private class Cipher {
                 if (attempt > 0) delay(250L shl (attempt - 1))
                 val r = try {
                     http(playerUrl, mapOf("User-Agent" to "okhttp/5.4.0", "Accept" to "*/*", "Referer" to "https://www.youtube.com/"),
-                        timeoutMs = 10_000, maxBytes = 8 * 1024 * 1024, errorBody = false, redirects = false)
+                        timeoutMs = 10_000, totalMs = 30_000, maxBytes = 8 * 1024 * 1024, errorBody = false, redirects = false)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: ResponseTooLargeException) {

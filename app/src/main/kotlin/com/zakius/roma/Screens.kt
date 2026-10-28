@@ -312,7 +312,7 @@ fun CorrectDialog(s: Song, onDone: () -> Unit) {
                 Choice("Only this song", scope == "song") { scope = "song" }
                 Choice("This artist's songs", scope == "artist") { scope = "artist" }
                 Choice("Everywhere", scope == "text") { scope = "text" }
-                OutlinedTextField(latin, { latin = it }, label = { Text("Latin form (empty: automatic)") })
+                OutlinedTextField(latin, { latin = it }, label = "Latin form (empty: automatic)")
             }
         },
         confirmButton = {
@@ -362,7 +362,7 @@ fun WordDialog(word: String, inContext: String?, songId: String, onDone: () -> U
                     val base = if (t.dictionaryForm != t.surface) " · from ${t.dictionaryForm} (${t.dictionaryRomaji})" else ""
                     Text("${t.surface}  ${t.kana} · ${t.romaji} · ${t.partOfSpeech}$base", style = MaterialTheme.typography.bodySmall, color = dim)
                 }
-                OutlinedTextField(latin, { latin = it }, Modifier.padding(top = 8.dp), singleLine = true, label = { Text("Reading (empty: automatic)") })
+                OutlinedTextField(latin, { latin = it }, Modifier.padding(top = 8.dp), singleLine = true, label = "Reading (empty: automatic)")
                 Choice("In this song", !everywhere) { everywhere = false }
                 Choice("Everywhere: every song, title and line", everywhere) { everywhere = true }
             }

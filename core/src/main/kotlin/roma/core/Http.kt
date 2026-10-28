@@ -1,5 +1,6 @@
 package roma.core
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
@@ -7,8 +8,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -25,7 +28,8 @@ class ResponseTooLargeException(maxBytes: Int) : IllegalStateException("Response
 /**
  * A request through HttpURLConnection (on Android, its built-in HTTP stack with transparent gzip). The body is read up
  * to [maxBytes]; [stopWhen], checked at doubling sizes, ends the read early with what came so far. An error's body is
- * read only with [errorBody]; redirects are followed only with [redirects]. Cancelling the coroutine disconnects.
+ * read only with [errorBody]; redirects are followed only with [redirects]. [totalMs] bounds the whole request, as
+ * [timeoutMs] bounds connecting and each read; past it, a SocketTimeoutException. Cancelling the coroutine disconnects.
  */
 suspend fun http(
     url: String,
@@ -33,16 +37,18 @@ suspend fun http(
     body: ByteArray? = null,
     method: String = if (body == null) "GET" else "POST",
     timeoutMs: Int = 30_000,
+    totalMs: Long = 60_000,
     maxBytes: Int = 4 shl 20,
     errorBody: Boolean = true,
     redirects: Boolean = true,
     stopWhen: ((String) -> Boolean)? = null,
 ): HttpResponse {
     val c = open(url, headers, method, timeoutMs, redirects)
-    return coroutineScope {
+    return withTimeoutOrNull(totalMs) { coroutineScope {
         val done = AtomicBoolean()
-        // Blocking reads don't see cancellation; disconnecting from here ends them.
-        val watch = launch { try { awaitCancellation() } finally { if (!done.get()) c.disconnect() } }
+        // Blocking reads don't see cancellation; disconnecting from here ends them. Undispatched, so a cancellation
+        // before it would first run still reaches the finally block.
+        val watch = launch(start = CoroutineStart.UNDISPATCHED) { try { awaitCancellation() } finally { if (!done.get()) c.disconnect() } }
         try {
             withContext(Dispatchers.IO) { exchange(c, body, maxBytes, errorBody, stopWhen) }
         } catch (e: IOException) {
@@ -52,7 +58,7 @@ suspend fun http(
             done.set(true)
             watch.cancel()
         }
-    }
+    } } ?: throw SocketTimeoutException("$url took over $totalMs ms")
 }
 
 /** A blocking request: the status code and the body, an error's body included. */

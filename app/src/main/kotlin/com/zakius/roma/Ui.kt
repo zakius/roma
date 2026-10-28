@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -497,7 +498,7 @@ fun OutlinedTextField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     singleLine: Boolean = false,
-    label: (@Composable () -> Unit)? = null,
+    label: String? = null,
     placeholder: String? = null,
     onSearch: (() -> Unit)? = null,
 ) {
@@ -519,7 +520,7 @@ fun OutlinedTextField(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.Center,
     ) {
-        if (label != null) CompositionLocalProvider(LocalContentColor provides if (focused) s.primary else s.onSurfaceVariant, LocalTextStyle provides MaterialTheme.typography.bodySmall, content = label)
+        if (label != null) Text(label, Modifier.clearAndSetSemantics {}, color = if (focused) s.primary else s.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         val style = MaterialTheme.typography.bodyLarge
         if (shown[0]) AndroidView(
             factory = { c ->
@@ -533,7 +534,18 @@ fun OutlinedTextField(
                     inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
                         (if (singleLine) 0 else android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE)
                     if (singleLine) maxLines = 1
-                    imeOptions = if (onSearch != null) android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH else 0
+                    imeOptions = when {
+                        onSearch != null -> android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+                        singleLine -> android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                        else -> 0
+                    }
+                    // TalkBack reads the label with the field, as it did when the label was inside Compose's field.
+                    if (label != null) accessibilityDelegate = object : View.AccessibilityDelegate() {
+                        override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                            super.onInitializeAccessibilityNodeInfo(host, info)
+                            info.hintText = label
+                        }
+                    }
                     setOnEditorActionListener { _, action, _ ->
                         (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH).also { if (it) search?.invoke() }
                     }
