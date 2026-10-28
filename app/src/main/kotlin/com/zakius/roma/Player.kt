@@ -596,7 +596,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     val state = remember(lines) { LazyListState(firstVisibleItemIndex = if (startLine > 2) startLine - 2 else 0) }
     val showOriginal = Store.bool("lyrics.layer.original", true)
     val showLatin = Store.bool("lyrics.layer.latin", true)
-    val ruby = Store.str("lyrics.layout", "lines") == "ruby"
+    val ruby = Store.lyricsRuby
     // Whether the song is Japanese, for the "scripts you read" check: kana in any line, as romanization decides it.
     val sib = remember(lines) { lines.map { it.text }.filter { t -> t.any(Romanizer::isKana) }.take(1) }
     var fixWord by remember { mutableStateOf<Pair<String, String>?>(null) } // word, its romaji in the line

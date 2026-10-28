@@ -340,9 +340,20 @@ object Store {
         if (script == "ja" && !read) Dictionary.install(context)
     }
 
+    const val PLACE_KEY = "display.place"
+
+    /**
+     * Where romanization goes everywhere: "below", "above" (ruby) or "custom" (the per-surface keys). Someone who set a
+     * per-surface key before this setting existed keeps it: custom.
+     */
+    val place get() = str(PLACE_KEY, if (listOf("display.list", "display.player", "lyrics.layout").any(prefs::contains)) "custom" else "below")
+
     /** "romanized", "both", "ruby" or "original". */
-    val listMode get() = str("display.list", "both")
-    val playerMode get() = str("display.player", "both")
+    val listMode get() = mode("display.list")
+    val playerMode get() = mode("display.player")
+    val lyricsRuby get() = when (place) { "below" -> false; "above" -> true; else -> str("lyrics.layout", "lines") == "ruby" }
+
+    private fun mode(key: String) = when (place) { "below" -> "both"; "above" -> "ruby"; else -> str(key, "both") }
 
     // ---- Bans ----
 

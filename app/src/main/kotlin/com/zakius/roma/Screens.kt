@@ -928,6 +928,7 @@ class Detail(val title: roma.core.Text, val subtitle: String, val thumb: String?
 @Composable
 fun PageScreen(p: Page) {
     if (p.kind == "login") return LoginScreen()
+    if (p.kind == "settings") return SettingsPage(p.id)
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val list = rememberLazyListState()
     Loader("${p.kind}:${p.id}", { partial -> loadDetail(p, partial) }, list, ::detailRows, Detail.serializer()) { d ->
@@ -1047,9 +1048,115 @@ private fun LoginScreen() {
 
 // ---------------------------------------------------------------- Settings
 
+/** The Settings tab: one row per category, each opening its own page ([SettingsPage]) with what it holds right now. */
 @Composable
 fun SettingsScreen() {
     Store.version
+    // Read here, not in the rows: neither is state, and a lazy row only recomposes when what it reads or holds changes.
+    val signedIn = Store.signedIn
+    val corrections = Store.romanizer.overrides.size
+    val banned = Store.banned.size
+    val lastFm = Store.str("lastfm.session", "").isNotBlank()
+    val place = PLACES.first { it.first == Store.place }.second.lowercase()
+    val dictionary = if (Dictionary.installed) "" else " · no Japanese dictionary"
+    val site = SITES.first { it.first == Store.str("share.site", "music") }.second
+    val context = LocalContext.current
+    LazyColumn(Modifier.fillMaxSize()) {
+        Update.available?.let { v ->
+            item { Row1("Update to roma $v", Update.status ?: "Restarts roma, so the music stops") { Update.install(context) } }
+        }
+        item { Category("youtube", "YouTube", (if (signedIn) "Signed in" else "Not signed in") + " · shared links open $site") }
+        item { Category("romanization", "Romanization", "Placement: $place · schemes · $corrections corrections$dictionary") }
+        item { Category("lyrics", "Lyrics", "Providers · original, romanization and translation lines") }
+        item { Category("playback", "Queue and radio", "Radio drift · filters · loudness · downloading ahead") }
+        item { Category("appearance", "Appearance", "Left-handed controls · true black · accent colour") }
+        item { Category("banned", "Banned", if (banned == 0) "Nothing banned" else "$banned songs and artists") }
+        item { Category("lastfm", "Last.fm", if (lastFm) "Scrobbling" else "Not connected") }
+        item { Text("roma ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall) }
+    }
+}
+
+@Composable
+private fun Category(id: String, title: String, subtitle: String) = Row1(title, subtitle) { Nav.open(Page("settings", id)) }
+
+/** One category of [SettingsScreen], opened as a page of the Settings tab, so Back returns to the list. */
+@Composable
+fun SettingsPage(id: String) {
+    Store.version
+    when (id) {
+        "youtube" -> YouTubeSettings()
+        "appearance" -> AppearanceSettings()
+        "romanization" -> RomanizationSettings()
+        "corrections" -> CorrectionSettings()
+        "lyrics" -> LyricsSettings()
+        "playback" -> PlaybackSettings()
+        "banned" -> BannedSettings()
+        else -> LastFmSettings()
+    }
+}
+
+@Composable
+private fun YouTubeSettings() = LazyColumn(Modifier.fillMaxSize()) {
+    item { Header("YouTube") }
+    item {
+        if (Store.signedIn) Row1("Signed in to YouTube Music", "Tap to sign out") {
+            CookieManager.getInstance().removeAllCookies(null)
+            YouTube.cookie = null
+            Store.set("cookie", null)
+        } else Row1("Sign in to YouTube Music", "For your library and likes") { Nav.open(Page("login", "")) }
+    }
+    item { Options("Shared links open", "share.site", "music", SITES) }
+}
+
+@Composable
+private fun AppearanceSettings() = LazyColumn(Modifier.fillMaxSize()) {
+    item { Header("Appearance") }
+    item { Switch1("Left-handed player controls", "ui.leftHanded", false) }
+    item { Switch1("True black in dark mode (saves power on OLED screens)", "ui.trueBlack", false) }
+    item { Switch1("Accent colour from the song's artwork", "ui.artColors", false) }
+}
+
+@Composable
+private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
+    item { Header("Romanization") }
+    item { Options("Placement", Store.PLACE_KEY, Store.place, PLACES) }
+    // Custom: each surface on its own, with the modes a single place can't express (Latin only, original only).
+    if (Store.place == "custom") {
+        item { Options("Lists", "display.list", "both", MODES) }
+        item { Options("Player", "display.player", "both", MODES) }
+        item { Options("Lyrics", "lyrics.layout", "lines", listOf("lines" to "A line under the original", "ruby" to "Above each word, like furigana")) }
+    }
+    item {
+        val n = Store.romanizer.overrides.size
+        Row1("Corrections", if (n == 0) "None yet · import a file" else "$n · export, import or remove them") { Nav.open(Page("settings", "corrections")) }
+    }
+    item { Header("Schemes") }
+    item { Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true) }
+    item { Switch1("Chinese: pinyin with tone marks", "rom.tones", true) }
+    item { Options("Cyrillic (other languages use their national Latin form)", "rom.cyrillic", "english", listOf("english" to "Russian: English-style", "polish" to "Russian: Polish-style", "iso9" to "ISO 9, every language")) }
+    item { Options("Greek", "rom.greek", "classical", listOf("classical" to "Classical, no accents (β = b)", "elot" to "Modern, ELOT 743 (β = v)")) }
+    item { Options("Han text without kana is", "rom.han", "ja", listOf("ja" to "Japanese", "zh" to "Chinese")) }
+    // Text only in scripts the user reads shows as written, in lists, the player, the notification and lyrics.
+    item { Text("Scripts you read (shown as written, not romanized)", Modifier.padding(start = 16.dp, top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
+    items(SCRIPTS) { (k, label) ->
+        val read = Store.readScripts
+        Row(Modifier.fillMaxWidth().clickable { Store.setReads(k, k !in read) }.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(k in read, null, Modifier.padding(end = 8.dp))
+            Text(label)
+        }
+    }
+    item {
+        val dictionary = when {
+            Dictionary.installed -> "Installed"
+            Dictionary.status != null -> Dictionary.status!!
+            else -> "Not installed: kanji stay as written. Tap to install (${Dictionary.DOWNLOAD})"
+        }
+        Row1("Japanese dictionary", dictionary, enabled = !Dictionary.installed) { Store.setReads("ja", false) }
+    }
+}
+
+@Composable
+private fun CorrectionSettings() {
     val context = LocalContext.current
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         uri ?: return@rememberLauncherForActivityResult
@@ -1063,59 +1170,12 @@ fun SettingsScreen() {
             Store.setOverrides(Store.json.decodeFromString<List<Override>>(text))
         }.onFailure { Toast.makeText(context, "Not an overrides file: ${it.message}", Toast.LENGTH_LONG).show() }
     }
-    var editing by remember { mutableStateOf<Pair<String, String>?>(null) } // key, title
-
-    // Read here, not in the rows: neither is state, and a lazy row only recomposes when what it reads or holds changes.
-    val signedIn = Store.signedIn
     val corrections = Store.romanizer.overrides
-    // Lazy: Settings is longer than the screen, and a Column composed and measured every row on each visit (24 to
-    // 32 ms of the main thread on the phone, 2026-10-26) where the visible ones take a third of that.
     LazyColumn(Modifier.fillMaxSize()) {
-        Update.available?.let { v ->
-            item { Row1("Update to roma $v", Update.status ?: "Restarts roma, so the music stops") { Update.install(context) } }
-        }
-        item { Header("Account") }
-        item {
-            if (signedIn) Row1("Signed in to YouTube Music", "Tap to sign out") {
-                CookieManager.getInstance().removeAllCookies(null)
-                YouTube.cookie = null
-                Store.set("cookie", null)
-            } else Row1("Sign in to YouTube Music", "For your library and likes") { Nav.open(Page("login", "")) }
-        }
-
-        item { Header("Display") }
-        item { Options("Lists", "display.list", "both", MODES) }
-        item { Options("Player", "display.player", "both", MODES) }
-        item { Options("Shared links open", "share.site", "music", listOf("music" to "YouTube Music", "youtube" to "YouTube")) }
-        item { Switch1("Left-handed player controls", "ui.leftHanded", false) }
-        item { Switch1("True black in dark mode (saves power on OLED screens)", "ui.trueBlack", false) }
-        item { Switch1("Accent colour from the song's artwork", "ui.artColors", false) }
-
-        item { Header("Romanization") }
-        item { Switch1("Japanese: long vowels with macrons (ō)", "rom.macrons", true) }
-        item { Switch1("Chinese: pinyin with tone marks", "rom.tones", true) }
-        item { Options("Cyrillic (other languages use their national Latin form)", "rom.cyrillic", "english", listOf("english" to "Russian: English-style", "polish" to "Russian: Polish-style", "iso9" to "ISO 9, every language")) }
-        item { Options("Greek", "rom.greek", "classical", listOf("classical" to "Classical, no accents (β = b)", "elot" to "Modern, ELOT 743 (β = v)")) }
-        item { Options("Han text without kana is", "rom.han", "ja", listOf("ja" to "Japanese", "zh" to "Chinese")) }
-        // Text only in scripts the user reads shows as written, in lists, the player, the notification and lyrics.
-        item { Text("Scripts you read (shown as written, not romanized)", Modifier.padding(start = 16.dp, top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary) }
-        items(SCRIPTS) { (k, label) ->
-            val read = Store.readScripts
-            Row(Modifier.fillMaxWidth().clickable { Store.setReads(k, k !in read) }.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(k in read, null, Modifier.padding(end = 8.dp))
-                Text(label)
-            }
-        }
-        item {
-            val dictionary = when {
-                Dictionary.installed -> "Installed"
-                Dictionary.status != null -> Dictionary.status!!
-                else -> "Not installed: kanji stay as written. Tap to install (${Dictionary.DOWNLOAD})"
-            }
-            Row1("Japanese dictionary", dictionary, enabled = !Dictionary.installed) { Store.setReads("ja", false) }
-        }
-        item { Row1("Corrections: ${corrections.size}", "Export them to one file") { export.launch("roma-corrections.json") } }
+        item { Header("Corrections") }
+        item { Row1("Export ${corrections.size} corrections", "To one file", enabled = corrections.isNotEmpty()) { export.launch("roma-corrections.json") } }
         item { Row1("Import corrections", "Replaces the current ones") { import.launch(arrayOf("application/json", "*/*")) } }
+        if (corrections.isEmpty()) item { Text("Long-press a title, artist or lyric word to correct its romanization.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
         items(corrections) { o ->
             val scope = when (o.scope) {
                 "song" -> "This song"; "artist" -> "This artist"
@@ -1126,47 +1186,68 @@ fun SettingsScreen() {
                 Store.saveOverride(Override(o.scope, o.id, o.original, ""))
             }
         }
+    }
+}
 
-        item { Header("Lyrics") }
-        val order = Store.lyricsOrder()
-        itemsIndexed(order) { i, p ->
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${i + 1}. ${p.name}", Modifier.weight(1f))
-                IconButton(onClick = { move(order, i, -1) }, enabled = i > 0) { Icon(Icons.Default.KeyboardArrowUp, "Move up") }
-                IconButton(onClick = { move(order, i, 1) }, enabled = i < order.size - 1) { Icon(Icons.Default.KeyboardArrowDown, "Move down") }
-                Switch(Store.lyricsEnabled(p), { Store.set("lyrics.on.${p.id}", it) }, Modifier.padding(end = 16.dp))
-            }
+@Composable
+private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
+    item { Header("Lyrics") }
+    item { Switch1("Show original", "lyrics.layer.original", true) }
+    item { Switch1("Show romanization", "lyrics.layer.latin", true) }
+    item {
+        val place = PLACES.first { it.first == Store.place }.second.lowercase()
+        Row1("Romanization settings", "Placement: $place · schemes · corrections") { Nav.open(Page("settings", "romanization")) }
+    }
+    // A global setting: never dimmed by the current song. A song whose translation isn't in the chosen language
+    // just shows none.
+    item { Switch1("Show translation", "lyrics.layer.translation", true) }
+    item {
+        val device = java.util.Locale.getDefault().let { it.getDisplayLanguage(it) }
+        Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device), then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
+    }
+    item { Text("Long-press a word in the lyrics to see its reading and correct it, for that song or everywhere.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
+    item { Header("Providers") }
+    val order = Store.lyricsOrder()
+    itemsIndexed(order) { i, p ->
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("${i + 1}. ${p.name}", Modifier.weight(1f))
+            IconButton(onClick = { move(order, i, -1) }, enabled = i > 0) { Icon(Icons.Default.KeyboardArrowUp, "Move up") }
+            IconButton(onClick = { move(order, i, 1) }, enabled = i < order.size - 1) { Icon(Icons.Default.KeyboardArrowDown, "Move down") }
+            Switch(Store.lyricsEnabled(p), { Store.set("lyrics.on.${p.id}", it) }, Modifier.padding(end = 16.dp))
         }
-        item { Text("All are asked at once. YouTube Music's text is the reference: word timing that matches it wins, then its own timed lyrics, then matching line timing, then its plain text. The order above only matters when YouTube Music has no lyrics.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
-        item { Row1("Search lyrics again for this song", "After changing the providers") { Playback.refetchLyrics() } }
-        item { Switch1("Show original", "lyrics.layer.original", true) }
-        item { Switch1("Show romanization", "lyrics.layer.latin", true) }
-        item { Options("Romanization layout", "lyrics.layout", "lines", listOf("lines" to "A line under the original", "ruby" to "Above each word, like furigana")) }
-        item { Text("Long-press a word in the lyrics to see its reading and correct it, for that song or everywhere.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
-        // A global setting: never dimmed by the current song. A song whose translation isn't in the chosen language
-        // just shows none.
-        item { Switch1("Show translation", "lyrics.layer.translation", true) }
-        item {
-            val device = java.util.Locale.getDefault().let { it.getDisplayLanguage(it) }
-            Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device), then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
-        }
+    }
+    item { Text("All are asked at once. YouTube Music's text is the reference: word timing that matches it wins, then its own timed lyrics, then matching line timing, then its plain text. The order above only matters when YouTube Music has no lyrics.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
+    item { Row1("Search lyrics again for this song", "After changing the providers") { Playback.refetchLyrics() } }
+}
 
-        item { Header("Queue and radio") }
-        item { Options("Radio may drift", "radio.leash", "free", listOf("close" to "Close: same and related artists", "medium" to "Medium: at most half other artists", "free" to "Free: YouTube's autoplay as is")) }
-        item { Switch1("Prefer audio tracks over music videos", "radio.preferAudio", true) }
-        item { Switch1("Hide live, sped up, nightcore, slowed", "radio.hideVersions", true) }
-        item { Switch1("Skip banned songs and artists", "radio.skipBanned", true) }
-        item { Switch1("Stop when the queue ends", "queue.stopAtEnd", false) }
-        item { Switch1("Even out loudness", "play.normalize", true) }
-        item { Switch1("Download songs ahead", "play.ahead", false, subtitle = "The whole song and the next 3, so playback goes on without a network. Uses more data: about 4 MB per song you skip") }
-        item { Switch1("Resume when headphones reconnect", "play.resumeOnHeadphones", false, subtitle = "Within an hour of them pausing the song by disconnecting") }
-        item { Switch1("Get likely songs ready on mobile data and in Battery Saver", "prepare.always", false, subtitle = "roma looks up the song you're likely to tap next (a page's first song, Search's top result, the queue's next songs) and loads its first second, so it starts at once. About 45 KB each, at most 3 MB an hour. Off: only on Wi-Fi and outside Battery Saver") }
+@Composable
+private fun PlaybackSettings() = LazyColumn(Modifier.fillMaxSize()) {
+    item { Header("Queue and radio") }
+    item { Options("Radio may drift", "radio.leash", "free", listOf("close" to "Close: same and related artists", "medium" to "Medium: at most half other artists", "free" to "Free: YouTube's autoplay as is")) }
+    item { Switch1("Prefer audio tracks over music videos", "radio.preferAudio", true) }
+    item { Switch1("Hide live, sped up, nightcore, slowed", "radio.hideVersions", true) }
+    item { Switch1("Skip banned songs and artists", "radio.skipBanned", true) }
+    item { Switch1("Stop when the queue ends", "queue.stopAtEnd", false) }
+    item { Header("Playback") }
+    item { Switch1("Even out loudness", "play.normalize", true) }
+    item { Switch1("Download songs ahead", "play.ahead", false, subtitle = "This song and the next 3, so playback goes on without a network. About 4 MB per song you skip") }
+    item { Switch1("Resume when headphones reconnect", "play.resumeOnHeadphones", false, subtitle = "Within an hour of disconnecting") }
+    item { Switch1("Preload on mobile data", "prepare.always", false, subtitle = "And in Battery Saver: the first second of songs you'll likely tap, so they start at once. At most 3 MB an hour") }
+}
 
-        item { Header("Banned") }
-        val banned = Store.banned
-        if (banned.isEmpty()) item { Text("Nothing banned.", Modifier.padding(horizontal = 16.dp)) }
-        items(banned) { b -> Row1("${if (b.kind == "artist") "Artist" else "Song"}: ${b.name}", "Tap to unban") { Store.unban(b.kind, b.id) } }
+@Composable
+private fun BannedSettings() = LazyColumn(Modifier.fillMaxSize()) {
+    item { Header("Banned") }
+    val banned = Store.banned
+    if (banned.isEmpty()) item { Text("Nothing banned. Ban a song or artist from a song's ⋯ menu.", Modifier.padding(horizontal = 16.dp)) }
+    items(banned) { b -> Row1("${if (b.kind == "artist") "Artist" else "Song"}: ${b.name}", "Tap to unban") { Store.unban(b.kind, b.id) } }
+}
 
+@Composable
+private fun LastFmSettings() {
+    val context = LocalContext.current
+    var editing by remember { mutableStateOf<Pair<String, String>?>(null) } // key, title
+    LazyColumn(Modifier.fillMaxSize()) {
         item { Header("Last.fm") }
         item { Row1("API key", Store.str("lastfm.key", "").ifBlank { "Not set: create one at last.fm/api/account/create" }) { editing = "lastfm.key" to "Last.fm API key" } }
         item { Row1("Shared secret", if (Store.str("lastfm.secret", "").isBlank()) "Not set" else "Set") { editing = "lastfm.secret" to "Last.fm shared secret" } }
@@ -1180,8 +1261,6 @@ fun SettingsScreen() {
                 else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LastFm(Store.str("lastfm.key", ""), "").authUrl("roma://lastfm"))))
             }
         }
-
-        item { Text("roma ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall) }
     }
     editing?.let { (key, title) -> TextInputDialog(title, Store.str(key, ""), { editing = null }) { Store.set(key, it.trim()) } }
 }
@@ -1237,6 +1316,10 @@ fun SetupScreen() {
 
 private val SCRIPTS = listOf("ja" to "Japanese", "zh" to "Chinese", "ko" to "Korean", "cyrillic" to "Cyrillic", "greek" to "Greek", "other" to "Other scripts")
 
+private val PLACES = listOf("below" to "Under the original", "above" to "Above each word, like furigana", "custom" to "Differently in lists, the player and lyrics")
+
+private val SITES = listOf("music" to "YouTube Music", "youtube" to "YouTube")
+
 private val MODES = listOf("both" to "Latin, original underneath", "ruby" to "Reading above each word, like furigana", "romanized" to "Latin only", "original" to "Original only")
 
 private fun move(order: List<roma.core.LyricsProvider>, i: Int, by: Int) {
@@ -1257,10 +1340,10 @@ private fun Row1(title: String, subtitle: String, enabled: Boolean = true, onCli
 @Composable
 private fun Switch1(title: String, key: String, def: Boolean, enabled: Boolean = true, subtitle: String? = null) {
     val on = Store.bool(key, def)
-    Row(Modifier.fillMaxWidth().clickable(enabled) { Store.set(key, !on) }.dim(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
+    Row(Modifier.fillMaxWidth().clickable(enabled) { Store.set(key, !on) }.dim(if (enabled) 1f else 0.4f).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 16.dp)) {
             Text(title)
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (subtitle != null) Text(subtitle, Modifier.padding(top = 2.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(on, { Store.set(key, it) }, enabled = enabled)
     }
