@@ -2,16 +2,6 @@ package roma.core
 
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.response.PlayerResponse
-import com.metrolist.innertubex.cipher.PlayerConfigRepository
-import com.metrolist.innertubex.cipher.RemotePlayerConfigStore
-import com.metrolist.innertubex.cipher.YouTubeCipherService
-import com.metrolist.innertubex.extraction.AudioQuality
-import com.metrolist.innertubex.extraction.ContentHints
-import com.metrolist.innertubex.extraction.InnerTubeExtractor
-import com.metrolist.innertubex.extraction.StreamResolveException
-import com.metrolist.innertubex.extraction.TokenProvider
-import com.metrolist.innertubex.extraction.YtConfigParserImpl
-import com.metrolist.innertubex.extraction.generateClientPlaybackNonce
 import com.metrolist.innertubex.models.YouTubeClient.Companion.VISIONOS
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -97,7 +87,7 @@ object Streams {
     internal fun reason(failures: List<Exception>): String {
         fun plain(e: Throwable): String? = when {
             e is java.net.UnknownHostException || e is java.net.SocketTimeoutException || e is java.net.ConnectException -> NO_CONNECTION
-            e is StreamResolveException && e.reason in setOf(StreamResolveException.Reason.NO_PLAYABLE_STREAM, StreamResolveException.Reason.UNKNOWN) -> null
+            e is StreamResolveException && e.reason == StreamResolveException.Reason.NO_PLAYABLE_STREAM -> null
             e is StreamResolveException && e.reason == StreamResolveException.Reason.NETWORK -> e.cause?.let(::plain) ?: NO_CONNECTION
             e is IllegalStateException && e.message?.startsWith("No audio stream") == true -> null
             else -> e.message?.trim()?.takeIf { it.isNotEmpty() }
@@ -166,48 +156,31 @@ object Streams {
 private val loudnessDb = java.util.concurrent.ConcurrentHashMap<String, Float>()
 
 /**
- * The fallback: InnerTubeX's extractor, as Metrolist uses it. It rolls over its own client list (VISIONOS 0.1 with
- * visitor data from a watch page, the embedded web player, others) and solves signatures with QuackJS and the
- * cipher hints from [CIPHER_CONFIG]. Account cookies ([com.metrolist.innertube.YouTube.cookie]) go with clients
- * that accept them; signed in, it retries age-restricted songs with an authenticated watch page. Clients that need
- * a PoToken (the music web client WEB_REMIX, the only one that plays age-restricted songs for an account without
- * Premium) are used only with a [tokenProvider]: without a token their streams stop after about 1 MB.
+ * The fallback: [Fallback], InnerTubeX's extractor cut to what roma asks of it. It rolls over its own client list
+ * (VISIONOS 0.1 with the session's visitor data, the web clients, the embedded player) and solves signatures with
+ * QuackJS. Account cookies ([com.metrolist.innertube.YouTube.cookie]) go with clients that accept them; signed in, it
+ * retries with an authenticated watch page. Clients that need a PoToken (the music web client WEB_REMIX, the only one
+ * that plays age-restricted songs for an account without Premium) are used only with a [tokenProvider]: without a
+ * token their streams stop after about 1 MB.
  */
 object InnerTubeXStreams {
-    private const val CIPHER_CONFIG = "https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/player_configs.json"
-
     /** Hands PoTokens to the clients that need one (a WebView BotGuard generator in the app); none by default. */
     @Volatile var tokenProvider: TokenProvider? = null
         set(value) { field = value; built = null }
 
-    @Volatile private var built: InnerTubeExtractor? = null
-
-    // The cipher config, kept for the process; RemotePlayerConfigStore refreshes it when a player hash is missing.
-    private val configRepository = object : PlayerConfigRepository {
-        override val enabled = true
-        override val sourceUrl = CIPHER_CONFIG
-        override val defaultSourceUrl = CIPHER_CONFIG
-        override var cachedJson = ""
-        override var cachedAtMs = 0L
-        override var cachedSourceUrl = ""
-        override var cachedEtag = ""
-    }
+    @Volatile private var built: Fallback? = null
 
     @Synchronized
-    private fun extractor(): InnerTubeExtractor = built ?: run {
+    private fun fallback(): Fallback = built ?: run {
         val t = com.metrolist.innertube.YouTube.extractionTransport()
-        val store = RemotePlayerConfigStore(t.httpClient, configRepository)
-        val cipher = YouTubeCipherService(t.httpClient, store)
-        val parser = YtConfigParserImpl(t.httpClient, t.innerTube, store, cipher)
-        InnerTubeExtractor(parser, cipher, t.innerTube, tokenProvider = tokenProvider).also { built = it }
+        Fallback(t.innerTube, t.httpClient, tokenProvider).also { built = it }
     }
 
     /** Blocking. Throws [StreamResolveException] with a plain reason ("This track is age-restricted.") on refusal. */
     fun audio(videoId: String, excludedClients: Set<String> = emptySet()): AudioSource = runBlocking {
-        val s = extractor().extract(videoId, ContentHints(), excludedClients, AudioQuality.HIGH, generateClientPlaybackNonce())
-            ?: throw StreamResolveException(StreamResolveException.Reason.NO_PLAYABLE_STREAM, "No playable stream found for this track.")
-        println("roma streams: $videoId via InnerTubeX ${s.profileId}") // which client, for logcat; no tokens
+        val s = fallback().extract(videoId, excludedClients, playbackNonce())
+        println("roma streams: $videoId via InnerTubeX ${s.profile}") // which client, for logcat; no tokens
         s.loudnessDb?.let { Streams.putLoudness(videoId, it.toFloat()) }
-        AudioSource(s.audioUrl, s.mimeType ?: "audio/*", s.bitrate ?: 0)
+        AudioSource(s.url, s.mimeType.ifEmpty { "audio/*" }, s.bitrate)
     }
 }
