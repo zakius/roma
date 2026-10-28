@@ -249,6 +249,9 @@ class RomanizeTest {
         assertEquals("Yofukashi no Uta", r.machine("よふかしのうた"))
         assertEquals("Futari", r.machine("二人"))
         assertEquals("Sebuntīn", r.machine("セブンティーン"))
+        // A small vowel kana stretches the word before it; it never starts a word of its own.
+        assertEquals(listOf("うっせぇ", "うっせぇ"), r.pieces("うっせぇうっせぇ"))
+        assertFalse(r.machine("クソだりぃな", sentence = true).contains(" i "))
         // Long vowels from the spelling: ō ū from オウ オオ ウウ, but eiga, ōkii, and a verb's own final u.
         assertEquals("tōkyō", r.machine("東京", sentence = true).lowercase())
         assertEquals("eiga", r.machine("映画", sentence = true).lowercase())

@@ -327,7 +327,11 @@ private fun RowScope.Slot(
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, if (label != null) null else description, Modifier.size(iconSize.dp), tint = color) // a label is read instead
-            if (label != null) Text(label, fontSize = 10.sp, lineHeight = 12.sp, color = color, maxLines = 1)
+            // Shrinks to fit rather than losing letters: with a large system font "Comments" is wider than its slot.
+            if (label != null) androidx.compose.foundation.text.BasicText(
+                label, style = androidx.compose.ui.text.TextStyle(color = color, lineHeight = 12.sp), maxLines = 1, softWrap = false,
+                autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = 10.sp),
+            )
         }
     }
 }
@@ -602,7 +606,8 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
     var fixWord by remember { mutableStateOf<Pair<String, String>?>(null) } // word, its romaji in the line
     // At the start line the list is already in place, so this first run doesn't move it.
     LaunchedEffect(current) { if (current > 2) state.animateScrollToItem(current - 2) }
-    Box { LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = state, contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 28.dp)) {
+    // Lines scroll out below the chips' strip (Translate, the sleep timer), so a chip never covers one.
+    Box { LazyColumn(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = CHIP_STRIP), state = state) {
         itemsIndexed(lines) { i, line ->
             val active = i == current
             val alpha = if (!synced || active) 1f else 0.45f
@@ -630,7 +635,8 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
                     val piece = if (karaoke && wordIndex >= 0) pieceAt(line, units, wordIndex) else wordIndex
                     RubyLine(line.pieces, line.pieceLatin, piece, big, onTap = seek) { i -> fixWord = wordAt(line, line.pieces, i) ?: fixWord }
                 } else {
-                    if (showOriginal && line.text.isNotBlank()) WordsText(units, line.text, wordIndex, big, seek, fix)
+                    // A line with no romanization shown (Latin, or a script the user reads) shows its original: it is the only text there is.
+                    if ((showOriginal || !latinShown) && line.text.isNotBlank()) WordsText(units, line.text, wordIndex, big, seek, fix)
                     if (latinShown) WordsText(unitLatin, line.latin, latinIndex, MaterialTheme.typography.bodyLarge, seek, fix)
                 }
                 val translation = line.translation
@@ -844,8 +850,8 @@ private fun CommentsView() {
         }
         state.items.isEmpty() -> return Centered(if (state.loading) "Loading comments…" else "No comments yet.")
     }
-    // Room at the top for the Translate chip, as in the lyrics.
-    Box { LazyColumn(Modifier.fillMaxSize(), list, contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 28.dp)) {
+    // A strip at the top for the Translate and sleep chips, as in the lyrics: the comments scroll under it, not under them.
+    Box { LazyColumn(Modifier.fillMaxSize().padding(top = CHIP_STRIP), list) {
         items(state.items.size) { i ->
             val s = state.items[i]
             val r = s.replies
@@ -929,6 +935,9 @@ private fun CommentRow(s: ShownComment, list: CommentList, avatar: androidx.comp
         }
     }
 }
+
+/** The top of the lyrics and comments, where the Translate and sleep chips sit. */
+private val CHIP_STRIP = 36.dp
 
 @Composable
 fun Centered(text: String) {

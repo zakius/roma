@@ -1089,7 +1089,8 @@ object Playback {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, LyricsState>) = size > 40
     }
     private fun romanizedKey(id: String) = "$id@${Store.romanizationVersion}"
-    private fun romanizedFile(id: String) = File(appContext.cacheDir, "lyrics/$id.r${Store.romanizationVersion}.json")
+    // The app's version too: an update may romanize differently, and its lyrics shouldn't show the old version's.
+    private fun romanizedFile(id: String) = File(appContext.cacheDir, "lyrics/$id.r${Store.romanizationVersion}.${BuildConfig.VERSION_CODE}.json")
 
     private fun romanizedLyrics(s: Song): LyricsState? = synchronized(romanizedCache) { romanizedCache[romanizedKey(s.id)] }
 

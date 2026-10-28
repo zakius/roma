@@ -64,6 +64,11 @@ class App : Application() {
         Update.init(this)
         Playback.init(this)
         Startup.later {
+            // After an update, the lyrics the last version romanized go (Playback.romanizedFile no longer reads them).
+            if (Store.prefs.getInt("lyrics.romanizedBy", 0) != BuildConfig.VERSION_CODE) {
+                Store.prefs.edit().putInt("lyrics.romanizedBy", BuildConfig.VERSION_CODE).apply()
+                Playback.forgetRomanizedLyrics()
+            }
             thread(name = "sudachi") {
                 // Below the UI threads, so loading the dictionary doesn't slow them.
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
