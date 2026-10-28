@@ -490,7 +490,8 @@ fun ModalBottomSheet(onDismissRequest: () -> Unit, sheetState: SheetState, conte
 /**
  * A text field: Android's EditText in an outlined box. Compose's own text field brings in about 120 KB of the APK (its
  * text input, selection and context menu); EditText is in the platform. Text set from outside (a picked search
- * suggestion) puts the caret at its end. [onSearch] gives the keyboard a Search key.
+ * suggestion) puts the caret at its end. [onSearch] gives the keyboard a Search key. [autoFocus]: focused, with the
+ * keyboard up, as soon as it is on screen (a dialog that is only for typing).
  */
 @Composable
 fun OutlinedTextField(
@@ -501,6 +502,7 @@ fun OutlinedTextField(
     label: String? = null,
     placeholder: String? = null,
     onSearch: (() -> Unit)? = null,
+    autoFocus: Boolean = false,
 ) {
     val s = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
@@ -559,6 +561,7 @@ fun OutlinedTextField(
                     // Focus from code (a new search) brings the keyboard up too, and leaving the field puts it away.
                     setOnFocusChangeListener { v, f -> focused = f; if (f) v.showKeyboard() else v.context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(v.windowToken, 0) }
                     edit = this
+                    if (autoFocus) post { requestFocus() }
                 }
             },
             Modifier.fillMaxWidth(),
@@ -579,4 +582,15 @@ fun OutlinedTextField(
     }
 }
 
-private fun View.showKeyboard() = post { context.getSystemService(InputMethodManager::class.java).showSoftInput(this, 0) }
+// Android ignores the request until the window has focus: a field focused as its dialog opens waits for that.
+private fun View.showKeyboard() {
+    val show = { post { context.getSystemService(InputMethodManager::class.java).showSoftInput(this, 0) } }
+    if (hasWindowFocus()) { show(); return }
+    viewTreeObserver.addOnWindowFocusChangeListener(object : android.view.ViewTreeObserver.OnWindowFocusChangeListener {
+        override fun onWindowFocusChanged(hasFocus: Boolean) {
+            if (!hasFocus) return
+            viewTreeObserver.removeOnWindowFocusChangeListener(this)
+            if (isFocused) show()
+        }
+    })
+}

@@ -400,7 +400,9 @@ class Romanizer(
                 t.pos[1] == "接続助詞" && (surface in setOf("て", "で", "ちゃ", "じゃ") || surface == "ば" && afterInflected) ||
                 surface == "って" && prev?.surface == "だ" ||
                 prev?.pos?.get(1) == "数詞" && pos == "名詞" || stray ||
-                t.pos[1] == "準体助詞" && surface == "ん" // こんなんじゃ "konnan ja", なんだ "nan da"
+                t.pos[1] == "準体助詞" && surface == "ん" || // こんなんじゃ "konnan ja", なんだ "nan da"
+                // A small vowel kana only stretches the sound before it (うっせぇ, だりぃ): it can't start a word.
+                prev != null && surface.all { it in "ぁぃぅぇぉァィゥェォ" }
             // A sentence-final particle can't start a phrase: there it is a misread first syllable. Sudachi reads
             // よふかし (夜更かし) as よ|ふかし, so it joins the next word: "Yofukashi no Uta".
             stray = t.pos[1] == "終助詞" && !prevWord && tokens.getOrNull(i + 1)?.surface?.any(::isKana) == true

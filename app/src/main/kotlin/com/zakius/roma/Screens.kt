@@ -17,6 +17,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
@@ -286,8 +287,12 @@ val Song.romanizable get() = !title.isLatin || artists.any { !it.name.isLatin } 
  */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun CorrectDialog(s: Song, onDone: () -> Unit) {
-    val fields = listOf(s.title) + s.artists.map { it.name } + listOfNotNull(s.album?.name)
+fun CorrectDialog(song: Song, onDone: () -> Unit) {
+    // The song it was opened for, even if the player moves on to the next one meanwhile.
+    val s = remember { song }
+    // Only names with something to romanize, each saying what it is: a title and its album are often the same string.
+    val named = (listOf("Title" to s.title) + s.artists.map { "Artist" to it.name } + listOfNotNull(s.album?.name?.let { "Album" to it })).filter { !it.second.isLatin }
+    val fields = named.map { it.second }
     var field by remember { mutableIntStateOf(0) }
     var scope by remember { mutableStateOf("song") }
     var latin by remember(field) { mutableStateOf(fields[field].latin) }
@@ -296,21 +301,21 @@ fun CorrectDialog(s: Song, onDone: () -> Unit) {
     // The field's words, each a button that opens its reading: only when there is more than one to choose from.
     val words = remember(field) {
         val f = fields[field]
-        if (f.isLatin) emptyList() else Store.romanizer.pieces(f.original, fields.map { it.original }).map { it.trim() }.filter { Romanizer.hasNonLatin(it) }
+        Store.romanizer.pieces(f.original, fields.map { it.original }).map { it.trim() }.filter { Romanizer.hasNonLatin(it) }
     }
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text("Correct romanization") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                fields.forEachIndexed { i, t -> Choice(t.original, field == i) { field = i } }
+                named.forEachIndexed { i, (what, t) -> Choice("$what: ${t.original}", field == i) { field = i } }
                 if (words.size > 1) {
                     Text("Or one word's reading:", style = MaterialTheme.typography.bodySmall)
                     androidx.compose.foundation.layout.FlowRow { words.forEach { w -> TextButton(onClick = { word = w }) { Text(w) } } }
                 }
                 HorizontalDivider()
                 Choice("Only this song", scope == "song") { scope = "song" }
-                Choice("This artist's songs", scope == "artist") { scope = "artist" }
+                Choice("This artist's songs", scope == "artist", enabled = s.firstArtistId != null) { scope = "artist" }
                 Choice("Everywhere", scope == "text") { scope = "text" }
                 OutlinedTextField(latin, { latin = it }, label = "Latin form (empty: automatic)")
             }
@@ -383,16 +388,21 @@ fun TextInputDialog(title: String, initial: String, onDone: () -> Unit, onSave: 
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text(title) },
-        text = { OutlinedTextField(value, { value = it }, singleLine = true) },
+        text = { OutlinedTextField(value, { value = it }, singleLine = true, autoFocus = true) },
         confirmButton = { TextButton(onClick = { onSave(value); onDone() }) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
     )
 }
 
 @Composable
-private fun Choice(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected, onClick)
+private fun Choice(label: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    // The row is the one radio button TalkBack sees, with its label.
+    Row(
+        Modifier.fillMaxWidth().selectable(selected, enabled, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onClick)
+            .dim(if (enabled) 1f else 0.4f).padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected, null)
         Text(label)
     }
 }
@@ -742,7 +752,7 @@ private fun Mixes(mixes: List<Item>?, read: Boolean) {
     Text("Your mixes", Modifier.padding(start = 16.dp, top = 16.dp), style = MaterialTheme.typography.titleMedium)
     @Composable
     fun Hint(text: String) = Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).dim(0.5f), style = MaterialTheme.typography.bodyMedium)
-    if (!Store.signedIn) return Hint("Sign in to see your mixes")
+    if (!Store.signedIn) return TextButton(onClick = { Nav.open(Page("login", "")) }, Modifier.padding(horizontal = 4.dp)) { Text("Sign in to see your mixes") }
     val config = androidx.compose.ui.platform.LocalConfiguration.current
     val list = mixes.orEmpty()
     fun play(m: Item) { Playback.playMix(m.id, title = Store.shown(m.title), thumb = m.thumb); Nav.tab = TAB_PLAYER }
@@ -805,7 +815,8 @@ fun SearchScreen() {
     val shown = LocalTabShown.current
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     LaunchedEffect(shown) { if (!shown) focusManager.clearFocus() else if (query.isEmpty()) focus.requestFocus() }
-    fun search(q: String) { query = q; submitted = q.trim(); asTyped = null }
+    // The results take the keyboard's place.
+    fun search(q: String) { query = q; submitted = q.trim(); asTyped = null; focusManager.clearFocus() }
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
             query, { query = it },
@@ -1055,7 +1066,8 @@ fun SettingsScreen() {
     // Read here, not in the rows: neither is state, and a lazy row only recomposes when what it reads or holds changes.
     val signedIn = Store.signedIn
     val corrections = Store.romanizer.overrides.size
-    val banned = Store.banned.size
+    val bannedSongs = Store.banned.count { it.kind != "artist" }
+    val bannedArtists = Store.banned.size - bannedSongs
     val lastFm = Store.str("lastfm.session", "").isNotBlank()
     val place = PLACES.first { it.first == Store.place }.second.lowercase()
     val dictionary = if (Dictionary.installed) "" else " · no Japanese dictionary"
@@ -1066,11 +1078,11 @@ fun SettingsScreen() {
             item { Row1("Update to roma $v", Update.status ?: "Restarts roma, so the music stops") { Update.install(context) } }
         }
         item { Category("youtube", "YouTube", (if (signedIn) "Signed in" else "Not signed in") + " · shared links open $site") }
-        item { Category("romanization", "Romanization", "Placement: $place · schemes · $corrections corrections$dictionary") }
+        item { Category("romanization", "Romanization", "Placement: $place · schemes · ${count(corrections, "correction") ?: "0 corrections"}$dictionary") }
         item { Category("lyrics", "Lyrics", "Providers · original, romanization and translation lines") }
         item { Category("playback", "Queue and radio", "Radio drift · filters · loudness · downloading ahead") }
         item { Category("appearance", "Appearance", "Left-handed controls · true black · accent colour") }
-        item { Category("banned", "Banned", if (banned == 0) "Nothing banned" else "$banned songs and artists") }
+        item { Category("banned", "Banned", if (bannedSongs + bannedArtists == 0) "Nothing banned" else listOfNotNull(count(bannedSongs, "song"), count(bannedArtists, "artist")).joinToString(" · ")) }
         item { Category("lastfm", "Last.fm", if (lastFm) "Scrobbling" else "Not connected") }
         item { Text("roma ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall) }
     }
@@ -1173,7 +1185,7 @@ private fun CorrectionSettings() {
     val corrections = Store.romanizer.overrides
     LazyColumn(Modifier.fillMaxSize()) {
         item { Header("Corrections") }
-        item { Row1("Export ${corrections.size} corrections", "To one file", enabled = corrections.isNotEmpty()) { export.launch("roma-corrections.json") } }
+        item { Row1("Export ${count(corrections.size, "correction") ?: "corrections"}", "To one file", enabled = corrections.isNotEmpty()) { export.launch("roma-corrections.json") } }
         item { Row1("Import corrections", "Replaces the current ones") { import.launch(arrayOf("application/json", "*/*")) } }
         if (corrections.isEmpty()) item { Text("Long-press a title, artist or lyric word to correct its romanization.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
         items(corrections) { o ->
@@ -1192,8 +1204,11 @@ private fun CorrectionSettings() {
 @Composable
 private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Header("Lyrics") }
-    item { Switch1("Show original", "lyrics.layer.original", true) }
-    item { Switch1("Show romanization", "lyrics.layer.latin", true) }
+    // At least one of the two stays on: with neither, the lyrics would be blank.
+    val original = Store.bool("lyrics.layer.original", true)
+    val latin = Store.bool("lyrics.layer.latin", true)
+    item { Switch1("Show original", "lyrics.layer.original", true, enabled = latin || !original) }
+    item { Switch1("Show romanization", "lyrics.layer.latin", true, enabled = original || !latin) }
     item {
         val place = PLACES.first { it.first == Store.place }.second.lowercase()
         Row1("Romanization settings", "Placement: $place · schemes · corrections") { Nav.open(Page("settings", "romanization")) }
@@ -1203,7 +1218,7 @@ private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Switch1("Show translation", "lyrics.layer.translation", true) }
     item {
         val device = java.util.Locale.getDefault().let { it.getDisplayLanguage(it) }
-        Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device), then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
+        Options("Translation language", "lyrics.translationLang", "device", listOf("device" to "Device language ($device)" + if (java.util.Locale.getDefault().language == "en") "" else ", then English", "en" to "English", "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian"))
     }
     item { Text("Long-press a word in the lyrics to see its reading and correct it, for that song or everywhere.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
     item { Header("Providers") }
@@ -1217,7 +1232,10 @@ private fun LyricsSettings() = LazyColumn(Modifier.fillMaxSize()) {
         }
     }
     item { Text("All are asked at once. YouTube Music's text is the reference: word timing that matches it wins, then its own timed lyrics, then matching line timing, then its plain text. The order above only matters when YouTube Music has no lyrics.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
-    item { Row1("Search lyrics again for this song", "After changing the providers") { Playback.refetchLyrics() } }
+    item {
+        Playback.tick // the song can start or end while this page is open
+        Row1("Search lyrics again for this song", "After changing the providers", enabled = Playback.current()?.song != null) { Playback.refetchLyrics() }
+    }
 }
 
 @Composable
@@ -1249,7 +1267,12 @@ private fun LastFmSettings() {
     var editing by remember { mutableStateOf<Pair<String, String>?>(null) } // key, title
     LazyColumn(Modifier.fillMaxSize()) {
         item { Header("Last.fm") }
-        item { Row1("API key", Store.str("lastfm.key", "").ifBlank { "Not set: create one at last.fm/api/account/create" }) { editing = "lastfm.key" to "Last.fm API key" } }
+        item { Row1("API key", Store.str("lastfm.key", "").ifBlank { "Not set" }) { editing = "lastfm.key" to "Last.fm API key" } }
+        item {
+            Row1("Create an API key", "Opens last.fm/api/account/create; it gives the key and the shared secret") {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.last.fm/api/account/create")))
+            }
+        }
         item { Row1("Shared secret", if (Store.str("lastfm.secret", "").isBlank()) "Not set" else "Set") { editing = "lastfm.secret" to "Last.fm shared secret" } }
         item {
             val connected = Store.str("lastfm.session", "").isNotBlank()
@@ -1373,6 +1396,9 @@ private suspend fun loadLibrary(browseId: String, partial: suspend (List<Item>) 
     }
     return all
 }
+
+/** "1 song", "3 songs"; null for none. */
+private fun count(n: Int, what: String) = if (n == 0) null else "$n $what" + if (n == 1) "" else "s"
 
 /** A failure in plain words, with what to do about it. */
 fun plainError(t: Throwable): String = when (generateSequence(t) { it.cause }.firstOrNull { it is java.io.IOException } ?: t) {
