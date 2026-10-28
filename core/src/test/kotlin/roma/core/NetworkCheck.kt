@@ -55,7 +55,7 @@ fun main() = runBlocking {
     check(replies.comments.isNotEmpty() && replies.comments.all { it.thread == null })
 
     // Lyrics providers, each on its own, with the song's original metadata, then the rule that picks one.
-    for (query in listOf("YOASOBI 夜に駆ける", "米津玄師 Lemon", "The Weeknd Blinding Lights", "周杰倫 晴天")) {
+    for (query in listOf("YOASOBI 夜に駆ける", "米津玄師 Lemon", "The Weeknd Blinding Lights", "周杰倫 晴天", "BTS Spring Day")) {
         val s = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG).getOrThrow().items.first() as SongItem
         val q = LyricsQuery(s.id, s.title, s.artists.joinToString { it.name }, s.album?.name, s.duration ?: 0)
         println("\n${s.id} ${s.title} / ${q.artist}")
@@ -68,5 +68,11 @@ fun main() = runBlocking {
         }
         val r = LyricsProviders.find(q, LyricsProviders.all, jvmIcu)
         println("  -> rule ${r.result?.rule}: ${r.result?.lyrics?.source}, complete=${r.complete}, translations=${r.result?.translations?.map { "${it.source}:${it.language}" }}")
+        // The opt-in machine translation, into Polish: no provider has that language.
+        val chosen = r.result?.lyrics ?: continue
+        val pl = GoogleTranslate.layer(chosen, "pl")
+        println("  Google pl: " + (pl?.let { t -> "${t.lines.count { it.translation != null }}/${t.lines.size} lines, first=${t.lines.firstOrNull { it.translation != null }?.translation}" } ?: "same language"))
+        check(pl != null && pl.lines.count { it.translation != null } > pl.lines.size / 2)
     }
+    check(GoogleTranslate.layer(Lyrics("t", listOf(Line(0, "I've been on my own for long enough")), true), "en") == null) // already English
 }

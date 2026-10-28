@@ -381,10 +381,13 @@ object Store {
 
     fun lyricsEnabled(p: LyricsProvider) = bool("lyrics.on.${p.id}", true)
 
-    /** Whether a translation in this language is shown: the chosen language, or by default the device's, then English. */
-    fun translationWanted(lang: String?): Boolean {
+    /**
+     * The translation languages shown, best first: the chosen language, or by default the device's, then English. The
+     * first is the one Google translates into.
+     */
+    fun translationLanguages(): List<String> {
         val set = str("lyrics.translationLang", "device")
-        return lang != null && lang in (if (set == "device") listOf(java.util.Locale.getDefault().language, "en") else listOf(set))
+        return if (set == "device") listOf(java.util.Locale.getDefault().language, "en").distinct() else listOf(set)
     }
 
     // ---- Local index: every song that entered the app; the played ones are searchable by their Latin form ----

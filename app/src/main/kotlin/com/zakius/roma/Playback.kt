@@ -50,6 +50,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import roma.core.GoogleTranslate
 import roma.core.LastFm
 import roma.core.Lyrics
 import roma.core.LyricsProviders
@@ -1118,6 +1119,34 @@ object Playback {
         synchronized(romanizedCache) { romanizedCache.remove(romanizedKey(s.id)) }
         lyrics = null
         loadLyrics(s)
+    }
+
+    /**
+     * Asks Google for the song's lyrics in the first translation language and keeps the layer with its lyrics, on
+     * disk too, so the song shows it from then on. [done] gets what to tell the user, or null when it worked.
+     */
+    fun googleTranslate(id: String, done: (String?) -> Unit) {
+        val l = lyrics?.takeIf { it.songId == id }?.lyrics ?: return done(null)
+        val lang = Store.translationLanguages().first()
+        scope.launch {
+            withContext(Dispatchers.IO) { runCatching { GoogleTranslate.layer(l, lang) } }.onSuccess { t ->
+                if (t == null) done("The lyrics are already in ${java.util.Locale.forLanguageTag(lang).displayLanguage}")
+                else { addTranslation(id, t); done(null) }
+            }.onFailure { done("Couldn't translate. Check Wi-Fi or mobile data, then try again.") }
+        }
+    }
+
+    /** Adds a translation layer wherever the song's lyrics are kept: the view, memory, the raw and romanized files. */
+    private fun addTranslation(id: String, layer: Translation) {
+        val state = lyrics?.takeIf { it.songId == id } ?: return
+        val t = state.translations + layer
+        lyrics = LyricsState(id, state.lyrics, t).also { synchronized(romanizedCache) { romanizedCache[romanizedKey(id)] = it } }
+        scope.launch(Dispatchers.IO) {
+            for (f in listOf(File(appContext.cacheDir, "lyrics/$id.json"), romanizedFile(id))) runCatching {
+                val r = Store.json.decodeFromString<LyricsResult>(f.readText())
+                f.writeText(Store.json.encodeToString(LyricsResult(r.lyrics, t, r.rule)))
+            }
+        }
     }
 
     // ---- Last.fm ----
