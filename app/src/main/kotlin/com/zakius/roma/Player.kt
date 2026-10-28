@@ -715,8 +715,8 @@ fun RubyLine(
                     .then(if (i == current) Modifier.background(hi.copy(alpha = 0.18f)) else Modifier),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // An empty slot (punctuation) keeps the words on one baseline.
-                Text(latin[i].trim().ifEmpty { " " }, style = latinStyle, color = color(i, latinStyle.color.takeOrElse { on }))
+                // An empty slot (punctuation, a word already in Latin letters) keeps the words on one baseline.
+                Text((if (Romanizer.hasNonLatin(u)) latin[i].trim() else "").ifEmpty { " " }, style = latinStyle, color = color(i, latinStyle.color.takeOrElse { on }))
                 Text(u.trim(), style = style, color = color(i, style.color.takeOrElse { on }))
             }
         }
@@ -777,6 +777,9 @@ private class ShownComment(val c: roma.core.Comment, val text: String, val latin
     var open by mutableStateOf(false)
     /** A long comment shows a few lines until tapped. Kept here, not in the row, so it survives scrolling away. */
     var unfolded by mutableStateOf(false)
+    /** Google's translation, once asked for (see [CommentList.translate]); null also when it is already in that language. */
+    var translation by mutableStateOf<String?>(null)
+    var translated = false
 }
 
 /** Comments loaded a page at a time: the song's, or one comment's replies. */
@@ -785,6 +788,8 @@ private class CommentList(var next: (() -> roma.core.CommentPage)?, val songId: 
     var disabled by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
     var loading by mutableStateOf(false)
+    /** The Translate chip is on: each comment shown, and each reply, is translated as it comes into view. */
+    var translate by mutableStateOf(false)
 
     suspend fun load() {
         val fetch = next ?: return
@@ -839,14 +844,15 @@ private fun CommentsView() {
         }
         state.items.isEmpty() -> return Centered(if (state.loading) "Loading comments…" else "No comments yet.")
     }
-    Box { LazyColumn(Modifier.fillMaxSize(), list) {
+    // Room at the top for the Translate chip, as in the lyrics.
+    Box { LazyColumn(Modifier.fillMaxSize(), list, contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 28.dp)) {
         items(state.items.size) { i ->
             val s = state.items[i]
             val r = s.replies
-            CommentRow(s, onReplies = s.c.thread?.let { { s.open = !s.open; if (s.open && r.items.isEmpty()) scope.launch { r.load() } } })
+            CommentRow(s, state, onReplies = s.c.thread?.let { { s.open = !s.open; if (s.open && r.items.isEmpty()) scope.launch { r.load() } } })
             // A thread opens under its comment, its avatars in line with the comment's text; later pages load on "More replies".
             if (s.open) Column(Modifier.padding(start = 48.dp, bottom = 4.dp)) {
-                r.items.forEach { CommentRow(it, avatar = 24.dp) }
+                r.items.forEach { CommentRow(it, state, avatar = 24.dp) }
                 val more = Modifier.padding(start = 4.dp)
                 when {
                     r.loading -> Text("Loading…", Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -862,12 +868,26 @@ private fun CommentsView() {
             }
         }
     }
-    FastScroll(list) }
+    FastScroll(list)
+    // Like the lyrics' chip, but a toggle: comments keep coming as the list scrolls, so it stays on for them.
+    Surface(Modifier.align(Alignment.TopEnd).padding(4.dp), shape = RoundedCornerShape(50), color = if (state.translate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer) {
+        Text(if (state.translate) "Original" else "Translate", Modifier.clickable { state.translate = !state.translate }.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
+    } }
 }
 
 @Composable
-private fun CommentRow(s: ShownComment, avatar: androidx.compose.ui.unit.Dp = 36.dp, onReplies: (() -> Unit)? = null) {
+private fun CommentRow(s: ShownComment, list: CommentList, avatar: androidx.compose.ui.unit.Dp = 36.dp, onReplies: (() -> Unit)? = null) {
     val c = s.c
+    // Sent to Google only after the user's tap, one comment at a time: comments mix languages, and Google detects
+    // one language per request.
+    val context = LocalContext.current
+    LaunchedEffect(list.translate) {
+        if (!list.translate || s.translated) return@LaunchedEffect
+        val lang = Store.translationLanguages().first()
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { roma.core.GoogleTranslate.text(s.text, lang) } }
+            .onSuccess { s.translation = it; s.translated = true }
+            .onFailure { if (list.translate) { list.translate = false; android.widget.Toast.makeText(context, "Couldn't translate. Check Wi-Fi or mobile data, then try again.", android.widget.Toast.LENGTH_LONG).show() } }
+    }
     val type = MaterialTheme.typography
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = if (onReplies == null) 8.dp else 0.dp)) {
@@ -888,6 +908,8 @@ private fun CommentRow(s: ShownComment, avatar: androidx.compose.ui.unit.Dp = 36
             Column(if (folds) Modifier.clickable(onClickLabel = if (s.unfolded) "Show less" else "Read more") { s.unfolded = !s.unfolded } else Modifier) {
                 Text(s.latin ?: s.text, style = type.bodyMedium, maxLines = lines, overflow = TextOverflow.Ellipsis, onTextLayout = { folds = folds || it.hasVisualOverflow })
                 if (s.latin != null) Text(s.text, style = type.bodySmall, color = muted, maxLines = lines, overflow = TextOverflow.Ellipsis, onTextLayout = { folds = folds || it.hasVisualOverflow })
+                val translation = s.translation
+                if (list.translate && translation != null) Text(translation, Modifier.padding(top = 4.dp), style = type.bodyMedium, color = MaterialTheme.colorScheme.primary, maxLines = lines, overflow = TextOverflow.Ellipsis, onTextLayout = { folds = folds || it.hasVisualOverflow })
                 if (folds) Text(if (s.unfolded) "Show less" else "Read more", Modifier.padding(top = 2.dp), style = type.labelMedium, color = muted)
             }
             if (c.likes.isNotBlank() || onReplies != null) Row(if (onReplies != null) Modifier.heightIn(min = 40.dp) else Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
