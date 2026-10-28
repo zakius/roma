@@ -248,8 +248,9 @@ private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
         Playback.sleepAt != 0L -> "Sleep in ${((Playback.sleepAt - SystemClock.elapsedRealtime()) / 60_000 + 1).coerceAtLeast(1)} min"
         else -> return
     }
-    Surface(modifier.padding(4.dp), shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer) {
-        Text(text, Modifier.clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
+    // One line, at most about 60% of a phone's width: with a large font it ends in "…" rather than reaching Translate.
+    Surface(modifier.padding(4.dp).widthIn(max = 240.dp), shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer) {
+        Text(text, Modifier.clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

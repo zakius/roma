@@ -17,6 +17,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
@@ -395,8 +396,13 @@ fun TextInputDialog(title: String, initial: String, onDone: () -> Unit, onSave: 
 
 @Composable
 private fun Choice(label: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(enabled, onClick = onClick).dim(if (enabled) 1f else 0.4f).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        RadioButton(selected, onClick.takeIf { enabled })
+    // The row is the one radio button TalkBack sees, with its label.
+    Row(
+        Modifier.fillMaxWidth().selectable(selected, enabled, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onClick)
+            .dim(if (enabled) 1f else 0.4f).padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected, null)
         Text(label)
     }
 }
