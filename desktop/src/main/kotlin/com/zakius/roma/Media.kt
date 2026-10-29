@@ -59,7 +59,6 @@ class StreamFile private constructor(val id: String) {
                         if (n < 0) break
                         out.write(buf, 0, n)
                         synchronized(lock) { have += n; lock.notifyAll() }
-                        if (Thread.interrupted()) throw IOException("cancelled")
                     }
                 }
             }
@@ -195,7 +194,9 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
     override val durationMs get() = d.durationMs
     private val process: Process
     private val pcm: java.io.InputStream
+    private val writer: Thread
     @Volatile private var failure: Throwable? = null
+    @Volatile private var closed = false
     @Volatile private var drop = -1L // samples per channel still to drop; -1 until the first frame's time is known
     private val bytes = ByteArray(4096 * 2 * d.channels)
 
@@ -205,7 +206,7 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
             "-f", "s16le", "-ac", "${d.channels}", "-ar", "${d.sampleRate}", "pipe:1").redirectError(ProcessBuilder.Redirect.DISCARD).start()
         pcm = process.inputStream
         val (profile, rate, ch) = d.adts
-        Thread({
+        writer = Thread({
             try {
                 process.outputStream.buffered().use { o ->
                     var first = true
@@ -224,16 +225,23 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
                     if (first) drop = 0
                 }
             } catch (t: Throwable) {
-                if (process.isAlive) failure = t
+                if (!closed) failure = t
                 process.destroy()
             }
-        }, "aac in").apply { isDaemon = true }.start()
+        }, "aac in").apply { isDaemon = true; start() }
     }
 
     override fun read(out: ShortArray): Int {
         while (true) {
             val n = readFully(minOf(bytes.size, out.size * 2))
-            if (n <= 0) { failure?.let { throw it }; return -1 }
+            if (n <= 0) {
+                failure?.let { throw it }
+                // roma-aac ended on its own: at the end of the input, or a crash mid-song, which isn't the song's end.
+                if (!closed && process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() != 0) {
+                    throw IOException("roma-aac stopped (exit ${process.exitValue()})")
+                }
+                return -1
+            }
             var frames = n / (2 * channels)
             var from = 0
             if (drop > 0) { val k = minOf(drop, frames.toLong()).toInt(); from = k; drop -= k }
@@ -256,7 +264,11 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
         return got - got % frame
     }
 
-    override fun close() { process.destroy() }
+    override fun close() {
+        closed = true
+        writer.interrupt()
+        process.destroy()
+    }
 
     companion object {
         /**

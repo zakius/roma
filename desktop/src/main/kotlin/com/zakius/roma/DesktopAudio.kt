@@ -17,6 +17,7 @@ class DesktopAudio : AudioPlayer {
     private var index = 0
     private var startAt = 0L // where the current song starts when it's loaded
     private var loaded: String? = null // the song Output has, or null
+    private var announced: String? = null // the song the last onMediaItemTransition was for
     private var state = AudioPlayer.STATE_IDLE
     private var error: Throwable? = null
 
@@ -49,6 +50,7 @@ class DesktopAudio : AudioPlayer {
 
     override fun setMediaItems(items: List<Entry>, start: Int, positionMs: Long) {
         list.clear(); list.addAll(items)
+        announced = null // a new list is a transition even to the same song: ExoPlayer's new items are new tags
         moveTo(start.coerceIn(0, maxOf(0, list.size - 1)), positionMs, listChanged = true)
     }
 
@@ -74,8 +76,9 @@ class DesktopAudio : AudioPlayer {
         val current = list.getOrNull(index)
         for (i in from until to) list.removeAt(from)
         list.addAll(from, items)
+        if (index >= to) index += items.size - (to - from) // the range was before the current song
         // Replacing the current song with itself (a romanization redo) keeps it playing.
-        if (index in from until to && list.getOrNull(index)?.song?.id != current?.song?.id) return moveTo(index, 0, listChanged = true)
+        else if (index >= from && list.getOrNull(index)?.song?.id != current?.song?.id) return moveTo(index.coerceAtMost(list.size - 1), 0, listChanged = true)
         changed(list = true)
     }
 
@@ -91,11 +94,11 @@ class DesktopAudio : AudioPlayer {
     }
 
     private fun moveTo(i: Int, positionMs: Long, listChanged: Boolean, gapless: Boolean = false) {
-        val transition = i != index || list.getOrNull(i)?.song?.id != loaded
+        val transition = i != index || list.getOrNull(i)?.song?.id != announced
         index = i
         startAt = positionMs
         if (list.isEmpty()) { unload(); state = AudioPlayer.STATE_IDLE; changed(list = listChanged); return }
-        if (transition) listener?.onMediaItemTransition()
+        if (transition) { announced = list[i].song.id; listener?.onMediaItemTransition() }
         if (playWhenReady || state != AudioPlayer.STATE_IDLE) prepare(gapless) else unload()
         changed(list = listChanged, transition = transition, discontinuity = true)
     }
@@ -164,6 +167,7 @@ class DesktopAudio : AudioPlayer {
     private fun ended(id: String) {
         if (id != loaded) return
         val next = if (repeatMode == AudioPlayer.REPEAT_MODE_ONE) index else step(1)
+        announced = null // the same song again (Repeat one) is a transition too, as in Media3
         if (pauseAtEndOfMediaItems) {
             playWhenReady = false
             listener?.onPlayWhenReadyChanged(false, AudioPlayer.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM)
@@ -180,6 +184,7 @@ class DesktopAudio : AudioPlayer {
 
     private fun failed(id: String, t: Throwable) {
         if (id != loaded) return
+        startAt = out.positionMs() // where it stopped: Retry, or Playback's retry after a refused URL, goes on from there
         unload()
         error = t
         state = AudioPlayer.STATE_IDLE
@@ -221,17 +226,26 @@ class DesktopAudio : AudioPlayer {
         @Volatile private var rate = 48_000
         private var written = 0L
 
-        init { Thread(this, "audio").apply { isDaemon = true; priority = Thread.MAX_PRIORITY }.start() }
+        private val thread = Thread(this, "audio").apply { isDaemon = true; priority = Thread.MAX_PRIORITY; start() }
+        @Volatile private var source: Pcm? = null
 
         fun load(id: String?, atMs: Long, play: Boolean, gapless: Boolean) = synchronized(lock) {
             want = id; wantAt = atMs; playing = play; flush = !gapless; gen++
             at(atMs)
             if (!gapless) line?.let { it.stop(); it.flush() }
             durationMs = -1
-            lock.notifyAll()
+            replaced()
         }
 
-        fun seek(ms: Long) = synchronized(lock) { wantAt = ms; flush = true; gen++; at(ms); line?.let { it.stop(); it.flush() }; lock.notifyAll() }
+        fun seek(ms: Long) = synchronized(lock) { wantAt = ms; flush = true; gen++; at(ms); line?.let { it.stop(); it.flush() }; replaced() }
+
+        // A newer load or seek: the thread lets go of the old song at once, even when it waits for the network (its
+        // download or roma-aac), instead of when the wait ends.
+        private fun replaced() {
+            source?.close()
+            thread.interrupt()
+            lock.notifyAll()
+        }
 
         // Until the song's first samples go in, the position is where it was asked to start, as Media3 reports a seek.
         private fun at(ms: Long) { fromMs = ms; firstFrame = Long.MAX_VALUE }
@@ -250,16 +264,21 @@ class DesktopAudio : AudioPlayer {
 
         override fun run() {
             while (true) {
-                val (id, at, g) = synchronized(lock) {
-                    while (want == null || !playing && line == null) lock.wait()
-                    Triple(want!!, wantAt, gen)
-                }
                 try {
-                    playSong(id, at, g)
+                    Thread.interrupted() // one meant for the song before
+                    val (id, at, g) = synchronized(lock) {
+                        while (want == null || !playing && line == null) lock.wait()
+                        Triple(want!!, wantAt, gen)
+                    }
+                    try {
+                        playSong(id, at, g)
+                    } catch (t: Throwable) {
+                        // A newer load or seek ended this one (interrupted, its source closed): not a failure.
+                        if (t is InterruptedException || synchronized(lock) { gen } != g) continue
+                        synchronized(lock) { if (gen == g) want = null }
+                        postMain { failed(id, t) }
+                    }
                 } catch (_: InterruptedException) {
-                } catch (t: Throwable) {
-                    synchronized(lock) { if (gen == g) want = null }
-                    postMain { failed(id, t) }
                 }
             }
         }
@@ -267,7 +286,13 @@ class DesktopAudio : AudioPlayer {
         // Plays [id] from [at] until it ends or another load or seek comes (gen changes).
         private fun playSong(id: String, at: Long, g: Int) {
             val src = retrying(g) { pcm(StreamFile.of(id), at) } ?: return
-            src.use { playPcm(id, it, at, g) }
+            source = src
+            try {
+                if (synchronized(lock) { gen } == g) playPcm(id, src, at, g)
+            } finally {
+                source = null
+                src.close()
+            }
         }
 
         private fun playPcm(id: String, src: Pcm, at: Long, g: Int) {
@@ -305,7 +330,7 @@ class DesktopAudio : AudioPlayer {
                     written += m / (2 * src.channels)
                 }
             }
-            synchronized(lock) { if (gen == g) want = null }
+            synchronized(lock) { if (gen != g) return; want = null }
             postMain { ended(id) }
         }
 

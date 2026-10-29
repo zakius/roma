@@ -26,7 +26,7 @@ interface BotGuardSession {
     fun close()
 }
 
-/** The platform can't run BotGuard at all (no usable browser): no more tries this run. */
+/** The platform can't run BotGuard at all (Android: a system WebView that fails on the page): no more tries this run. */
 class BotGuardBroken(message: String) : Exception(message)
 
 /**

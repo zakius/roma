@@ -17,8 +17,9 @@ permissions:
   contents: write
 # The runner's git names its first branch "master" without asking; saying so quiets its hint in every checkout.
 env: { GIT_CONFIG_COUNT: 1, GIT_CONFIG_KEY_0: init.defaultBranch, GIT_CONFIG_VALUE_0: master }
-# Merges in quick succession release one at a time, so a version can't be published twice.
-concurrency: { group: release, cancel-in-progress: false }
+# Merges in quick succession release one at a time, so a version can't be published twice. A pull request's runs
+# have a group of their own: in this one, a queued run would cancel master's waiting release run.
+concurrency: { group: "${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || 'release' }}", cancel-in-progress: false }
 # ubuntu-24.04, not ubuntu-latest: the image the release is built and tested on, changed on purpose rather than by GitHub.
 jobs:
   version:

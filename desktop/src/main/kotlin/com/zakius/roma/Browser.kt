@@ -1,5 +1,6 @@
 package com.zakius.roma
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.future.await
@@ -60,26 +61,44 @@ object Browser {
 
     /**
      * A browser for [profile], [headless] or in a window: the one that worked last time, else the first in [order]
-     * that starts and connects, else CEF. The one that worked is remembered. [test] runs on it before it counts as
-     * working (BotGuard's first token); a failing browser is closed and the next one tried.
+     * that starts and passes [test] (BotGuard's first token), else CEF, only when no system browser starts at all.
+     * The one that worked is remembered. A failing browser is closed and the next one tried. When all fail (often the
+     * network, not the browsers), the next minute's calls fail at once instead of starting every browser again.
      */
     suspend fun <T> start(profile: String, headless: Boolean, test: suspend (Chrome) -> T): Pair<Chrome, T> {
+        if (System.currentTimeMillis() - failedAt < 60_000) error("No browser worked a moment ago")
         val last = Store.str(WORKED, "")
         val found = order().filter { File(it).canExecute() }
         val tries = (listOf(last).filter { it in found } + found.filter { it != last }).distinct()
+        var started = false
         for (exe in tries + "cef") {
-            val chrome = runCatching { if (exe == "cef") Cef.start() else Chrome.launch(exe, profileDir(profile), headless) }
-                .onFailure { println("roma browser: $exe didn't start: ${it.message}") }.getOrNull() ?: continue
-            val result = runCatching { test(chrome) }
-            if (result.isSuccess) {
-                if (exe != last) postMain { Store.set(WORKED, exe) }
-                return chrome to result.getOrThrow()
+            if (exe == "cef" && started) break
+            val chrome = try {
+                if (exe == "cef") Cef.start() else Chrome.launch(exe, profileDir(profile), headless)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                println("roma browser: $exe didn't start: ${e.message}")
+                continue
             }
-            println("roma browser: $exe failed: ${result.exceptionOrNull()}") // which browser, for the log; no tokens
-            chrome.close()
+            started = true
+            try {
+                val result = test(chrome)
+                if (exe != last) postMain { Store.set(WORKED, exe) }
+                return chrome to result
+            } catch (e: CancellationException) {
+                chrome.close()
+                throw e
+            } catch (e: Exception) {
+                println("roma browser: $exe failed: $e") // which browser, for the log; no tokens
+                chrome.close()
+            }
         }
-        throw BotGuardBroken("No Chromium-family browser worked, and CEF couldn't start")
+        failedAt = System.currentTimeMillis()
+        error(if (started) "BotGuard failed in every browser" else "No Chromium-family browser started, and CEF isn't ready")
     }
+
+    @Volatile private var failedAt = 0L
 
     fun profileDir(name: String) = File(Dirs.files, "browser/$name")
 }
@@ -111,7 +130,7 @@ class Chrome(private val process: Process?, private val cdp: Cdp, private val on
 
     override fun close() {
         runCatching { cdp.close() }
-        process?.let { p -> p.descendants().forEach { it.destroy() }; p.destroy() }
+        process?.let { p -> running -= p; p.descendants().forEach { it.destroy() }; p.destroy() }
         onClose()
     }
 
@@ -408,17 +427,21 @@ class ChromeBotGuard private constructor(private val chrome: Chrome, private val
  */
 suspend fun browserSignIn(): Boolean {
     val url = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com"
-    val chrome = Browser.order().filter { File(it).canExecute() }.let { found ->
-        val last = Store.str("browser.worked", "")
-        (listOf(last).filter { it in found } + found.filter { it != last }).firstNotNullOfOrNull { exe ->
-            runCatching { Chrome.launch(exe, Browser.profileDir("signin"), headless = false) }.getOrNull()
-        }
-    }?.also { it.page().call("Page.navigate", buildJsonObject { put("url", url) }) } ?: Cef.start(url)
+    var chrome: Chrome? = null
     try {
-        while (chrome.alive) {
+        val found = Browser.order().filter { File(it).canExecute() }
+        val last = Store.str("browser.worked", "")
+        for (exe in listOf(last).filter { it in found } + found.filter { it != last }) {
+            chrome = runCatching { Chrome.launch(exe, Browser.profileDir("signin"), headless = false) }.getOrNull() ?: continue
+            chrome.page().call("Page.navigate", buildJsonObject { put("url", url) })
+            break
+        }
+        val c = chrome ?: Cef.start(url).also { chrome = it }
+        var music: Tab? = null
+        while (c.alive) {
             delay(1_000)
-            if (chrome.urls().none { it.startsWith("https://music.youtube.com") }) continue
-            val page = chrome.page("https://music.youtube.com")
+            if (c.urls().none { it.startsWith("https://music.youtube.com") }) continue
+            val page = music ?: c.page("https://music.youtube.com").also { music = it }
             val cookie = page.cookies("https://music.youtube.com")
             if ("SAPISID" !in cookie) continue
             val ids = page.eval("[window.yt && yt.config_ ? yt.config_.VISITOR_DATA : null, window.yt && yt.config_ ? yt.config_.DATASYNC_ID : null]")?.jsonArray
@@ -426,10 +449,15 @@ suspend fun browserSignIn(): Boolean {
             withContext(Dispatchers.Main) { signedIn(cookie, id(0), id(1)) }
             return true
         }
-        return false
-    } catch (_: IllegalStateException) {
         return false // the window was closed
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // No browser started, CEF couldn't, or the window went mid-call.
+        if (chrome?.alive == true) toast("Couldn't sign in: ${e.message}", long = true)
+        else if (chrome == null) toast("Couldn't open a browser to sign in: ${e.message}", long = true)
+        return false
     } finally {
-        chrome.close()
+        chrome?.close()
     }
 }

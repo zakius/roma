@@ -20,5 +20,11 @@ fun LoginScreen() {
     }
 }
 
-/** Signing out: the sign-in profile's cookies go too, so the next sign-in starts fresh. */
-fun forgetSignIn() { Browser.profileDir("signin").deleteRecursively() }
+/**
+ * Signing out: the sign-in profiles' cookies go too (a system browser's, and CEF's, which a sign-in without one used),
+ * so the next sign-in starts fresh.
+ */
+fun forgetSignIn() {
+    Browser.profileDir("signin").deleteRecursively()
+    Browser.profileDir("cef").deleteRecursively()
+}

@@ -225,11 +225,15 @@ fun rememberOpenFile(text: (String) -> Unit): () -> Unit {
 
 /**
  * Last.fm's browser auth, with roma itself as the callback: a one-request server on localhost takes the token Last.fm
- * sends the browser back with, then closes.
+ * sends the browser back with, then closes. The path carries a random secret, so another program that finds the port
+ * can't hand roma a token of its own; a new tap replaces a server still waiting.
  */
 fun connectLastFm() {
+    lastFmServer?.stop(0)
+    val secret = java.util.UUID.randomUUID().toString()
     val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
-    server.createContext("/lastfm") { ex ->
+    lastFmServer = server
+    server.createContext("/lastfm/$secret") { ex ->
         val token = ex.requestURI.query?.split('&')?.firstOrNull { it.startsWith("token=") }?.substringAfter('=')
         val page = "<html><body style='font-family:sans-serif'>${if (token != null) "Last.fm connected: you can close this tab." else "No token from Last.fm."}</body></html>".toByteArray()
         ex.sendResponseHeaders(200, page.size.toLong())
@@ -238,8 +242,10 @@ fun connectLastFm() {
         if (token != null) lastFmToken(token)
     }
     server.start()
-    openUrl(roma.core.LastFm(Store.str("lastfm.key", ""), "").authUrl("http://127.0.0.1:${server.address.port}/lastfm"))
+    openUrl(roma.core.LastFm(Store.str("lastfm.key", ""), "").authUrl("http://127.0.0.1:${server.address.port}/lastfm/$secret"))
 }
+
+@Volatile private var lastFmServer: com.sun.net.httpserver.HttpServer? = null
 
 private fun lastFmToken(token: String) {
     val fm = roma.core.LastFm(Store.str("lastfm.key", ""), Store.str("lastfm.secret", ""))
