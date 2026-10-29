@@ -33,30 +33,19 @@
 
 # ICU loads its transliterators and data classes by name.
 -keep class com.ibm.icu.** { *; }
-# CEF (Browser.kt's fallback): JCEF's native side calls back into Java by name, jcefmaven reads its build
-# metadata through Gson, and JOGL draws the off-screen page.
--keep class org.cef.** { *; }
--keep class me.friwi.jcefmaven.** { *; }
--keep class com.google.gson.** { *; }
--keep class com.jogamp.** { *; }
--keep class jogamp.** { *; }
--keepclassmembers,allowobfuscation class * { @com.google.gson.annotations.SerializedName <fields>; }
+# CEF's process (CefHost.kt) runs with jars that aren't packaged (Browser.kt downloads them): its main class and
+# what it calls keep their names, and its references to those jars aren't checked here.
+-keep class com.zakius.roma.CefHostKt { *; }
+-keep class com.zakius.roma.Dirs { *; }
+-dontwarn org.cef.**
+-dontwarn me.friwi.**
 
 # Optional parts of the libraries that roma doesn't use.
 -dontwarn org.slf4j.**
 -dontwarn org.jetbrains.annotations.**
--dontwarn org.tukaani.**
--dontwarn org.brotli.**
--dontwarn com.github.luben.**
--dontwarn org.objectweb.asm.**
--dontwarn org.apache.commons.compress.**
--dontwarn com.jogamp.**
--dontwarn jogamp.**
--dontwarn org.osgi.**
 -dontwarn com.ibm.icu.**
 -dontwarn javax.annotation.**
 -dontnote **
-# JCEF's macOS window and Sudachi's MethodHandle calls (signature-polymorphic, which ProGuard can't resolve).
--dontwarn org.cef.browser.mac.**
+# Sudachi's MethodHandle calls (signature-polymorphic, which ProGuard can't resolve).
 -dontwarn com.worksap.nlp.sudachi.MMap
 -dontwarn com.worksap.nlp.sudachi.SudachiCommandLine

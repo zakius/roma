@@ -13,7 +13,11 @@ fun main(): Unit = runBlocking {
     val dir = File(System.getProperty("java.io.tmpdir"), "roma-botguard-check").also { it.mkdirs() }
     javax.swing.SwingUtilities.invokeAndWait { Store.init(Prefs(File(dir, "prefs.properties")), dir, dir) }
     YouTube.visitorData = YouTube.visitorData().getOrThrow()
-    if (System.getProperty("cef") != null) runCatching { ChromeBotGuard.open(Cef.start()).close() }.onFailure { println("CEF: $it") }
+    if (System.getProperty("cef") != null) {
+        val t = System.currentTimeMillis()
+        Cef.install() // its jars and CEF itself, unless they are there
+        println("CEF ready in ${System.currentTimeMillis() - t} ms")
+    }
     // -Dcef: CEF alone, as when the system has no Chromium-family browser.
     val tokens = PoTokens(120_000L) { if (System.getProperty("cef") != null) ChromeBotGuard.open(Cef.start()) else ChromeBotGuard.start() }
     val t = System.currentTimeMillis()
@@ -25,6 +29,6 @@ fun main(): Unit = runBlocking {
     c.setRequestProperty("Range", "bytes=32768-")
     val got = if (c.responseCode == 206) c.inputStream.use { it.readAllBytes().size } else -1
     println("WEB_REMIX stream past 32 KB: HTTP ${c.responseCode}, $got bytes")
-    check(got > 1_500_000) { "the token was refused" }
+    if (got <= 1_500_000) { println("the token was refused"); kotlin.system.exitProcess(1) }
     kotlin.system.exitProcess(0)
 }

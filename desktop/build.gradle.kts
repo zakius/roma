@@ -2,6 +2,7 @@
 // Desktop, with libVLC for audio and the system's Chromium-family browser for BotGuard and sign-in (docs/design.md).
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.security.MessageDigest
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
@@ -33,7 +34,9 @@ val buildConfig = tasks.register("buildConfig") {
     val out = layout.buildDirectory.file("generated/buildConfig/BuildConfig.kt")
     val refuse = findProperty("roma.refuseVisionOs") == "true"
     val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
+    val jars = cefJars
     inputs.property("v", "$versionName $versionCode $dictVersion $refuse $dictBase")
+    inputs.property("cef", jars)
     outputs.file(out)
     doLast {
         out.get().asFile.writeText("""
@@ -44,6 +47,7 @@ val buildConfig = tasks.register("buildConfig") {
             |    const val VERSION_CODE = $versionCode
             |    const val DICT_VERSION = "$dictVersion"
             |    const val DICT_URL = "$dictBase/roma-dict-$dictVersion.apk.gz"
+            |    const val CEF_JARS = "${jars.get()}"
             |    const val REFUSE_VISIONOS = $refuse
             |}
             |""".trimMargin())
@@ -79,18 +83,51 @@ val copyAppResources = tasks.register<Sync>("copyAppResources") {
 }
 tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach { dependsOn(copyAppResources) }
 
+// ICU4J without the locale data roma never reads (dates, zones, collation, units, names, line breaks, the CJ word
+// dictionary): it only transliterates. 15.2 to 4.9 MB. :desktop:icuCheck shows every transliterator roma uses gives the
+// full jar's output on every assigned code point.
+val icu = configurations.create("icu")
+val cef = configurations.create("cef")
+// "<path on Maven Central> <sha256>" per jar CEF's Java side needs, for BuildConfig.CEF_JARS.
+val cefJars = provider {
+    cef.resolvedConfiguration.resolvedArtifacts.joinToString(";") { a ->
+        val id = a.moduleVersion.id
+        val name = "${id.name}-${id.version}" + (a.classifier?.let { "-$it" } ?: "") + ".${a.extension}"
+        val sha = MessageDigest.getInstance("SHA-256").digest(a.file.readBytes()).joinToString("") { "%02x".format(it) }
+        "${id.group.replace('.', '/')}/${id.name}/${id.version}/$name $sha"
+    }
+}
+val icuSlim = tasks.register<Jar>("icuSlim") {
+    archiveFileName = "icu4j-slim.jar"
+    destinationDirectory = layout.buildDirectory.dir("icu")
+    val data = "com/ibm/icu/impl/data/icudata"
+    val keepTop = setOf("root", "pool", "res_index", "supplementalData", "metadata", "icuver", "icustd", "keyTypeData", "langInfo")
+    from({ zipTree(icu.singleFile) }) {
+        exclude("$data/zone/**", "$data/coll/**", "$data/unit/**", "$data/lang/**", "$data/curr/**", "$data/region/**", "$data/rbnf/**")
+        exclude("$data/brkitr/cjdict.dict", "$data/brkitr/line*.brk", "com/ibm/icu/impl/duration/impl/data/**")
+        exclude("$data/*.spp", "$data/confusables.cfu", "$data/uts46.nrm")
+        // Locale bundles at the top (ko.res, en_GB.res, …); ICU's own files stay.
+        exclude { e -> e.path.matches(Regex("$data/[^/]+\\.res")) && e.name.removeSuffix(".res") !in keepTop }
+    }
+}
+
 dependencies {
     implementation(project(":core"))
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.compose.material:material-icons-core:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
     // Transliteration (Chinese pinyin, Greek, the Cyrillic safety net): Android has it as android.icu.
-    implementation("com.ibm.icu:icu4j:78.1")
+    icu("com.ibm.icu:icu4j:78.1")
+    implementation(files(icuSlim))
+    testImplementation(files(icu)) // icuCheck compares against it
     // Opus, what YouTube serves nearly every song in, decoded in pure Java. The rest (AAC) goes to roma-aac.
     implementation("io.github.jaredmdobson:concentus:1.0.2")
-    // Chromium for BotGuard and sign-in when the system has no Chromium-family browser: CEF, downloaded on first need.
+    // Chromium for BotGuard and sign-in when the system has no Chromium-family browser: CEF. Its Java side isn't
+    // packaged either: Browser.kt downloads these jars with CEF on first need (BuildConfig.CEF_JARS pins them).
     // 146, not 152: CEF 152 exits at start on Linux (code 28), off-screen or not (2026-10-29).
-    implementation("me.friwi:jcefmaven:146.0.10")
+    cef("me.friwi:jcefmaven:146.0.10")
+    compileOnly("me.friwi:jcefmaven:146.0.10")
+    testImplementation("me.friwi:jcefmaven:146.0.10")
 }
 
 compose.desktop {
@@ -173,4 +210,10 @@ afterEvaluate {
         dependsOn(trimRules)
         defaultComposeRulesFile.set(trimmed)
     }
+}
+tasks.register<JavaExec>("icuCheck") {
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass = "com.zakius.roma.IcuCheckKt"
+    args(icu.singleFile.path, icuSlim.get().archiveFile.get().asFile.path)
+    dependsOn(icuSlim)
 }

@@ -272,9 +272,11 @@ class Cdp private constructor(private val ws: WebSocket, private val listener: L
 }
 
 /**
- * CEF, the last resort: downloaded into roma's data folder the first time it is needed (jcefmaven), and run in its
- * own process, roma started again with --cef-host ([cefHost]): CEF must start before anything in the process opens
- * an AWT or X11 window, and roma's window is long open by then. roma drives it over DevTools like any other browser.
+ * CEF, the last resort, all of it downloaded on first need, none of it in the package: its Java side (jcefmaven and
+ * what it uses, about 3 MB of jars from Maven Central, each checked against the SHA-256 pinned at build time,
+ * BuildConfig.CEF_JARS) and CEF itself (about 150 MB, which jcefmaven fetches). It runs in a process of its own,
+ * [CefHost] on roma's Java with those jars: CEF must start before anything in the process opens an AWT or X11
+ * window. roma drives it over DevTools like any other browser.
  */
 object Cef {
     val installDir get() = File(Dirs.files, "cef")
@@ -284,16 +286,43 @@ object Cef {
         private set
     @Volatile private var installing = false
 
-    /** Blocking: downloads CEF unless it is there. */
-    fun install() {
-        if (installed) return
-        val builder = me.friwi.jcefmaven.CefAppBuilder()
-        builder.setInstallDir(installDir)
-        builder.setProgressHandler { state, percent ->
-            status = if (state == me.friwi.jcefmaven.EnumProgress.DOWNLOADING && percent >= 0) "Downloading Chromium (CEF)… ${percent.toInt()}%" else null
+    /** Blocking: CEF's jars, downloaded unless they are there. */
+    private fun jars(): List<File> {
+        val dir = File(Dirs.files, "cef-java").also { it.mkdirs() } // not in installDir, which jcefmaven empties
+        return BuildConfig.CEF_JARS.split(';').map { entry ->
+            val (path, sha256) = entry.split(' ')
+            val jar = File(dir, path.substringAfterLast('/'))
+            if (!jar.exists()) {
+                status = "Downloading Chromium (CEF)…"
+                val bytes = URI("https://repo1.maven.org/maven2/" + path.replace("+", "%2B")).toURL().readBytes()
+                val got = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).toHexString()
+                check(got == sha256) { "${jar.name} doesn't match its checksum" }
+                File(dir, jar.name + ".tmp").also { it.writeBytes(bytes) }.renameTo(jar)
+            }
+            jar
         }
-        builder.install()
+    }
+
+    /**
+     * roma again with --cef-host (Main.kt), which runs [CefHost] with CEF's jars: through the packaged launcher (its
+     * Java has no `java` command), or through `java` and the class path (a run from Gradle).
+     */
+    private fun host(vararg args: String): Process {
+        val jars = jars().joinToString(File.pathSeparator) { it.path }
+        val java = File(System.getProperty("java.home"), "bin/" + if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java")
+        val self = if (java.canExecute()) listOf(java.path, "-cp", System.getProperty("java.class.path"), "com.zakius.roma.MainKt")
+            else listOf(ProcessHandle.current().info().command().get())
+        return ProcessBuilder(self + listOf("--cef-host", jars) + args).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+    }
+
+    /** Blocking: jars and CEF, unless they are there; the host reports its download as it goes. */
+    fun install() {
+        jars()
+        if (installed) return
+        val p = host("--install")
+        p.inputStream.bufferedReader().forEachLine { if (it.startsWith("status ")) status = it.removePrefix("status ").ifEmpty { null } }
         status = null
+        check(p.waitFor() == 0 && installed) { "CEF didn't install" }
     }
 
     /**
@@ -309,12 +338,8 @@ object Cef {
             }
             install()
         }
-        val self = ProcessHandle.current().info().command().get()
-        // From a plain JVM (a run from Gradle) the class path and main class come along; a packaged roma is its launcher.
-        val cmd = if (File(self).name.startsWith("java")) listOf(self) + jvmArgs + listOf("-cp", System.getProperty("java.class.path"), "com.zakius.roma.MainKt") else listOf(self)
-        val p = ProcessBuilder(cmd + listOfNotNull("--cef-host", url)).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val p = host(*listOfNotNull(url).toTypedArray())
         try {
-            // jcefmaven prints a line of its own first.
             val out = p.inputStream.bufferedReader()
             // A host that says nothing for 20 s is ended, which ends the read.
             val watchdog = Thread { runCatching { Thread.sleep(20_000); p.destroy() } }.apply { isDaemon = true; start() }
@@ -328,40 +353,6 @@ object Cef {
             throw t
         }
     }
-
-    private val jvmArgs get() = java.lang.management.ManagementFactory.getRuntimeMXBean().inputArguments.filter { it.startsWith("--add-") || it.startsWith("-Dcompose") }
-}
-
-/**
- * roma --cef-host [url]: the CEF process (see [Cef]). CEF starts first (jcefmaven's build, before any window); then a hidden page, or a window showing
- * [url]; the DevTools port goes to stdout, and the process ends when roma closes its stdin or the window closes.
- */
-fun cefHost(url: String?) {
-    val port = java.net.ServerSocket(0).use { it.localPort }
-    val builder = me.friwi.jcefmaven.CefAppBuilder()
-    builder.setInstallDir(Cef.installDir)
-    // JCEF draws only through X11 on Linux: on a Wayland desktop, XWayland.
-    if (!System.getProperty("os.name").startsWith("Windows")) builder.addJcefArgs("--ozone-platform=x11")
-    // The hidden page renders off-screen (no window); the sign-in page is a normal window.
-    builder.cefSettings.windowless_rendering_enabled = url == null
-    builder.cefSettings.remote_debugging_port = port
-    builder.cefSettings.root_cache_path = Browser.profileDir("cef").path
-    val app = builder.build()
-    val browser = app.createClient().createBrowser(url ?: "about:blank", url == null, false)
-    if (url == null) browser.createImmediately()
-    else javax.swing.SwingUtilities.invokeLater {
-        javax.swing.JFrame("Sign in to YouTube Music").apply {
-            contentPane.add(browser.uiComponent)
-            setSize(480, 720)
-            defaultCloseOperation = javax.swing.WindowConstants.EXIT_ON_CLOSE
-            isVisible = true
-        }
-    }
-    println("DevTools port $port")
-    System.out.flush()
-    while (System.`in`.read() >= 0) Unit // roma closed it, or went
-    app.dispose()
-    kotlin.system.exitProcess(0)
 }
 
 /**

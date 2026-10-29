@@ -30,7 +30,7 @@ import java.io.File
 import kotlin.concurrent.thread
 
 fun main(args: Array<String>) {
-    if (args.firstOrNull() == "--cef-host") return cefHost(args.getOrNull(1))
+    if (args.firstOrNull() == "--cef-host") return cefHost(args[1], args.drop(2))
     if (args.firstOrNull() == "--check") return check()
     // Everything roma does at start, on the UI thread as on Android, in App.onCreate's order.
     javax.swing.SwingUtilities.invokeAndWait {
@@ -112,4 +112,16 @@ private fun check() {
     }
     result.exceptionOrNull()?.let { System.err.println("roma --check failed: $it") }
     kotlin.system.exitProcess(if (result.isSuccess) 0 else 1)
+}
+
+/**
+ * roma --cef-host <jars> [args]: CEF's process (Browser.kt, Cef). CefHost and everything it uses load again in a class
+ * loader of their own, over roma's class path and CEF's downloaded jars, which roma's own class loader doesn't have.
+ */
+private fun cefHost(jars: String, args: List<String>) {
+    val urls = (System.getProperty("java.class.path").split(File.pathSeparator) + jars.split(File.pathSeparator))
+        .filter { it.isNotBlank() }.map { File(it).toURI().toURL() }
+    val loader = java.net.URLClassLoader(urls.toTypedArray(), ClassLoader.getPlatformClassLoader())
+    Thread.currentThread().contextClassLoader = loader
+    loader.loadClass("com.zakius.roma.CefHostKt").getMethod("main", Array<String>::class.java).invoke(null, args.toTypedArray())
 }
