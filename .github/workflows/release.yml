@@ -11,8 +11,8 @@ name: release
 on:
   push:
     branches: [master]
-  # A branch's packages before it merges (the desktop jobs); nothing is signed or published off master.
-  workflow_dispatch:
+  # A pull request's build and packages before it merges; nothing is signed or published off master.
+  pull_request:
 permissions:
   contents: write
 # The runner's git names its first branch "master" without asking; saying so quiets its hint in every checkout.
@@ -35,7 +35,7 @@ jobs:
           v=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
           echo "version=$v" >> "$GITHUB_OUTPUT"
           # Only "release not found" is a new version; any other error (network, rate limit) fails the run. Only master
-          # releases: a branch's manual run only builds.
+          # releases: a pull request's run only builds.
           if [ "$GITHUB_REF" != refs/heads/master ]; then echo "release=" >> "$GITHUB_OUTPUT"
           elif out=$(gh release view "v$v" 2>&1); then echo "release=" >> "$GITHUB_OUTPUT"
           elif [[ $out == *"release not found"* ]]; then echo "release=1" >> "$GITHUB_OUTPUT"
