@@ -1,11 +1,5 @@
 package com.zakius.roma
 
-import android.content.Context
-import android.view.View
-import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -88,7 +82,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -128,42 +121,6 @@ fun darkColorScheme() = ColorScheme(
     c(0xFFD0BCFF), c(0xFF381E72), c(0xFF6750A4), c(0xFF4A4458), c(0xFFE8DEF8), c(0xFF141218), c(0xFF141218), c(0xFFE6E0E9), c(0xFFCAC4D0),
     c(0xFF211F26), c(0xFF0F0D13), c(0xFF2B2930), c(0xFFE6E0E9), c(0xFF322F35), c(0xFF938F99), c(0xFF49454F), c(0xFFF2B8B5),
 )
-
-// The system's tonal palettes (Android 12+), by tone: _0 is tone 100, _500 tone 50, _1000 tone 0. Tones between two
-// resources are blended.
-@RequiresApi(31)
-fun dynamicLightColorScheme(ctx: Context): ColorScheme {
-    fun r(id: Int) = Color(ctx.getColor(id))
-    val n1 = { id: Int -> r(id) }
-    return ColorScheme(
-        r(android.R.color.system_accent1_600), r(android.R.color.system_accent1_0), r(android.R.color.system_accent1_200),
-        r(android.R.color.system_accent2_100), r(android.R.color.system_accent2_900),
-        lerp(n1(android.R.color.system_neutral1_10), n1(android.R.color.system_neutral1_50), 0.25f),
-        lerp(n1(android.R.color.system_neutral1_10), n1(android.R.color.system_neutral1_50), 0.25f),
-        r(android.R.color.system_neutral1_900), r(android.R.color.system_neutral2_700),
-        lerp(n1(android.R.color.system_neutral1_50), n1(android.R.color.system_neutral1_100), 0.2f), r(android.R.color.system_neutral1_0),
-        lerp(n1(android.R.color.system_neutral1_50), n1(android.R.color.system_neutral1_100), 0.6f),
-        r(android.R.color.system_neutral1_800), r(android.R.color.system_neutral1_50),
-        r(android.R.color.system_neutral2_500), r(android.R.color.system_neutral2_200), c(0xFFB3261E),
-    )
-}
-
-@RequiresApi(31)
-fun dynamicDarkColorScheme(ctx: Context): ColorScheme {
-    fun r(id: Int) = Color(ctx.getColor(id))
-    val n900 = r(android.R.color.system_neutral1_900)
-    val n800 = r(android.R.color.system_neutral1_800)
-    val black = r(android.R.color.system_neutral1_1000)
-    return ColorScheme(
-        r(android.R.color.system_accent1_200), r(android.R.color.system_accent1_800), r(android.R.color.system_accent1_600),
-        r(android.R.color.system_accent2_700), r(android.R.color.system_accent2_100),
-        lerp(n900, black, 0.4f), lerp(n900, black, 0.4f),
-        r(android.R.color.system_neutral1_100), r(android.R.color.system_neutral2_200),
-        lerp(n900, n800, 0.2f), lerp(n900, black, 0.6f), lerp(n900, n800, 0.7f),
-        r(android.R.color.system_neutral1_100), n800,
-        r(android.R.color.system_neutral2_400), r(android.R.color.system_neutral2_700), c(0xFFF2B8B5),
-    )
-}
 
 class Typography {
     private fun s(size: Int, line: Int, spacing: Float, weight: FontWeight = FontWeight.Normal) =
@@ -440,7 +397,7 @@ fun AlertDialog(
     title: @Composable () -> Unit = {},
     text: @Composable () -> Unit = {},
 ) {
-    Dialog(onDismissRequest) {
+    Dialog(onDismissRequest = onDismissRequest) {
         Surface(Modifier.widthIn(min = 280.dp, max = 560.dp), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Column(Modifier.padding(24.dp)) {
                 CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.headlineSmall, content = title)
@@ -466,7 +423,7 @@ fun rememberModalBottomSheetState(skipPartiallyExpanded: Boolean = true) = remem
 /** A menu from the bottom: tap outside, Back or a drag down closes it. Always fully open. */
 @Composable
 fun ModalBottomSheet(onDismissRequest: () -> Unit, sheetState: SheetState, content: @Composable ColumnScope.() -> Unit) {
-    Dialog(onDismissRequest, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    Dialog(onDismissRequest = onDismissRequest, properties = sheetDialogProperties) {
         var drag by remember { mutableFloatStateOf(0f) }
         Box(Modifier.fillMaxSize().clickable(interactionSource = null, indication = null, onClick = onDismissRequest), contentAlignment = Alignment.BottomCenter) {
             Surface(
@@ -485,112 +442,4 @@ fun ModalBottomSheet(onDismissRequest: () -> Unit, sheetState: SheetState, conte
             }
         }
     }
-}
-
-/**
- * A text field: Android's EditText in an outlined box. Compose's own text field brings in about 120 KB of the APK (its
- * text input, selection and context menu); EditText is in the platform. Text set from outside (a picked search
- * suggestion) puts the caret at its end. [onSearch] gives the keyboard a Search key. [autoFocus]: focused, with the
- * keyboard up, as soon as it is on screen (a dialog that is only for typing).
- */
-@Composable
-fun OutlinedTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    modifier: Modifier = Modifier,
-    singleLine: Boolean = false,
-    label: String? = null,
-    placeholder: String? = null,
-    onSearch: (() -> Unit)? = null,
-    autoFocus: Boolean = false,
-) {
-    val s = MaterialTheme.colorScheme
-    var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(4.dp)
-    val change by rememberUpdatedState(onValueChange)
-    val search by rememberUpdatedState(onSearch)
-    var edit by remember { mutableStateOf<EditText?>(null) }
-    // Made when the field is first on screen: an EditText made in a tab built hidden (buildAhead) stays blank, no
-    // hint or caret, the first time the tab is shown.
-    val shown = remember { BooleanArray(1) }
-    if (LocalTabShown.current) shown[0] = true
-    Column(
-        modifier.defaultMinSize(minWidth = 280.dp, minHeight = 56.dp)
-            .border(if (focused) 2.dp else 1.dp, if (focused) s.primary else s.outline, shape)
-            // The whole box takes a tap, as Compose's field did, not only the line of text.
-            .pointerInput(Unit) { detectTapGestures { edit?.let { it.requestFocus(); it.showKeyboard() } } }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        if (label != null) Text(label, Modifier.clearAndSetSemantics {}, color = if (focused) s.primary else s.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        val style = MaterialTheme.typography.bodyLarge
-        if (shown[0]) AndroidView(
-            factory = { c ->
-                EditText(c).apply {
-                    background = null
-                    setPadding(0, 0, 0, 0)
-                    includeFontPadding = false
-                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, style.fontSize.value)
-                    letterSpacing = style.letterSpacing.value / style.fontSize.value
-                    if (Build.VERSION.SDK_INT >= 28) lineHeight = (style.lineHeight.value * resources.displayMetrics.scaledDensity).toInt()
-                    inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
-                        (if (singleLine) 0 else android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE)
-                    if (singleLine) maxLines = 1
-                    imeOptions = when {
-                        onSearch != null -> android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
-                        singleLine -> android.view.inputmethod.EditorInfo.IME_ACTION_DONE
-                        else -> 0
-                    }
-                    // TalkBack reads the label with the field, as it did when the label was inside Compose's field.
-                    if (label != null) accessibilityDelegate = object : View.AccessibilityDelegate() {
-                        override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
-                            super.onInitializeAccessibilityNodeInfo(host, info)
-                            info.hintText = label
-                        }
-                    }
-                    setOnEditorActionListener { _, action, _ ->
-                        (action == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH).also { if (it) search?.invoke() }
-                    }
-                    setText(value)
-                    setSelection(value.length)
-                    addTextChangedListener(object : android.text.TextWatcher {
-                        override fun beforeTextChanged(t: CharSequence?, start: Int, count: Int, after: Int) {}
-                        override fun onTextChanged(t: CharSequence?, start: Int, before: Int, count: Int) {}
-                        override fun afterTextChanged(t: android.text.Editable) = change(t.toString())
-                    })
-                    // Focus from code (a new search) brings the keyboard up too, and leaving the field puts it away.
-                    setOnFocusChangeListener { v, f -> focused = f; if (f) v.showKeyboard() else v.context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(v.windowToken, 0) }
-                    edit = this
-                    if (autoFocus) post { requestFocus() }
-                }
-            },
-            Modifier.fillMaxWidth(),
-            update = { e ->
-                if (e.text.toString() != value) { e.setText(value); e.setSelection(value.length) }
-                e.setTextColor(s.onSurface.toArgb())
-                e.setHintTextColor(s.onSurfaceVariant.toArgb())
-                e.hint = placeholder
-                e.highlightColor = s.primary.copy(alpha = 0.4f).toArgb()
-                if (Build.VERSION.SDK_INT >= 29) {
-                    e.textCursorDrawable = android.graphics.drawable.GradientDrawable().apply {
-                        setColor(s.primary.toArgb()); setSize((2 * e.resources.displayMetrics.density).toInt(), 0)
-                    }
-                    listOf(e.textSelectHandle, e.textSelectHandleLeft, e.textSelectHandleRight).forEach { it?.setTint(s.primary.toArgb()) }
-                }
-            },
-        )
-    }
-}
-
-// Android ignores the request until the window has focus: a field focused as its dialog opens waits for that.
-private fun View.showKeyboard() {
-    val show = { post { context.getSystemService(InputMethodManager::class.java).showSoftInput(this, 0) } }
-    if (hasWindowFocus()) { show(); return }
-    viewTreeObserver.addOnWindowFocusChangeListener(object : android.view.ViewTreeObserver.OnWindowFocusChangeListener {
-        override fun onWindowFocusChanged(hasFocus: Boolean) {
-            if (!hasFocus) return
-            viewTreeObserver.removeOnWindowFocusChangeListener(this)
-            if (isFocused) show()
-        }
-    })
 }

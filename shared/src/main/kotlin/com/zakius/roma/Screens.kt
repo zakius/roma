@@ -7,15 +7,6 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.background
 import kotlinx.coroutines.launch
-import android.annotation.SuppressLint
-import android.content.Intent
-import android.net.Uri
-import android.webkit.CookieManager
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -66,7 +57,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -76,7 +66,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
 import kotlinx.coroutines.CoroutineScope
@@ -214,7 +203,6 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     val inQueue = queueIndex != null && queueIndex != Playback.player.currentMediaItemIndex
     val liked = s.id in Playback.liked
     LaunchedEffect(s.id) { Playback.checkLike(s) }
-    val context = LocalContext.current
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Fully open at once: half open, the bans at the bottom would need a drag first.
     ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -234,10 +222,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             // The same video ID plays on both: on YouTube a song is its "Topic" upload.
             MenuItem("Share…", true) {
                 val host = if (Store.str("share.site", "music") == "music") "music.youtube.com" else "www.youtube.com"
-                val send = Intent(Intent.ACTION_SEND).setType("text/plain")
-                    .putExtra(Intent.EXTRA_TEXT, "https://$host/watch?v=${s.id}")
-                    .putExtra(Intent.EXTRA_TITLE, "${s.title.latin} · ${s.artistLatin}")
-                context.startActivity(Intent.createChooser(send, null))
+                share("https://$host/watch?v=${s.id}", "${s.title.latin} · ${s.artistLatin}")
                 onClose()
             }
             MenuItem("Correct romanization…", s.romanizable) { fixing = true }
@@ -254,14 +239,14 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             MenuItem("Ban song", true) {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
                 if (Playback.current()?.song?.id == s.id) Playback.never() // bans it, skips it and offers Undo
-                else { Store.ban("song", s.id, s.title.latin); Toast.makeText(context, "Banned ${s.title.latin}", Toast.LENGTH_SHORT).show() }
+                else { Store.ban("song", s.id, s.title.latin); toast("Banned ${s.title.latin}") }
                 onClose()
             }
             MenuItem("Ban artist", s.firstArtistId != null) {
                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Reject)
                 val a = s.artists.first { it.id != null }
                 Store.ban("artist", a.id!!, a.name.latin)
-                Toast.makeText(context, "Banned ${a.name.latin}", Toast.LENGTH_SHORT).show()
+                toast("Banned ${a.name.latin}")
                 onClose()
             }
         }
@@ -583,14 +568,14 @@ object Home {
 
     // The pictures of the first screen, the mix tiles, decoded into the memory cache now so the first frame has them
     // instead of the next few.
-    private fun decodeFirstPictures(c: android.content.Context, mixes: List<Item>?) {
+    private fun decodeFirstPictures(mixes: List<Item>?) {
         if (mixes.isNullOrEmpty()) return
-        val (_, shown, _) = mixGrid(c.resources.configuration, mixes.size)
+        val (_, shown, _) = mixGrid(screenWidthDp(), mixes.size)
         val px = tilePx(mixes.size)
         mixes.take(shown - 1).forEach { item -> thumbAt(item.thumb, px)?.let { Images.prefetch(it, px) } }
     }
 
-    private fun tilePx(n: Int) = Store.context.resources.let { (mixGrid(it.configuration, n).third.value * it.displayMetrics.density).roundToInt() }
+    private fun tilePx(n: Int) = (mixGrid(screenWidthDp(), n).third.value * screenDensity()).roundToInt()
 
     private fun showMixes(m: List<Item>?) {
         mixes = m
@@ -629,7 +614,7 @@ object Home {
         if (sections.isEmpty()) launch {
             val (savedMixes, disk) = withContext(Dispatchers.IO) {
                 val pre = preloaded?.get()?.also { preloaded = null }
-                pre?.let { decodeFirstPictures(Store.context, it.first) }
+                pre?.let { decodeFirstPictures(it.first) }
                 pre ?: (Store.mixes to Store.readPage("home", ListSerializer(Section.serializer())))
             }
             if (!mixesRead) { if (mixes == null) showMixes(savedMixes); mixesRead = true }
@@ -740,8 +725,8 @@ fun HomeScreen() {
  * The mixes' grid: three columns, every mix and then the Liked music tile, as (columns, tiles shown, tile side).
  * Titles get three lines whatever they say, so a tile's height never depends on its text.
  */
-private fun mixGrid(c: android.content.res.Configuration, n: Int): Triple<Int, Int, Dp> =
-    Triple(3, n + 1, ((c.screenWidthDp - 16 * 2 - 12 * 2) / 3).dp)
+private fun mixGrid(widthDp: Int, n: Int): Triple<Int, Int, Dp> =
+    Triple(3, n + 1, ((widthDp - 16 * 2 - 12 * 2) / 3).dp)
 
 /**
  * Always first on Home and never gone: the mixes as tiles (see [mixGrid]), any found during the run in a row below.
@@ -753,10 +738,10 @@ private fun Mixes(mixes: List<Item>?, read: Boolean) {
     @Composable
     fun Hint(text: String) = Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).dim(0.5f), style = MaterialTheme.typography.bodyMedium)
     if (!Store.signedIn) return TextButton(onClick = { Nav.open(Page("login", "")) }, Modifier.padding(horizontal = 4.dp)) { Text("Sign in to see your mixes") }
-    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val width = screenSizeDp().width
     val list = mixes.orEmpty()
     fun play(m: Item) { Playback.playMix(m.id, title = Store.shown(m.title), thumb = m.thumb); Nav.tab = TAB_PLAYER }
-    val (cols, fit, side) = mixGrid(config, Home.gridFor.takeIf { it > 0 } ?: list.size)
+    val (cols, fit, side) = mixGrid(width, Home.gridFor.takeIf { it > 0 } ?: list.size)
     val shown = minOf(fit - 1, list.size) // mixes in the grid; Liked music is the last tile
     val textStyle = MaterialTheme.typography.bodySmall
     @Composable
@@ -1026,35 +1011,15 @@ private suspend fun loadDetail(p: Page, partial: suspend (Detail) -> Unit): Deta
 
 // ---------------------------------------------------------------- Sign-in
 
-/** YouTube Music sign-in in a WebView; the cookies are kept. No Google account picker, so no Play Services. */
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun LoginScreen() {
-    val context = LocalContext.current
-    AndroidView(factory = { c ->
-        WebView(c).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView, url: String) {
-                    if (!url.startsWith("https://music.youtube.com")) return
-                    val cookie = CookieManager.getInstance().getCookie("https://music.youtube.com") ?: return
-                    if (!cookie.contains("SAPISID")) return
-                    view.evaluateJavascript("JSON.stringify([window.yt&&yt.config_?yt.config_.VISITOR_DATA:null, window.yt&&yt.config_?yt.config_.DATASYNC_ID:null])") { raw ->
-                        val values = runCatching { Store.json.decodeFromString<List<String?>>(Store.json.decodeFromString<String>(raw)) }.getOrDefault(listOf(null, null))
-                        YouTube.cookie = cookie
-                        values[0]?.let { YouTube.visitorData = it; Store.set("visitorData", it) }
-                        values[1]?.let { YouTube.dataSyncId = it.substringBefore("||"); Store.set("dataSyncId", it.substringBefore("||")) }
-                        Store.set("cookie", cookie)
-                        Toast.makeText(context, "Signed in", Toast.LENGTH_SHORT).show()
-                        Nav.stacks[Nav.tab].clear()
-                        Playback.checkLike(Playback.current()?.song)
-                    }
-                }
-            }
-            loadUrl("https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com")
-        }
-    }, modifier = Modifier.fillMaxSize())
+/** Signed in on the platform's sign-in page (LoginScreen): the account's cookie and its ids are kept. */
+fun signedIn(cookie: String, visitorData: String?, dataSyncId: String?) {
+    YouTube.cookie = cookie
+    visitorData?.let { YouTube.visitorData = it; Store.set("visitorData", it) }
+    dataSyncId?.let { YouTube.dataSyncId = it.substringBefore("||"); Store.set("dataSyncId", it.substringBefore("||")) }
+    Store.set("cookie", cookie)
+    toast("Signed in")
+    Nav.stacks[Nav.tab].clear()
+    Playback.checkLike(Playback.current()?.song)
 }
 
 // ---------------------------------------------------------------- Settings
@@ -1072,10 +1037,9 @@ fun SettingsScreen() {
     val place = PLACES.first { it.first == Store.place }.second.lowercase()
     val dictionary = if (Dictionary.installed) "" else " · no Japanese dictionary"
     val site = SITES.first { it.first == Store.str("share.site", "music") }.second
-    val context = LocalContext.current
     LazyColumn(Modifier.fillMaxSize()) {
         Update.available?.let { v ->
-            item { Row1("Update to roma $v", Update.status ?: "Restarts roma, so the music stops") { Update.install(context) } }
+            item { Row1("Update to roma $v", Update.status ?: "Restarts roma, so the music stops") { Update.install() } }
         }
         item { Category("youtube", "YouTube", (if (signedIn) "Signed in" else "Not signed in") + " · shared links open $site") }
         item { Category("romanization", "Romanization", "Placement: $place · schemes · ${count(corrections, "correction") ?: "0 corrections"}$dictionary") }
@@ -1112,7 +1076,7 @@ private fun YouTubeSettings() = LazyColumn(Modifier.fillMaxSize()) {
     item { Header("YouTube") }
     item {
         if (Store.signedIn) Row1("Signed in to YouTube Music", "Tap to sign out") {
-            CookieManager.getInstance().removeAllCookies(null)
+            forgetSignIn()
             YouTube.cookie = null
             Store.set("cookie", null)
         } else Row1("Sign in to YouTube Music", "For your library and likes") { Nav.open(Page("login", "")) }
@@ -1169,24 +1133,16 @@ private fun RomanizationSettings() = LazyColumn(Modifier.fillMaxSize()) {
 
 @Composable
 private fun CorrectionSettings() {
-    val context = LocalContext.current
-    val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        runCatching { context.contentResolver.openOutputStream(uri)!!.use { o -> o.write(Store.exportOverrides().toByteArray()) } }
-            .onFailure { Toast.makeText(context, "Couldn't export: ${it.message}", Toast.LENGTH_LONG).show() }
-    }
-    val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        runCatching {
-            val text = context.contentResolver.openInputStream(uri)!!.use { it.readBytes().decodeToString() }
-            Store.setOverrides(Store.json.decodeFromString<List<Override>>(text))
-        }.onFailure { Toast.makeText(context, "Not an overrides file: ${it.message}", Toast.LENGTH_LONG).show() }
+    val export = rememberSaveFile("roma-corrections.json") { Store.exportOverrides().toByteArray() }
+    val import = rememberOpenFile { text ->
+        runCatching { Store.setOverrides(Store.json.decodeFromString<List<Override>>(text)) }
+            .onFailure { toast("Not an overrides file: ${it.message}", long = true) }
     }
     val corrections = Store.romanizer.overrides
     LazyColumn(Modifier.fillMaxSize()) {
         item { Header("Corrections") }
-        item { Row1("Export ${count(corrections.size, "correction") ?: "corrections"}", "To one file", enabled = corrections.isNotEmpty()) { export.launch("roma-corrections.json") } }
-        item { Row1("Import corrections", "Replaces the current ones") { import.launch(arrayOf("application/json", "*/*")) } }
+        item { Row1("Export ${count(corrections.size, "correction") ?: "corrections"}", "To one file", enabled = corrections.isNotEmpty()) { export() } }
+        item { Row1("Import corrections", "Replaces the current ones") { import() } }
         if (corrections.isEmpty()) item { Text("Long-press a title, artist or lyric word to correct its romanization.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall) }
         items(corrections) { o ->
             val scope = when (o.scope) {
@@ -1263,14 +1219,13 @@ private fun BannedSettings() = LazyColumn(Modifier.fillMaxSize()) {
 
 @Composable
 private fun LastFmSettings() {
-    val context = LocalContext.current
     var editing by remember { mutableStateOf<Pair<String, String>?>(null) } // key, title
     LazyColumn(Modifier.fillMaxSize()) {
         item { Header("Last.fm") }
         item { Row1("API key", Store.str("lastfm.key", "").ifBlank { "Not set" }) { editing = "lastfm.key" to "Last.fm API key" } }
         item {
             Row1("Create an API key", "Opens last.fm/api/account/create; it gives the key and the shared secret") {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.last.fm/api/account/create")))
+                openUrl("https://www.last.fm/api/account/create")
             }
         }
         item { Row1("Shared secret", if (Store.str("lastfm.secret", "").isBlank()) "Not set" else "Set") { editing = "lastfm.secret" to "Last.fm shared secret" } }
@@ -1281,7 +1236,7 @@ private fun LastFmSettings() {
             val ready = Store.str("lastfm.key", "").isNotBlank() && Store.str("lastfm.secret", "").isNotBlank()
             Row1(if (connected) "Connected: scrobbling" else "Connect", if (connected) "Tap to disconnect · $waiting waiting" else "Opens the browser to allow access", ready || connected) {
                 if (connected) Store.set("lastfm.session", null)
-                else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(LastFm(Store.str("lastfm.key", ""), "").authUrl("roma://lastfm"))))
+                else connectLastFm()
             }
         }
     }
@@ -1293,17 +1248,17 @@ private fun LastFmSettings() {
 fun DictionaryPrompt() {
     val offer = Dictionary.offer ?: return
     AlertDialog(
-        onDismissRequest = { Dictionary.answer(Store.context, false) },
+        onDismissRequest = { Dictionary.answer(false) },
         title = { Text(if (offer == "update") "Update the Japanese dictionary?" else "Install the Japanese dictionary?") },
         text = {
             Text(
                 (if (offer == "update") "This version of roma needs a newer Japanese dictionary. " else "roma needs it to romanize kanji. ") +
-                    "It's a separate app (${Dictionary.DOWNLOAD}). Android will ask you to confirm the installation.\n\n" +
+                    Dictionary.HOW + "\n\n" +
                     "Until then, Japanese gets kana-only romanization and kanji stay as written. You can install it later in Settings."
             )
         },
-        confirmButton = { TextButton(onClick = { Dictionary.answer(Store.context, true) }) { Text(if (offer == "update") "Update" else "Install") } },
-        dismissButton = { TextButton(onClick = { Dictionary.answer(Store.context, false) }) { Text("Not now") } },
+        confirmButton = { TextButton(onClick = { Dictionary.answer(true) }) { Text(if (offer == "update") "Update" else "Install") } },
+        dismissButton = { TextButton(onClick = { Dictionary.answer(false) }) { Text("Not now") } },
     )
 }
 
@@ -1330,7 +1285,7 @@ fun SetupScreen() {
         Button(
             onClick = {
                 Store.set("setup.done", true)
-                if ("ja" !in read) Dictionary.install(Store.context)
+                if ("ja" !in read) Dictionary.install()
             },
             Modifier.padding(top = 24.dp).align(Alignment.End),
         ) { Text("Continue") }

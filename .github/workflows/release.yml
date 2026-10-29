@@ -1,6 +1,7 @@
 # Every push to master builds and tests. When app/build.gradle.kts has a versionName with no release yet, the run also
 # signs (tools/release.sh) and publishes it as a GitHub release, tagged v<version> on that commit: a merge that bumps the
-# version is the release. The dictionary app gets its own release, dict-<version>, the first time its version ships;
+# version is the release. The desktop app (:desktop) ships in the same release: a .deb and an .rpm built on Linux, an
+# .msi on Windows, with roma-aac (tools/build-ffmpeg.sh) built for both on Linux. The dictionary app gets its own release, dict-<version>, the first time its version ships;
 # roma downloads it from there. The app and the dictionary build in parallel jobs, and the core tests (which need the
 # slim dictionary) in a third; roma's release is published only once its dictionary release exists and the tests pass.
 # Only master: setup-gradle saves the Gradle cache (with SudachiDict and the slim dictionary) on the default branch
@@ -10,6 +11,8 @@ name: release
 on:
   push:
     branches: [master]
+  # A branch's packages before it merges (the desktop jobs); nothing is signed or published off master.
+  workflow_dispatch:
 permissions:
   contents: write
 # The runner's git names its first branch "master" without asking; saying so quiets its hint in every checkout.
@@ -31,8 +34,10 @@ jobs:
         run: |
           v=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          # Only "release not found" is a new version; any other error (network, rate limit) fails the run.
-          if out=$(gh release view "v$v" 2>&1); then echo "release=" >> "$GITHUB_OUTPUT"
+          # Only "release not found" is a new version; any other error (network, rate limit) fails the run. Only master
+          # releases: a branch's manual run only builds.
+          if [ "$GITHUB_REF" != refs/heads/master ]; then echo "release=" >> "$GITHUB_OUTPUT"
+          elif out=$(gh release view "v$v" 2>&1); then echo "release=" >> "$GITHUB_OUTPUT"
           elif [[ $out == *"release not found"* ]]; then echo "release=1" >> "$GITHUB_OUTPUT"
           else echo "$out" >&2; exit 1; fi
 
@@ -72,6 +77,60 @@ jobs:
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@v5
       - run: tools/release.sh test
+
+  # The desktop app's Linux packages: the ProGuard-shrunk app on the distribution's Java (tools/linux-packages.sh),
+  # with roma-aac, which is built here for Windows too (tools/build-ffmpeg.sh cross-compiles it).
+  desktop-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: 25 }
+      - uses: gradle/actions/setup-gradle@v5
+      - run: sudo apt-get install -y rpm > /dev/null
+      - run: ./gradlew -q :desktop:createReleaseDistributable
+      - run: desktop/build/compose/binaries/main-release/app/roma/bin/roma --check
+      - run: tools/linux-packages.sh --no-gradle
+      - uses: actions/upload-artifact@v7
+        with: { name: desktop-linux, path: "dist/roma*" }
+      - uses: actions/upload-artifact@v7
+        with: { name: roma-aac, path: ~/.gradle/caches/roma/roma-aac-*/windows/roma-aac.exe }
+      # ProGuard renames the desktop classes; the release keeps the mapping that reads their stack traces (retrace).
+      - uses: actions/upload-artifact@v7
+        with: { name: desktop-mapping, path: desktop/build/proguard-mapping.txt }
+
+  # Windows: the full .msi (its own Java, JDK 22+ for the TLS curves in java.base) and the small .msi and .zip, which
+  # find Java 21+ or download it once (tools/windows-small.sh). Each starts once with --check.
+  desktop-windows:
+    needs: desktop-linux
+    runs-on: windows-2025
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: 25 }
+      - uses: gradle/actions/setup-gradle@v5
+      - uses: actions/download-artifact@v8
+        with: { name: roma-aac, path: aac/windows }
+      - run: ./gradlew -q :desktop:packageReleaseMsi :desktop:createReleaseDistributable "-Proma.aacDir=$GITHUB_WORKSPACE/aac"
+      - name: Check the full build
+        shell: pwsh
+        run: |
+          $p = Start-Process desktop/build/compose/binaries/main-release/app/roma/roma.exe -ArgumentList --check -Wait -PassThru -RedirectStandardOutput check.txt -RedirectStandardError check-err.txt
+          Get-Content check.txt, check-err.txt
+          exit $p.ExitCode
+      - run: tools/windows-small.sh
+      - name: Check the small build
+        shell: pwsh
+        run: |
+          $p = Start-Process desktop/build/windows-small/roma/roma.exe -ArgumentList --check -Wait -PassThru -RedirectStandardOutput check.txt -RedirectStandardError check-err.txt
+          Get-Content check.txt, check-err.txt
+          exit $p.ExitCode
+      - run: |
+          v=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
+          cp desktop/build/compose/binaries/main-release/msi/roma-*.msi "dist/roma-$v-x64-full.msi"
+      - uses: actions/upload-artifact@v7
+        with: { name: desktop-windows, path: "dist/roma*" }
 
   # Built only when its version has no release yet; otherwise this job ends after one API call.
   dict:
@@ -118,13 +177,15 @@ jobs:
 
   publish:
     if: needs.version.outputs.release
-    needs: [version, app, dict, test]
+    needs: [version, app, dict, test, desktop-linux, desktop-windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
       - uses: actions/download-artifact@v8
         with: { name: app, path: dist }
+      - uses: actions/download-artifact@v8
+        with: { pattern: "desktop-*", path: dist, merge-multiple: true }
       - name: Publish
         env: { GH_TOKEN: "${{ github.token }}", V: "${{ needs.version.outputs.version }}" }
         run: |
@@ -134,4 +195,10 @@ jobs:
           json=dist/javax.json-1.1.4-sources.jar
           curl -sfL -o "$json" https://repo1.maven.org/maven2/org/glassfish/javax.json/1.1.4/javax.json-1.1.4-sources.jar
           echo "31d21d4721eb050616683bee90e3c7d126110dffdbf8bf4d3cc992891a60419b  $json" | sha256sum -c -
-          gh release create "v$V" dist/roma-$V.apk "$json" --target "$GITHUB_SHA" --title "roma $V" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          # roma-aac, in the desktop packages, is ffmpeg (LGPL 2.1): its source goes with each release too.
+          ffmpeg=$(sed -n 's/^FFMPEG=//p' tools/build-ffmpeg.sh)
+          sha=$(sed -n 's/^FFMPEG_SHA=//p' tools/build-ffmpeg.sh)
+          curl -sfL -o "dist/ffmpeg-$ffmpeg.tar.xz" "https://ffmpeg.org/releases/ffmpeg-$ffmpeg.tar.xz"
+          echo "$sha  dist/ffmpeg-$ffmpeg.tar.xz" | sha256sum -c -
+          gh release create "v$V" dist/roma-$V.apk "$json" dist/roma_${V}_amd64.deb dist/roma-$V-1.x86_64.rpm dist/roma-$V-x64.msi \
+            dist/roma-$V-x64-full.msi dist/roma-$V-windows-x64.zip dist/proguard-mapping.txt "dist/ffmpeg-$ffmpeg.tar.xz" --target "$GITHUB_SHA" --title "roma $V" --notes-file "$RUNNER_TEMP/notes.md" --latest

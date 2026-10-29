@@ -10,8 +10,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlin.concurrent.thread
 
 /**
@@ -41,20 +39,14 @@ object Update {
     }
 
     private fun check() {
-        val latest = runCatching {
-            val c = URL("$RELEASES/latest").openConnection() as HttpURLConnection
-            c.instanceFollowRedirects = false
-            c.requestMethod = "HEAD"
-            c.connectTimeout = 15_000
-            c.readTimeout = 15_000
-            try { c.getHeaderField("Location") } finally { c.disconnect() }
-        }.getOrNull()?.substringAfter("/tag/v", "")?.takeIf { it.isNotEmpty() } ?: return
-        if (roma.core.newerVersion(latest, BuildConfig.VERSION_NAME)) android.os.Handler(android.os.Looper.getMainLooper()).post { available = latest }
+        val latest = roma.core.latestRelease(RELEASES) ?: return
+        if (roma.core.newerVersion(latest, BuildConfig.VERSION_NAME)) postMain { available = latest }
     }
 
-    fun install(c: Context) {
+    fun install() {
         val v = available ?: return
-        val app = c.applicationContext
+        val app = appContext
+        val c = app
         if (busy) return
         if (!app.packageManager.canRequestPackageInstalls()) {
             status = "Allow roma to install apps, then tap again"

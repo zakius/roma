@@ -101,3 +101,16 @@ fun newerVersion(a: String, b: String): Boolean {
     }
     return false
 }
+
+/**
+ * The latest release's version at a GitHub [releases] page ("0.1.55"), from where its "latest" link redirects: one
+ * HEAD request, no API token. Null when the check fails. Blocking.
+ */
+fun latestRelease(releases: String): String? = runCatching {
+    val c = java.net.URI("$releases/latest").toURL().openConnection() as java.net.HttpURLConnection
+    c.instanceFollowRedirects = false
+    c.requestMethod = "HEAD"
+    c.connectTimeout = 15_000
+    c.readTimeout = 15_000
+    try { c.getHeaderField("Location") } finally { c.disconnect() }
+}.getOrNull()?.substringAfter("/tag/v", "")?.takeIf { it.isNotEmpty() }

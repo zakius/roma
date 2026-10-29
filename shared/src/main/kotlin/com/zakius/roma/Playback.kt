@@ -1,41 +1,10 @@
 package com.zakius.roma
 
-import android.content.Context
-import android.net.Uri
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
-import androidx.media3.database.StandaloneDatabaseProvider
-import androidx.media3.datasource.ResolvingDataSource
-import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
-import androidx.media3.datasource.cache.SimpleCache
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.RenderersFactory
-import androidx.media3.exoplayer.audio.DefaultAudioSink
-import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
-import androidx.media3.extractor.ExtractorsFactory
-import androidx.media3.extractor.mkv.MatroskaExtractor
-import androidx.media3.extractor.mp4.FragmentedMp4Extractor
-import androidx.media3.extractor.mp4.Mp4Extractor
-import androidx.media3.extractor.text.SubtitleParser
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.ArtistItem
 import com.metrolist.innertube.models.WatchEndpoint
@@ -85,10 +54,8 @@ class LyricsState(val songId: String, val lyrics: Lyrics?, val translations: Lis
 
 /** The one player. The service wraps it in a media session; the UI calls it directly (same process, main thread). */
 object Playback {
-    lateinit var player: ExoPlayer
-    private lateinit var appContext: Context
+    lateinit var player: AudioPlayer
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val main = Handler(Looper.getMainLooper())
 
     /** Bumped on every player change; the UI reads it to redraw. */
     var tick by mutableIntStateOf(0)
@@ -110,44 +77,13 @@ object Playback {
     private var lastRetry: Pair<String, Long>? = null
     private val fullLookup: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
-    fun init(c: Context) {
-        appContext = c.applicationContext
+    /** [p]: the platform's player, set up by the app; the stream tokens' provider is set beside it. */
+    fun init(p: AudioPlayer) {
+        player = p
         Streams.refuseVisionOs = BuildConfig.REFUSE_VISIONOS
-        InnerTubeXStreams.tokenProvider = PoTokens(c)
-        cache = SimpleCache(File(c.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(1L shl 30), StandaloneDatabaseProvider(c))
-        val http = DefaultHttpDataSource.Factory()
-        // Media items carry roma://<videoId>; the stream URL is looked up only when bytes are needed and not cached.
-        val resolving = ResolvingDataSource.Factory(http) { spec ->
-            if (spec.uri.scheme != "roma") spec else spec.withUri(Uri.parse(streamUrl(spec.uri.host!!)))
-        }
-        val source = CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(resolving)
-        cached = source
-        // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays. It buffers
-        // 50 s ahead, or with "Download songs ahead" the whole song (at most 10 min).
-        val load = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 10 * 60_000, 500, 2_000).build()
-        // Audio only, in the containers YouTube serves (WebM, MP4): the default factories bring video, text and
-        // a dozen other containers that R8 can't remove.
-        val audio = RenderersFactory { handler, _, listener, _, _ ->
-            arrayOf(MediaCodecAudioRenderer(c, MediaCodecSelector.DEFAULT, handler, listener, DefaultAudioSink.Builder(c).build()))
-        }
-        val none = SubtitleParser.Factory.UNSUPPORTED
-        val containers = ExtractorsFactory { arrayOf(MatroskaExtractor(none), FragmentedMp4Extractor(none), Mp4Extractor(none)) }
-        // NoBandwidthMeter and no diagnostics: neither is used for one audio stream at a time, and both cost binder calls
-        // during the launch: the default bandwidth meter watches the network type and asks telephony for the country,
-        // the diagnostics report each playback session to MediaMetrics. The constructor that takes every component
-        // also keeps the default bandwidth meter out of the APK.
-        player = ExoPlayer.Builder(
-            c, audio, ProgressiveMediaSource.Factory(source, containers).setLoadErrorHandlingPolicy(WaitForNetwork),
-            DefaultTrackSelector(c), AheadLoadControl(load), NoBandwidthMeter, NoAnalytics,
-        )
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
-            .setHandleAudioBecomingNoisy(true)
-            .setWakeMode(C.WAKE_MODE_NETWORK)
-            .setUsePlatformDiagnostics(false)
-            .build()
         Startup.later { scope.launch {
             liked = withContext(Dispatchers.IO) { runCatching { Store.json.decodeFromString<List<String>>(likedFile.readText()).toSet() }.getOrDefault(emptySet()) }
-            PlaybackService.instance?.updateLikeButton()
+            likeChanged()
             // The restored song's like, after Home's first request has the connection to itself.
             delay(5_000)
             checkLike(current()?.song)
@@ -160,12 +96,18 @@ object Playback {
         Startup.later { restore() }
         // Two system-service registrations (binder calls into a system_server busy with the launch); nothing before the
         // first frame plays or needs them, and online starts true.
-        Startup.later { watchNetwork(); watchHeadphones() }
+        Startup.later {
+            watchNetwork { up ->
+                // Radio that couldn't load while offline loads now.
+                if (up && !online && player.isPlaying) topUpRadio()
+                online = up
+            }
+        }
         Startup.later { scope.launch(Dispatchers.IO) {
-            Streams.keepIn(File(c.cacheDir, "streams.txt"))
+            Streams.keepIn(File(Store.cache, "streams.txt"))
             // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Do it now so the first
             // tap doesn't pay for it, on the song Play would resume: its URL is then known too (kept 5 hours).
-            val resume = runCatching { positionFile.readText().substringBefore(' ') }.getOrNull()?.takeIf { !fullyCached(it) }
+            val resume = runCatching { positionFile.readText().substringBefore(' ') }.getOrNull()?.takeIf { !player.fullyCached(it) }
             (resume ?: Store.anySong()?.id)?.let { id -> runCatching { streamUrl(id) } }
             // A song needed the InnerTubeX fallback in the last week: warm that path too (its player script, cipher
             // config and the PoToken WebView, a few seconds cold), within the same limits as the guesses below. Later,
@@ -174,23 +116,23 @@ object Playback {
             delay(10_000)
             Streams.recentFallback()?.let { id -> runCatching { streamUrl(id) } }
         } }
-        player.addListener(object : Player.Listener {
-            override fun onEvents(p: Player, events: Player.Events) {
+        player.listener = object : AudioPlayer.Listener {
+            override fun onEvents(listChanged: Boolean, transition: Boolean, repeatChanged: Boolean, playingChanged: Boolean, discontinuity: Boolean) {
                 tick++
-                if (events.containsAny(Player.EVENT_TIMELINE_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_REPEAT_MODE_CHANGED)) saveQueue()
-                if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED, Player.EVENT_POSITION_DISCONTINUITY)) savePosition()
-                if (p.isPlaying) startSideWork()
+                if (listChanged || transition || repeatChanged) saveQueue()
+                if (playingChanged || discontinuity) savePosition()
+                if (player.isPlaying) startSideWork()
                 // Radio songs arrive after the song started, and queue edits can change what comes next.
-                if (p.isPlaying && sideWorkFor == null && events.contains(Player.EVENT_TIMELINE_CHANGED)) { prefetchNext(); downloadAhead() }
+                if (player.isPlaying && sideWorkFor == null && listChanged) { prefetchNext(); downloadAhead() }
             }
 
-            override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
+            override fun onMediaItemTransition() {
                 error = null
                 // After an error the player is idle, and a seek alone (Next, a queue tap) doesn't start it again.
                 if (player.playerError != null) player.prepare()
                 val e = current() ?: return
                 if (Store.radioSettings().skipBanned && Store.bans().banned(e.song)) {
-                    main.post { if (player.hasNextMediaItem()) player.seekToNextMediaItem() }
+                    postMain { if (player.hasNextMediaItem()) player.seekToNextMediaItem() }
                     return
                 }
                 applyLoudness(e.song.id)
@@ -208,19 +150,19 @@ object Playback {
                 // Everything else waits until the song is audible (startSideWork), so the stream has the network to
                 // itself; if it never starts (error, paused right away), it runs after 4 s anyway.
                 val id = e.song.id
-                main.postDelayed({ if (sideWorkFor == id) startSideWork() }, 4_000)
+                postMain(4_000) { if (sideWorkFor == id) startSideWork() }
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) sleepOff()
+                if (reason == AudioPlayer.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) sleepOff()
             }
 
-            override fun onPlayerError(e: PlaybackException) {
+            override fun onPlayerError(e: Throwable, httpStatus: Int?, message: String) {
                 val id = current()?.song?.id
                 synchronized(urls) { urls.remove(id) } // the URL may have expired; a retry resolves it again
                 // A refused stream URL (403, seen once after a seek) gets one silent retry through the full lookup,
                 // from the same position. A second failure within a minute shows the error.
-                val refused = (e.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode in setOf(403, 410)
+                val refused = httpStatus in setOf(403, 410)
                 val now = System.currentTimeMillis()
                 if (refused && id != null && (lastRetry?.first != id || now - lastRetry!!.second > 60_000)) {
                     lastRetry = id to now
@@ -233,9 +175,9 @@ object Playback {
                 }
                 // A failed lookup carries its reason in plain words; Media3 may wrap it in its own exceptions.
                 error = generateSequence<Throwable>(e) { it.cause }.firstNotNullOfOrNull { it as? StreamException }?.message
-                    ?: e.cause?.message ?: e.errorCodeName
+                    ?: e.cause?.message ?: message
             }
-        })
+        }
         scope.launch {
             while (true) {
                 delay(500)
@@ -257,8 +199,8 @@ object Playback {
     private fun prefetchNext() {
         prefetchQueueCovers()
         val i = player.nextMediaItemIndex
-        if (i == C.INDEX_UNSET) return
-        val next = (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song ?: return
+        if (i < 0) return
+        val next = player.entryAt(i)?.song ?: return
         if (next.id == prefetched) return
         prefetched = next.id
         next.thumb?.let { Images.prefetch(bigThumb(it), BIG_PX) }
@@ -276,23 +218,23 @@ object Playback {
      */
     private fun prefetchQueueCovers() {
         if (thrifty()) return
-        val px = (48 * appContext.resources.displayMetrics.density).roundToInt() // SongRow's cover
+        val px = (48 * screenDensity()).roundToInt() // SongRow's cover
         val from = player.currentMediaItemIndex + 1
         val urls = (from until minOf(from + QUEUE_COVERS, player.mediaItemCount)).mapNotNull { i ->
-            (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song?.thumb?.let { thumbAt(it, px) }
+            player.entryAt(i)?.song?.thumb?.let { thumbAt(it, px) }
         }
         scope.launch { for (u in urls) Images.load(u, px) }
     }
 
-    // Blocking, on ExoPlayer's loader thread. URLs expire after about 6 hours; reuse them for 5.
-    private fun streamUrl(id: String): String {
+    /** Blocking, on the player's loader thread. URLs expire after about 6 hours; reuse them for 5. */
+    fun streamUrl(id: String): String {
         synchronized(urls) {
             urls[id]?.let { (url, at) -> if (System.currentTimeMillis() - at < 5 * 3600_000) return url }
         }
         runBlocking { Store.ensureVisitorData() } // without it YouTube refuses the direct path's client as a bot
         val a = Streams.audio(id, full = fullLookup.remove(id))
         synchronized(urls) { urls[id] = a.url to System.currentTimeMillis() }
-        main.post { applyLoudness(id) }
+        postMain { applyLoudness(id) }
         return a.url
     }
 
@@ -308,30 +250,11 @@ object Playback {
 
     // ---- Queue ----
 
-    fun current(): Entry? = player.currentMediaItem?.localConfiguration?.tag as? Entry
+    fun current(): Entry? = player.currentEntry
 
-    fun songAt(i: Int): Song? = if (i in 0 until player.mediaItemCount) (player.getMediaItemAt(i).localConfiguration?.tag as? Entry)?.song else null
+    fun songAt(i: Int): Song? = if (i in 0 until player.mediaItemCount) player.entryAt(i)?.song else null
 
-    fun entries(): List<Entry> = (0 until player.mediaItemCount).mapNotNull { player.getMediaItemAt(it).localConfiguration?.tag as? Entry }
-
-    private fun mediaItem(e: Entry): MediaItem {
-        val s = e.song
-        val artistLine = if (s.title.isLatin || Store.reads(s.title.original)) s.artistLatin else "${s.artistLatin} · ${s.title.original}"
-        return MediaItem.Builder()
-            .setMediaId(s.id)
-            .setUri("roma://${s.id}")
-            .setCustomCacheKey(s.id)
-            .setTag(e)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(Store.shown(s.title))
-                    .setArtist(artistLine)
-                    .setAlbumTitle(s.album?.name?.let(Store::shown))
-                    .setArtworkUri(s.thumb?.let { Uri.parse(bigThumb(it)) })
-                    .build(),
-            )
-            .build()
-    }
+    fun entries(): List<Entry> = (0 until player.mediaItemCount).mapNotNull { player.entryAt(it) }
 
     /** Plays [songs] from [start]; the rest of the list is queued and radio from the started song follows. */
     fun play(songs: List<Song>, start: Int = 0) = play(songs, start, null, null)
@@ -351,8 +274,6 @@ object Playback {
 
     // While a pick is prepared, what still plays drops to 30%, so the ear hears a switch coming, without a gap.
     private fun duck(on: Boolean) { player.volume = if (on) baseVolume * 0.3f else baseVolume }
-    private lateinit var cached: CacheDataSource.Factory
-    private lateinit var cache: SimpleCache
 
     /** What the player shows: the song being prepared, else the one playing. */
     fun shown(): Song? = pending ?: current()?.song
@@ -380,7 +301,7 @@ object Playback {
 
     /** Next, Previous and queue taps: the current song keeps playing until the target's first bytes are cached. */
     fun skipTo(index: Int) {
-        val song = (player.getMediaItemAt(index).localConfiguration?.tag as? Entry)?.song ?: return
+        val song = player.entryAt(index)?.song ?: return
         pendingJob?.cancel()
         opening = null
         pending = song
@@ -408,12 +329,14 @@ object Playback {
 
     /** The queue position [dir] steps from [i], wrapping only with Repeat all; -1 when there is none. */
     fun neighbour(i: Int, dir: Int): Int {
-        val p = player
-        if (i < 0 || i >= p.mediaItemCount) return -1
-        val t = p.currentTimeline
-        val repeat = if (p.repeatMode == Player.REPEAT_MODE_ALL) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
-        val j = if (dir > 0) t.getNextWindowIndex(i, repeat, false) else t.getPreviousWindowIndex(i, repeat, false)
-        return if (j == C.INDEX_UNSET) -1 else j
+        val n = player.mediaItemCount
+        if (i < 0 || i >= n) return -1
+        val j = i + dir
+        return when {
+            j in 0 until n -> j
+            player.repeatMode == AudioPlayer.REPEAT_MODE_ALL -> if (dir > 0) 0 else n - 1
+            else -> -1
+        }
     }
 
     // The song whose lyrics, radio top-up and next-song prefetch still wait for playback to start.
@@ -445,9 +368,8 @@ object Playback {
             precacheAsync(ids[0]).await()
             withContext(Dispatchers.IO) {
                 for (id in ids) {
-                    if (fullyCached(id)) continue
-                    val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setKey(id).build()
-                    runCatching { androidx.media3.datasource.cache.CacheWriter(cached.createDataSource(), spec, null, null).cache() }
+                    if (player.fullyCached(id)) continue
+                    runCatching { player.precache(id, -1) }
                 }
             }
         }
@@ -455,12 +377,7 @@ object Playback {
 
     // Resolves the stream URL and caches the first 32 KB: the container header plus about 1.5 s of audio at YouTube's
     // bitrates, more than the 0.5 s the player needs to start. Waiting for more only delays the switch on slow networks.
-    // The key is the media item's cache key (the video ID): under the roma:// URI the player wouldn't find the bytes
-    // and would download them again.
-    private fun precache(id: String) {
-        val spec = androidx.media3.datasource.DataSpec.Builder().setUri("roma://$id").setKey(id).setPosition(0).setLength(32 * 1024L).build()
-        androidx.media3.datasource.cache.CacheWriter(cached.createDataSource(), spec, null, null).cache()
-    }
+    private fun precache(id: String) = player.precache(id, 32 * 1024L)
 
     // Precaches running, by video ID (main thread only). A tap joins the lookup its touch-down started, and Next
     // joins the next-song prefetch, instead of resolving and downloading the same song twice at once.
@@ -497,7 +414,7 @@ object Playback {
             for (s in songs.take(GUESS_SONGS)) {
                 val now = System.currentTimeMillis()
                 while (guessTimes.isNotEmpty() && now - guessTimes.first() > 3600_000) guessTimes.removeFirst()
-                if (guessTimes.size >= GUESSES_PER_HOUR || pending != null || player.playbackState == Player.STATE_BUFFERING || thrifty()) return@launch
+                if (guessTimes.size >= GUESSES_PER_HOUR || pending != null || player.playbackState == AudioPlayer.STATE_BUFFERING || thrifty()) return@launch
                 guessTimes.addLast(now)
                 precacheAsync(s.id).await()
             }
@@ -507,8 +424,7 @@ object Playback {
     /** Mobile data or Battery Saver, and the user hasn't allowed guesses there. */
     fun thrifty(): Boolean {
         if (Store.bool("prepare.always", false)) return false
-        val metered = appContext.getSystemService(android.net.ConnectivityManager::class.java).isActiveNetworkMetered
-        return metered || appContext.getSystemService(android.os.PowerManager::class.java).isPowerSaveMode
+        return meteredOrSaving()
     }
 
     private const val GUESS_SONGS = 3
@@ -523,7 +439,7 @@ object Playback {
         radioContinuation = null
         related = null
         shuffleOrder = null
-        player.setMediaItems(songs.map { mediaItem(Entry(it, "queued")) }, start, 0)
+        player.setMediaItems(songs.map { player.item(Entry(it, "queued")) }, start, 0)
         player.prepare()
         player.play()
     }
@@ -549,7 +465,7 @@ object Playback {
                 if (i < insertAt) insertAt--
             }
         }
-        player.addMediaItem(insertAt, mediaItem(Entry(s, "queued")))
+        player.addMediaItem(insertAt, player.item(Entry(s, "queued")))
     }
 
     fun remove(index: Int) {
@@ -608,7 +524,7 @@ object Playback {
             related = rel
             radioContinuation = continuation
             Store.remember(added)
-            player.addMediaItems(added.map { mediaItem(Entry(it, "radio")) })
+            player.addMediaItems(added.map { player.item(Entry(it, "radio")) })
         }
     }
 
@@ -659,11 +575,11 @@ object Playback {
             if (added.isEmpty()) {
                 // The mix is done (or the network failed): radio from here on, unless the queue should stop.
                 mixId = null
-                main.post { topUpRadio() }
+                postMain { topUpRadio() }
                 return@launch
             }
             Store.remember(added)
-            player.addMediaItems(added.map { mediaItem(Entry(it, "queued")) })
+            player.addMediaItems(added.map { player.item(Entry(it, "queued")) })
         }
     }
 
@@ -675,7 +591,7 @@ object Playback {
 
     // ---- Sleep timer ----
 
-    /** When the sleep timer pauses playback, in [SystemClock.elapsedRealtime] time; 0 when it's off. */
+    /** When the sleep timer pauses playback, in [elapsedRealtime] time; 0 when it's off. */
     var sleepAt by mutableLongStateOf(0L)
         private set
     /** The sleep timer pauses when the playing song ends. */
@@ -684,7 +600,7 @@ object Playback {
 
     fun sleepIn(minutes: Int) {
         sleepOff()
-        sleepAt = SystemClock.elapsedRealtime() + minutes * 60_000L
+        sleepAt = elapsedRealtime() + minutes * 60_000L
     }
 
     fun sleepAtSongEnd() {
@@ -704,7 +620,7 @@ object Playback {
     // cutting a phrase off. A timer that runs out while paused just turns off.
     private fun checkSleep() {
         if (sleepAt == 0L) return
-        val left = sleepAt - SystemClock.elapsedRealtime()
+        val left = sleepAt - elapsedRealtime()
         if (left > 10_000) return
         if (left > 0 && player.isPlaying) { player.volume = baseVolume * left / 10_000f; return }
         if (left > 0) return
@@ -736,8 +652,8 @@ object Playback {
     private var restoringNow = false
     private val restoreWaiters = ArrayList<() -> Unit>()
 
-    private val queueFile get() = File(appContext.filesDir, "queue.json")
-    private val positionFile get() = File(appContext.filesDir, "position")
+    private val queueFile get() = File(Store.files, "queue.json")
+    private val positionFile get() = File(Store.files, "position")
     // One writer thread, in order: a later save never lands before an earlier one.
     private val saver = java.util.concurrent.Executors.newSingleThreadExecutor()
     private var saveQueued = false
@@ -746,7 +662,7 @@ object Playback {
     private fun saveQueue() {
         if (restoring || saveQueued) return
         saveQueued = true
-        main.post {
+        postMain {
             saveQueued = false
             val list = entries()
             val s = Saved(list.map { it.song }, list.map { it.section }, player.currentMediaItemIndex, player.repeatMode, shuffleOrder, radioSeed, radioContinuation, mixId, mixContinuation)
@@ -785,7 +701,7 @@ object Playback {
             Images.prefetch(bigThumb(it), BIG_PX)
         }
         return Restored(saved, index, if (position?.first == song.id) position.second else 0L,
-            saved.songs.mapIndexed { i, s -> mediaItem(Entry(s, saved.sections.getOrElse(i) { "queued" })) })
+            saved.songs.mapIndexed { i, s -> player.item(Entry(s, saved.sections.getOrElse(i) { "queued" })) })
     }
 
     private fun restore() {
@@ -793,7 +709,7 @@ object Playback {
             // The cache check waits until the audio cache has scanned its files, so it stays off the main thread too.
             val (r, onDisk) = withContext(Dispatchers.IO) {
                 val r = restoreRead.get()
-                r to (r != null && fullyCached(r.saved.songs[r.index].id))
+                r to (r != null && player.fullyCached(r.saved.songs[r.index].id))
             }
             // A song picked while the file was read wins.
             if (r != null && player.mediaItemCount == 0 && pending == null) {
@@ -818,53 +734,13 @@ object Playback {
         }
     }
 
-    private class Restored(val saved: Saved, val index: Int, val at: Long, val items: List<MediaItem>)
-
-    /** The whole song is in the audio cache: it plays, seeks and repeats without the network. */
-    fun fullyCached(id: String): Boolean {
-        val length = androidx.media3.datasource.cache.ContentMetadata.getContentLength(cache.getContentMetadata(id))
-        return length > 0 && cache.isCached(id, 0, length)
-    }
+    private class Restored(val saved: Saved, val index: Int, val at: Long, val items: List<QueueItem>)
 
     /** Runs [f] once the saved queue is back: at once if it already is. */
     fun afterRestore(f: () -> Unit) = if (restoring) restoreWaiters.add(f).let { } else f()
 
     // Pause while buffering (waiting for the network) pauses; Play prepares an idle player and restarts an ended one.
-    fun togglePlay() = androidx.media3.common.util.Util.handlePlayPauseButtonAction(player)
-
-    // ---- Headphones ----
-
-    // When the headphones went away and paused the song (Media3's "becoming noisy"); 0 otherwise.
-    private var unpluggedAt = 0L
-
-    /**
-     * Opt-in: headphones, Bluetooth earbuds or a car that come back within an hour of pausing the song by going away
-     * resume it. Only that pause counts: a song the user paused stays paused. The system calls back on device
-     * changes; nothing polls.
-     */
-    private fun watchHeadphones() {
-        player.addListener(object : Player.Listener {
-            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                unpluggedAt = if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY) android.os.SystemClock.elapsedRealtime() else 0L
-            }
-        })
-        val audio = appContext.getSystemService(android.media.AudioManager::class.java)
-        audio.registerAudioDeviceCallback(object : android.media.AudioDeviceCallback() {
-            override fun onAudioDevicesAdded(added: Array<android.media.AudioDeviceInfo>) {
-                if (unpluggedAt == 0L || !Store.bool("play.resumeOnHeadphones", false)) return
-                if (android.os.SystemClock.elapsedRealtime() - unpluggedAt > 3600_000) return
-                if (added.none { it.isSink && it.type in HEADPHONES }) return
-                unpluggedAt = 0L
-                player.play()
-            }
-        }, main)
-    }
-
-    private val HEADPHONES = setOf(
-        android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
-        26 /* TYPE_BLE_HEADSET */, 27 /* TYPE_BLE_SPEAKER */, 23 /* TYPE_HEARING_AID */,
-    )
+    fun togglePlay() = player.togglePlay()
 
     // ---- Network drops ----
 
@@ -873,50 +749,13 @@ object Playback {
         private set
 
     /** Playing, but stuck until the network is back: the player shows a quiet note instead of an error. */
-    val waitingForNetwork get() = !online && player.playWhenReady && player.playbackState == Player.STATE_BUFFERING
-
-    private fun watchNetwork() {
-        val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java)
-        cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
-            override fun onCapabilitiesChanged(n: android.net.Network, caps: android.net.NetworkCapabilities) {
-                val up = caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-                main.post {
-                    // Radio that couldn't load while offline loads now.
-                    if (up && !online && player.isPlaying) topUpRadio()
-                    online = up
-                }
-            }
-
-            override fun onLost(n: android.net.Network) { main.post { online = false } }
-        }, main)
-    }
-
-    /**
-     * Without a connection the player keeps playing what it has, then waits, retrying every 2 s for up to 10 min
-     * (an attempt with no network fails at once and costs nothing), and goes on by itself once a retry succeeds. Other
-     * errors keep Media3's usual 3 retries. ponytail: fixed 2 s; a nudge from the network callback would save up to 2 s.
-     */
-    private object WaitForNetwork : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
-        override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long = when {
-            noConnection(info.exception) -> if (info.errorCount <= 300) 2_000 else C.TIME_UNSET
-            info.errorCount > DEFAULT_MIN_LOADABLE_RETRY_COUNT -> C.TIME_UNSET
-            else -> super.getRetryDelayMsFor(info)
-        }
-
-        // The error reaches the player only once retrying gives up (above), not after a fixed count.
-        override fun getMinimumLoadableRetryCount(dataType: Int) = Int.MAX_VALUE
-
-        private fun noConnection(e: Throwable): Boolean = generateSequence(e) { it.cause }.any {
-            it is java.net.UnknownHostException || it is java.net.ConnectException || it is java.net.SocketTimeoutException ||
-                it is java.net.NoRouteToHostException || it is java.net.SocketException || it.message == Streams.NO_CONNECTION
-        }
-    }
+    val waitingForNetwork get() = !online && player.playWhenReady && player.playbackState == AudioPlayer.STATE_BUFFERING
 
     fun cycleRepeat() {
         player.repeatMode = when (player.repeatMode) {
-            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-            else -> Player.REPEAT_MODE_OFF
+            AudioPlayer.REPEAT_MODE_OFF -> AudioPlayer.REPEAT_MODE_ALL
+            AudioPlayer.REPEAT_MODE_ALL -> AudioPlayer.REPEAT_MODE_ONE
+            else -> AudioPlayer.REPEAT_MODE_OFF
         }
     }
 
@@ -939,7 +778,7 @@ object Playback {
             queued.sortedBy { e -> order.indexOf(e.song.id).let { if (it < 0) Int.MAX_VALUE else it } }
         }
         if (queued.isEmpty()) { tick++; return }
-        player.replaceMediaItems(cur + 1, end, newOrder.map { mediaItem(it) })
+        player.replaceMediaItems(cur + 1, end, newOrder.map { player.item(it) })
         tick++
     }
 
@@ -974,19 +813,19 @@ object Playback {
             withContext(Dispatchers.Main) {
                 if (ok) saveLiked() else {
                     liked = if (like) liked - song.id else liked + song.id
-                    PlaybackService.instance?.updateLikeButton()
+                    likeChanged()
                 }
             }
         }
-        PlaybackService.instance?.updateLikeButton()
+        likeChanged()
     }
 
     /** Callable from any thread: pages call it while they load on Dispatchers.IO, and the player is main-thread only. */
     fun markLiked(ids: Collection<String>) {
-        main.post {
+        postMain {
             liked = liked + ids
             saveLiked()
-            PlaybackService.instance?.updateLikeButton()
+            likeChanged()
         }
     }
 
@@ -1007,11 +846,11 @@ object Playback {
             if (id in toggled || like == (id in liked)) return@launch
             liked = if (like) liked + id else liked - id
             saveLiked()
-            PlaybackService.instance?.updateLikeButton()
+            likeChanged()
         }
     }
 
-    private val likedFile get() = java.io.File(appContext.cacheDir, "liked.json")
+    private val likedFile get() = java.io.File(Store.cache, "liked.json")
 
     // What the Like controls show until YouTube answers for a song, on the next start too.
     private fun saveLiked() {
@@ -1036,7 +875,7 @@ object Playback {
             // Radio may have added songs meanwhile; any other change to the queue means starting over.
             val now = entries()
             if (now.size < before.size || before.indices.any { now[it] !== before[it] }) return@launch romanizationChanged()
-            player.replaceMediaItems(0, before.size, again.map { mediaItem(it) })
+            player.replaceMediaItems(0, before.size, again.map { player.item(it) })
             tick++
         }
         current()?.let { loadLyrics(it.song) }
@@ -1051,7 +890,7 @@ object Playback {
 
     /** The song's lyrics from the disk cache, or (with [network]) from the providers. Null: not cached, no network asked. */
     private fun lyricsResult(s: Song, network: Boolean): LyricsResult? {
-        val file = File(appContext.cacheDir, "lyrics/${s.id}.json")
+        val file = File(Store.cache, "lyrics/${s.id}.json")
         // A cache file from before 0.1.6 holds a bare Lyrics, fails to decode and is searched again.
         runCatching { Store.json.decodeFromString<LyricsResult>(file.readText()) }.getOrNull()?.let { return it }
         if (!network) return null
@@ -1090,7 +929,7 @@ object Playback {
     }
     private fun romanizedKey(id: String) = "$id@${Store.romanizationVersion}"
     // The app's version too: an update may romanize differently, and its lyrics shouldn't show the old version's.
-    private fun romanizedFile(id: String) = File(appContext.cacheDir, "lyrics/$id.r${Store.romanizationVersion}.${BuildConfig.VERSION_CODE}.json")
+    private fun romanizedFile(id: String) = File(Store.cache, "lyrics/$id.r${Store.romanizationVersion}.${BuildConfig.VERSION_CODE}.json")
 
     private fun romanizedLyrics(s: Song): LyricsState? = synchronized(romanizedCache) { romanizedCache[romanizedKey(s.id)] }
 
@@ -1109,13 +948,13 @@ object Playback {
     /** After a romanization change: the kept romanizations no longer apply. */
     fun forgetRomanizedLyrics() {
         synchronized(romanizedCache) { romanizedCache.clear() }
-        scope.launch(Dispatchers.IO) { File(appContext.cacheDir, "lyrics").listFiles { f -> f.name.contains(".r") }?.forEach { it.delete() } }
+        scope.launch(Dispatchers.IO) { File(Store.cache, "lyrics").listFiles { f -> f.name.contains(".r") }?.forEach { it.delete() } }
     }
 
     /** Drops the cached lyrics and asks the providers again, e.g. after changing their order. */
     fun refetchLyrics() {
         val s = current()?.song ?: return
-        File(appContext.cacheDir, "lyrics/${s.id}.json").delete()
+        File(Store.cache, "lyrics/${s.id}.json").delete()
         romanizedFile(s.id).delete()
         synchronized(romanizedCache) { romanizedCache.remove(romanizedKey(s.id)) }
         lyrics = null
@@ -1143,7 +982,7 @@ object Playback {
         val t = state.translations + layer
         lyrics = LyricsState(id, state.lyrics, t).also { synchronized(romanizedCache) { romanizedCache[romanizedKey(id)] = it } }
         scope.launch(Dispatchers.IO) {
-            for (f in listOf(File(appContext.cacheDir, "lyrics/$id.json"), romanizedFile(id))) runCatching {
+            for (f in listOf(File(Store.cache, "lyrics/$id.json"), romanizedFile(id))) runCatching {
                 val r = Store.json.decodeFromString<LyricsResult>(f.readText())
                 f.writeText(Store.json.encodeToString(LyricsResult(r.lyrics, t, r.rule)))
             }
@@ -1193,31 +1032,12 @@ object Playback {
     }
 
     // One instance: its lock is what keeps an add and a flush from losing or repeating scrobbles.
-    val scrobbleQueue by lazy { ScrobbleQueue(File(appContext.filesDir, "scrobbles.json")) }
+    val scrobbleQueue by lazy { ScrobbleQueue(File(Store.files, "scrobbles.json")) }
 
     fun flushScrobbles() {
         val (fm, sk) = lastFm() ?: return
         scope.launch(Dispatchers.IO) { runCatching { scrobbleQueue.flush { fm.scrobble(sk, it) } } }
     }
-}
-
-/**
- * [load] as is, except that it stops 50 s ahead unless "Download songs ahead" is on. Kotlin's `by` doesn't forward
- * Java's default methods, so the ones the player calls are forwarded by hand.
- */
-private class AheadLoadControl(val load: DefaultLoadControl) : androidx.media3.exoplayer.LoadControl {
-    override fun shouldContinueLoading(p: androidx.media3.exoplayer.LoadControl.Parameters) =
-        load.shouldContinueLoading(p) && (p.bufferedDurationUs < 50_000_000 || Store.prefs.getBoolean("play.ahead", false))
-    override fun getAllocator(id: androidx.media3.exoplayer.analytics.PlayerId) = load.getAllocator(id)
-    override fun onPrepared(id: androidx.media3.exoplayer.analytics.PlayerId) = load.onPrepared(id)
-    override fun onStopped(id: androidx.media3.exoplayer.analytics.PlayerId) = load.onStopped(id)
-    override fun onReleased(id: androidx.media3.exoplayer.analytics.PlayerId) = load.onReleased(id)
-    override fun onTracksSelected(p: androidx.media3.exoplayer.LoadControl.Parameters, groups: androidx.media3.exoplayer.source.TrackGroupArray, selections: Array<out androidx.media3.exoplayer.trackselection.ExoTrackSelection?>) = load.onTracksSelected(p, groups, selections)
-    override fun getBackBufferDurationUs(id: androidx.media3.exoplayer.analytics.PlayerId) = load.getBackBufferDurationUs(id)
-    override fun retainBackBufferFromKeyframe(id: androidx.media3.exoplayer.analytics.PlayerId) = load.retainBackBufferFromKeyframe(id)
-    override fun shouldStartPlayback(p: androidx.media3.exoplayer.LoadControl.Parameters) = load.shouldStartPlayback(p)
-    override fun shouldContinuePreloading(id: androidx.media3.exoplayer.analytics.PlayerId, t: androidx.media3.common.Timeline, period: androidx.media3.exoplayer.source.MediaSource.MediaPeriodId, bufferedDurationUs: Long) =
-        load.shouldContinuePreloading(id, t, period, bufferedDurationUs)
 }
 
 /**
@@ -1233,43 +1053,3 @@ const val BIG_PX = 544
 private val BIG_WH = Regex("=w\\d+-h\\d+")
 private val SMALL_STILL = Regex("/(default|mqdefault)\\.jpg")
 
-/** Bitrate estimates only matter when choosing between video qualities; roma plays one audio format per song. */
-private object NoBandwidthMeter : androidx.media3.exoplayer.upstream.BandwidthMeter {
-    override fun getBitrateEstimate() = 1_000_000L
-    override fun getTransferListener(): androidx.media3.datasource.TransferListener? = null
-    override fun addEventListener(handler: Handler, listener: androidx.media3.exoplayer.upstream.BandwidthMeter.EventListener) {}
-    override fun removeEventListener(listener: androidx.media3.exoplayer.upstream.BandwidthMeter.EventListener) {}
-}
-
-/** Nothing in roma listens for analytics events, and platform diagnostics are off: ExoPlayer's events go nowhere. */
-private object NoAnalytics : androidx.media3.exoplayer.analytics.AnalyticsCollector {
-    override fun addListener(listener: androidx.media3.exoplayer.analytics.AnalyticsListener) {}
-    override fun removeListener(listener: androidx.media3.exoplayer.analytics.AnalyticsListener) {}
-    override fun setPlayer(player: Player, looper: android.os.Looper) {}
-    override fun release() {}
-    override fun updateMediaPeriodQueueInfo(queue: List<androidx.media3.exoplayer.source.MediaSource.MediaPeriodId>, readingPeriod: androidx.media3.exoplayer.source.MediaSource.MediaPeriodId?) {}
-    override fun notifySeekStarted() {}
-    override fun onRendererReadyChanged(rendererIndex: Int, rendererTrackType: Int, isRendererReady: Boolean) {}
-    override fun onAudioEnabled(counters: androidx.media3.exoplayer.DecoderCounters) {}
-    override fun onAudioDecoderInitialized(decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {}
-    override fun onAudioInputFormatChanged(format: androidx.media3.common.Format, decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?) {}
-    override fun onAudioPositionAdvancing(playoutStartSystemTimeMs: Long) {}
-    override fun onAudioUnderrun(bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {}
-    override fun onAudioDecoderReleased(decoderName: String) {}
-    override fun onAudioDisabled(counters: androidx.media3.exoplayer.DecoderCounters) {}
-    override fun onAudioSinkError(audioSinkError: Exception) {}
-    override fun onAudioCodecError(audioCodecError: Exception) {}
-    override fun onAudioTrackInitialized(audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig) {}
-    override fun onAudioTrackReleased(audioTrackConfig: androidx.media3.exoplayer.audio.AudioSink.AudioTrackConfig) {}
-    override fun onVideoEnabled(counters: androidx.media3.exoplayer.DecoderCounters) {}
-    override fun onVideoDecoderInitialized(decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {}
-    override fun onVideoInputFormatChanged(format: androidx.media3.common.Format, decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?) {}
-    override fun onDroppedFrames(droppedFrames: Int, elapsedMs: Long) {}
-    override fun onVideoDecoderReleased(decoderName: String) {}
-    override fun onVideoDisabled(counters: androidx.media3.exoplayer.DecoderCounters) {}
-    override fun onRenderedFirstFrame(output: Any, renderTimeMs: Long) {}
-    override fun onVideoFrameProcessingOffset(totalProcessingOffsetUs: Long, frameCount: Int) {}
-    override fun onVideoCodecError(videoCodecError: Exception) {}
-    override fun onDroppedSeeksWhileScrubbing(droppedSeeks: Int) {}
-    override fun onBandwidthSample(elapsedMs: Int, bytesTransferred: Long, bitrateEstimate: Long) {}
-}

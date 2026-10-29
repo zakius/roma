@@ -48,6 +48,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     buildFeatures { compose = true; buildConfig = true }
+    // The screens and playback logic, shared with the desktop app (:desktop).
+    sourceSets["main"].kotlin.directories += "../shared/src/main/kotlin"
     // Only the app's languages: libraries bring strings for about 80 locales.
     androidResources { localeFilters += setOf("en", "pl") }
     packaging {
