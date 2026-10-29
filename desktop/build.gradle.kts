@@ -111,10 +111,10 @@ compose.desktop {
             description = "YouTube Music, every title and lyric romanized"
             vendor = "zakius"
             licenseFile.set(rootProject.file("LICENSE"))
-            // The full build's Java: the JDK's modules roma uses, from a JDK 22 or later, whose java.base carries the
-            // TLS curves: java.net.http for the browser's DevTools socket, jdk.httpserver for Last.fm's sign-in,
-            // java.management for CEF's process. suggestRuntimeModules also lists jdk.javadoc (the whole compiler,
-            // 25 MB) and java.instrument, which only optional code refers to.
+            // The full build's Java, beyond what Compose adds (java.base, java.desktop, java.logging, jdk.crypto.ec):
+            // java.net.http for the browser's DevTools socket, jdk.httpserver for Last.fm's sign-in, java.management
+            // for CEF's process. suggestRuntimeModules also lists jdk.javadoc (the whole compiler, 25 MB) and
+            // java.instrument, which only optional code refers to. The JDK must have jmods (Temurin 24+ has none).
             modules("java.management", "java.net.http", "java.sql", "jdk.httpserver", "jdk.unsupported")
             windows {
                 iconFile.set(rootProject.file("packaging/roma.ico"))

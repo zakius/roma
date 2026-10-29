@@ -86,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
-        with: { distribution: temurin, java-version: 25 }
+        with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@v5
       - run: sudo apt-get install -y rpm > /dev/null
       - run: ./gradlew -q :desktop:createReleaseDistributable
@@ -100,8 +100,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with: { name: desktop-mapping, path: desktop/build/proguard-mapping.txt }
 
-  # Windows: the full .msi (its own Java, JDK 22+ for the TLS curves in java.base) and the small .msi and .zip, which
-  # find Java 21+ or download it once (tools/windows-small.sh). Each starts once with --check.
+  # Windows: the full .msi (its own Java) and the small .msi and .zip, which find Java 21+ or download it once
+  # (tools/windows-small.sh). Each starts once with --check. Temurin 21, not 24+: those ship no jmods, which ProGuard
+  # and jlink read.
   desktop-windows:
     needs: desktop-linux
     runs-on: windows-2025
@@ -109,7 +110,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
-        with: { distribution: temurin, java-version: 25 }
+        with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@v5
       - uses: actions/download-artifact@v8
         with: { name: roma-aac, path: aac/windows }

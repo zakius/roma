@@ -33,7 +33,7 @@ The core tests and the dictionary app need SudachiDict: their first build downlo
 
 Release builds are made with `tools/release.sh`: R8 shrinking, Zopfli-recompressed, signed with a key that you supply in `keystore.properties` (not in the repository). A merge to master that sets a new `versionName` builds and publishes it as a GitHub release (`.github/workflows/release.yml`); there's no tag to push.
 
-The desktop app shares the Android app's screens and logic (`shared/`, see [docs/design.md](docs/design.md#desktop-2026-10-29)). It needs a JDK 22 or later for its packages:
+The desktop app shares the Android app's screens and logic (`shared/`, see [docs/design.md](docs/design.md#desktop-2026-10-29)). Its packages need a JDK with `jmods` (Temurin 21 has them, Temurin 24 and later don't):
 
 ```sh
 ./gradlew :desktop:run                      # run it
