@@ -280,6 +280,7 @@ class AacPcm(private val d: Mp4Demuxer, atMs: Long) : Pcm {
             val exe = if (System.getProperty("os.name").startsWith("Windows")) "roma-aac.exe" else "roma-aac"
             System.getProperty("roma.aac")?.let { return it }
             val bundled = File(System.getProperty("compose.application.resources.dir") ?: error("roma-aac is missing"), exe)
+            check(bundled.exists()) { "roma-aac is missing from $bundled" }
             if (bundled.canExecute()) return bundled.path
             val copy = File(Dirs.cache, exe)
             if (copy.length() != bundled.length()) bundled.copyTo(copy, overwrite = true)

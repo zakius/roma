@@ -94,8 +94,10 @@ jobs:
       - run: tools/linux-packages.sh --no-gradle
       - uses: actions/upload-artifact@v7
         with: { name: desktop-linux, path: "dist/roma*" }
+      # Staged under a fixed path: with a wildcard in it, upload-artifact keeps the folders after the wildcard.
+      - run: mkdir -p aac/windows && cp ~/.gradle/caches/roma/roma-aac-*/windows/roma-aac.exe aac/windows/
       - uses: actions/upload-artifact@v7
-        with: { name: roma-aac, path: ~/.gradle/caches/roma/roma-aac-*/windows/roma-aac.exe }
+        with: { name: roma-aac, path: aac }
       # ProGuard renames the desktop classes; the release keeps the mapping that reads their stack traces (retrace).
       - uses: actions/upload-artifact@v7
         with: { name: desktop-mapping, path: desktop/build/proguard-mapping.txt }
@@ -113,7 +115,7 @@ jobs:
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@v5
       - uses: actions/download-artifact@v8
-        with: { name: roma-aac, path: aac/windows }
+        with: { name: roma-aac, path: aac }
       - run: ./gradlew -q :desktop:packageReleaseMsi :desktop:createReleaseDistributable "-Proma.aacDir=$GITHUB_WORKSPACE/aac"
       - name: Check the full build
         shell: pwsh
