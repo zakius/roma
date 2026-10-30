@@ -24,7 +24,8 @@
         android:label="roma"
         android:icon="@android:drawable/ic_media_play"
         android:theme="@style/Roma"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

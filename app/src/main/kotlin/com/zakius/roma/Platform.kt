@@ -196,6 +196,7 @@ fun OutlinedTextField(
     placeholder: String? = null,
     onSearch: (() -> Unit)? = null,
     autoFocus: Boolean = false,
+    password: Boolean = false,
 ) {
     val s = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
@@ -226,7 +227,8 @@ fun OutlinedTextField(
                     setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, style.fontSize.value)
                     letterSpacing = style.letterSpacing.value / style.fontSize.value
                     if (Build.VERSION.SDK_INT >= 28) lineHeight = (style.lineHeight.value * resources.displayMetrics.scaledDensity).toInt()
-                    inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
+                    inputType = if (password) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    else android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
                         (if (singleLine) 0 else android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE)
                     if (singleLine) maxLines = 1
                     imeOptions = when {

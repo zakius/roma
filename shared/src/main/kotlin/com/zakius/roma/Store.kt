@@ -142,7 +142,7 @@ object Store {
             romanizer.retryDictionary() // Japanese read as written doesn't load the dictionary; romanized again, it does
         }
         if (key == "cookie") { cookie = value as String?; File(cache, "mixes.json").delete() } // the mixes are the account's
-        if (key.startsWith("rom.") || key == "cookie") dataChanged()
+        if (key.startsWith("rom.") || key == "cookie" || key == "source") dataChanged()
         version++
         if (key == "play.ahead" && value == true && Playback.player.isPlaying) Playback.downloadAhead()
     }
@@ -182,7 +182,7 @@ object Store {
     }
 
     /** What pages hold changed (account, romanization): the disk copies go, and open pages load again. */
-    private fun dataChanged() {
+    fun dataChanged() {
         pageThread.execute { pages.listFiles()?.forEach { it.delete() } }
         dataVersion++
     }

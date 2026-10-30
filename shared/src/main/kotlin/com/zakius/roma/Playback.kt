@@ -100,6 +100,7 @@ object Playback {
                 online = up
             }
         }
+        Startup.later { SubsonicSource.start() }
         Startup.later { scope.launch(Dispatchers.IO) {
             Streams.keepIn(File(Store.cache, "streams.txt"))
             // The first stream lookup of a run sets up NewPipe and asks YouTube for visitor data. Do it now so the first
@@ -1001,7 +1002,7 @@ object Playback {
         return LastFm(key, secret) to sk
     }
 
-    private fun scrobbleOf(s: Song) = Scrobble(s.artists.firstOrNull()?.name?.original ?: "", s.title.original, s.album?.name?.original, startedAt, s.durationSec)
+    private fun scrobbleOf(s: Song) = Scrobble(s.artists.firstOrNull()?.name?.original ?: "", s.title.original, s.album?.name?.original, startedAt, s.durationSec, s.id)
 
     private fun resetPlayCount() {
         playedHalfSeconds = 0
@@ -1012,6 +1013,10 @@ object Playback {
     private fun startedTrack() {
         resetPlayCount()
         val s = current()?.song ?: return
+        // Each play is reported once, by the side that knows its source (docs/subsonic.md).
+        val source = Sources.of(s.id)
+        source.nowPlaying(s)
+        if (!source.lastFm) return
         val (fm, sk) = lastFm() ?: return
         val now = scrobbleOf(s)
         scope.launch(Dispatchers.IO) { runCatching { fm.nowPlaying(sk, now) } }
@@ -1024,7 +1029,9 @@ object Playback {
         if (scrobbled || !shouldScrobble(duration, playedHalfSeconds / 2)) return
         scrobbled = true
         Store.played(s)
-        if (Store.str("lastfm.session", "").isBlank()) return
+        val source = Sources.of(s.id)
+        source.played(scrobbleOf(s))
+        if (!source.lastFm || Store.str("lastfm.session", "").isBlank()) return
         scrobbleQueue.add(scrobbleOf(s))
         flushScrobbles()
     }
@@ -1042,7 +1049,7 @@ object Playback {
  * Lists get small thumbnails (60–120 px); the player and the media notification need a large one.
  * Google-hosted art takes its size in the URL; YouTube video stills come in fixed sizes, hqdefault (480 px) always exists.
  */
-fun bigThumb(url: String) = url.replace(BIG_WH, "=w544-h544").replace(SMALL_STILL, "/hqdefault.jpg")
+fun bigThumb(url: String) = if (url.startsWith("subsonic:")) "$url?size=$BIG_PX" else url.replace(BIG_WH, "=w544-h544").replace(SMALL_STILL, "/hqdefault.jpg")
 
 /** The player's art: bigThumb's size. */
 const val BIG_PX = 544

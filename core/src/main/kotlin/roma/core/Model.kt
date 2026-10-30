@@ -52,12 +52,15 @@ fun Romanizer.again(s: Song): Song {
  * Local search: the query matches the original or the Latin form, ignoring case, accents (ō = o) and spaces.
  * Small typos pass: one in a query of 5 or more letters, two from 9. Returns how many typos it took, or null.
  */
-fun matchDistance(song: Song, query: String): Int? {
+fun matchDistance(song: Song, query: String): Int? =
+    matchDistance(listOf(song.title.original, song.title.latin, song.artistOriginal, song.artistLatin, song.artistLatin + song.title.latin), query)
+
+/** [matchDistance] against any names: the query matches one of [texts]. */
+fun matchDistance(texts: List<String>, query: String): Int? {
     val q = fold(query)
     if (q.isEmpty()) return null
     val allowed = when { q.length >= 9 -> 2; q.length >= 5 -> 1; else -> 0 }
-    return listOf(song.title.original, song.title.latin, song.artistOriginal, song.artistLatin, song.artistLatin + song.title.latin)
-        .minOf { substringDistance(q, fold(it)) }.takeIf { it <= allowed }
+    return texts.minOf { substringDistance(q, fold(it)) }.takeIf { it <= allowed }
 }
 
 fun matches(song: Song, query: String) = matchDistance(song, query) != null

@@ -58,13 +58,20 @@ class ExoAudio(c: Context) : AudioPlayer {
         // Start after 0.5 s of audio instead of ExoPlayer's 2.5 s; audio downloads far faster than it plays. It buffers
         // 50 s ahead, or with "Download songs ahead" the whole song (at most 10 min).
         val load = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 10 * 60_000, 500, 2_000).build()
-        // Audio only, in the containers YouTube serves (WebM, MP4): the default factories bring video, text and
-        // a dozen other containers that R8 can't remove.
+        // Audio only, in the containers YouTube serves (WebM, MP4) and those of music libraries a Subsonic server
+        // streams as they are (MP3, FLAC, Ogg, WAV, ADTS AAC): the default factories bring video, text and other
+        // containers that R8 can't remove.
         val audio = RenderersFactory { handler, _, listener, _, _ ->
             arrayOf(MediaCodecAudioRenderer(c, MediaCodecSelector.DEFAULT, handler, listener, DefaultAudioSink.Builder(c).build()))
         }
         val none = SubtitleParser.Factory.UNSUPPORTED
-        val containers = ExtractorsFactory { arrayOf(MatroskaExtractor(none), FragmentedMp4Extractor(none), Mp4Extractor(none)) }
+        val containers = ExtractorsFactory {
+            arrayOf(
+                MatroskaExtractor(none), FragmentedMp4Extractor(none), Mp4Extractor(none),
+                androidx.media3.extractor.mp3.Mp3Extractor(), androidx.media3.extractor.flac.FlacExtractor(), androidx.media3.extractor.ogg.OggExtractor(),
+                androidx.media3.extractor.wav.WavExtractor(), androidx.media3.extractor.ts.AdtsExtractor(),
+            )
+        }
         // NoBandwidthMeter and no diagnostics: neither is used for one audio stream at a time, and both cost binder calls
         // during the launch: the default bandwidth meter watches the network type and asks telephony for the country,
         // the diagnostics report each playback session to MediaMetrics. The constructor that takes every component

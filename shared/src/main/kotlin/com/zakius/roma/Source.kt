@@ -81,14 +81,21 @@ interface Source {
     val hasComments: Boolean
     /** A link to the song for Share; null when there's none. */
     fun shareUrl(s: Song): String?
+
+    /** roma scrobbles this source's songs to Last.fm itself ([roma.core.scrobblesToLastFm]). */
+    val lastFm: Boolean
+    /** A song of this source started: tell the source, if it takes plays. */
+    fun nowPlaying(s: Song)
+    /** A song of this source was listened to past the scrobble point. */
+    fun played(s: roma.core.Scrobble)
 }
 
 object Sources {
     /** The backend the screens browse. */
-    val chosen: Source get() = YouTubeMusic
+    val chosen: Source get() = if (Store.str("source", "ytm") == "subsonic") SubsonicSource else YouTubeMusic
 
     /** The source of an id: Subsonic ids start with "s.", which no YouTube id holds. */
-    fun of(id: String): Source = YouTubeMusic
+    fun of(id: String): Source = if (roma.core.SubsonicIds.of(id)) SubsonicSource else YouTubeMusic
 }
 
 /** YouTube Music through innertube. */
@@ -226,4 +233,9 @@ object YouTubeMusic : Source {
         val host = if (Store.str("share.site", "music") == "music") "music.youtube.com" else "www.youtube.com"
         return "https://$host/watch?v=${s.id}"
     }
+
+    // YouTube Music never hears of plays from roma (not even its history); Last.fm does.
+    override val lastFm = true
+    override fun nowPlaying(s: Song) {}
+    override fun played(s: roma.core.Scrobble) {}
 }

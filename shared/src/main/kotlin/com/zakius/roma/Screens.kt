@@ -130,6 +130,7 @@ fun Name(t: roma.core.Text, mode: String, style: TextStyle = MaterialTheme.typog
 fun shownThumb(url: String?, size: Dp): String? = thumbAt(url, with(LocalDensity.current) { size.roundToPx() })
 
 fun thumbAt(url: String?, px: Int): String? {
+    if (url != null && url.startsWith("subsonic:")) return "$url?size=$px"
     if (url == null || "googleusercontent.com/" !in url) return url
     return url.replace(SIZE_WH, "=w$px-h$px").replace(SIZE_S, "=s$px")
 }
@@ -721,9 +722,11 @@ private fun mixGrid(widthDp: Int, n: Int): Triple<Int, Int, Dp> =
  */
 @Composable
 private fun Mixes(mixes: List<Item>?, read: Boolean) {
-    Text("Your mixes", Modifier.padding(start = 16.dp, top = 16.dp), style = MaterialTheme.typography.titleMedium)
+    val source = Sources.chosen
+    Text(if (source.mixes) "Your mixes" else "Your library", Modifier.padding(start = 16.dp, top = 16.dp), style = MaterialTheme.typography.titleMedium)
     @Composable
     fun Hint(text: String) = Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).dim(0.5f), style = MaterialTheme.typography.bodyMedium)
+    if (!source.mixes) return LibraryTiles()
     if (!Store.signedIn) return TextButton(onClick = { Nav.open(Page("login", "")) }, Modifier.padding(horizontal = 4.dp)) { Text("Sign in to see your mixes") }
     val width = screenSizeDp().width
     val list = mixes.orEmpty()
@@ -759,6 +762,23 @@ private fun Mixes(mixes: List<Item>?, read: Boolean) {
     if (list.size > shown) {
         PrefetchCovers(list.drop(shown).map { it.thumb }, 128.dp)
         LazyRow { items(list.drop(shown)) { m -> Card(m) { play(m) } } }
+    }
+}
+
+/** Home's pinned row on a source without personal mixes: its starred songs, and the whole library at random. */
+@Composable
+private fun LibraryTiles() {
+    val (_, _, side) = mixGrid(screenSizeDp().width, 0)
+    @Composable
+    fun Tile(title: String, id: String, icon: @Composable () -> Unit) = Column(Modifier.width(side).clickable { Playback.playMix(id, title = title); Nav.tab = TAB_PLAYER }) {
+        Box(Modifier.size(side).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) { icon() }
+        Spacer(Modifier.height(4.dp))
+        Text(title, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+    }
+    val tint = MaterialTheme.colorScheme.onSecondaryContainer
+    Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Tile("Starred", SubsonicSource.STARRED) { Icon(Icons.Filled.ThumbUp, null, Modifier.size(side / 3), tint = tint) }
+        Tile("Shuffle all", SubsonicSource.SHUFFLE) { Icon(androidx.compose.ui.res.painterResource(R.drawable.shuffle), null, Modifier.size(side / 3), tint = tint) }
     }
 }
 
@@ -970,6 +990,11 @@ fun SettingsScreen() {
         Update.available?.let { v ->
             item { Row1("Update to roma $v", Update.status ?: "Restarts roma, so the music stops") { Update.install() } }
         }
+        item {
+            val sub = Sources.chosen === SubsonicSource
+            SubsonicSource.changes
+            Category("source", "Music source", if (!sub) "YouTube Music" else listOfNotNull(Store.str("subsonic.url", ""), SubsonicSource.library?.let { "${it.songs.size} songs" }).joinToString(" · "))
+        }
         item { Category("youtube", "YouTube", (if (signedIn) "Signed in" else "Not signed in") + " · shared links open $site") }
         item { Category("romanization", "Romanization", "Placement: $place · schemes · ${count(corrections, "correction") ?: "0 corrections"}$dictionary") }
         item { Category("lyrics", "Lyrics", "Providers · original, romanization and translation lines") }
@@ -990,6 +1015,7 @@ fun SettingsPage(id: String) {
     Store.version
     when (id) {
         "youtube" -> YouTubeSettings()
+        "source" -> SourceSettings()
         "appearance" -> AppearanceSettings()
         "romanization" -> RomanizationSettings()
         "corrections" -> CorrectionSettings()
@@ -1011,6 +1037,103 @@ private fun YouTubeSettings() = LazyColumn(Modifier.fillMaxSize()) {
         } else Row1("Sign in to YouTube Music", "For your library and likes") { Nav.open(Page("login", "")) }
     }
     item { Options("Shared links open", "share.site", "music", SITES) }
+}
+
+/** Where the music comes from: YouTube Music or a Subsonic server, with the server's sync and scrobbling. */
+@Composable
+private fun SourceSettings() {
+    var pick by rememberSaveable { mutableStateOf(Store.str("source", "ytm")) }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { Header("Music source") }
+        item {
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                Choice("YouTube Music", pick == "ytm") { pick = "ytm"; Store.set("source", "ytm") }
+                Choice("A Subsonic server: oasis, Navidrome, …", pick == "subsonic") { pick = "subsonic"; if (SubsonicSource.client != null) Store.set("source", "subsonic") }
+            }
+        }
+        if (pick != "subsonic") return@LazyColumn
+        item { ServerForm(if (SubsonicSource.client == null) "Connect" else "Save") { Store.set("source", "subsonic") } }
+        if (SubsonicSource.client == null) return@LazyColumn
+        item {
+            SubsonicSource.changes
+            val l = SubsonicSource.library
+            val state = when {
+                SubsonicSource.syncing -> "Syncing the library…"
+                SubsonicSource.syncError != null -> "The last sync failed: ${SubsonicSource.syncError}"
+                l != null -> "${l.songs.size} songs, ${l.albums.size} albums, ${l.artists.size} artists · synced ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(l.index.syncedAt))}"
+                else -> "Not synced yet"
+            }
+            Row1("Sync now", state, enabled = !SubsonicSource.syncing) { SubsonicSource.sync() }
+        }
+        item {
+            val oasis = SubsonicSource.serverType == "oasis"
+            Switch1(
+                "Also scrobble to Last.fm from roma", "subsonic.lastfm", false, enabled = !oasis,
+                subtitle = if (oasis) "Not needed: oasis passes every play on to Last.fm, ListenBrainz and YouTube Music itself" else "roma always tells the server. Leave this off when the server scrobbles to Last.fm, as Navidrome can",
+            )
+        }
+    }
+}
+
+/**
+ * A Subsonic server's address, user and password. [action] checks them with the server (ping) before keeping them, then
+ * runs [onConnected] and syncs the library. A different server or user drops the old one's library.
+ */
+@Composable
+private fun ServerForm(action: String, onConnected: () -> Unit) {
+    var url by rememberSaveable { mutableStateOf(Store.str("subsonic.url", "")) }
+    var user by rememberSaveable { mutableStateOf(Store.str("subsonic.user", "")) }
+    var password by rememberSaveable { mutableStateOf(Store.str("subsonic.password", "")) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth(), singleLine = true, label = "Server address", placeholder = "http://192.168.1.10:4533")
+        OutlinedTextField(user, { user = it }, Modifier.fillMaxWidth(), singleLine = true, label = "User")
+        OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), singleLine = true, label = "Password", password = true)
+        Button(enabled = !busy && url.isNotBlank(), onClick = {
+            busy = true
+            status = "Connecting…"
+            scope.launch {
+                val r = withContext(Dispatchers.IO) { runCatching { roma.core.SubsonicClient(url, user.trim(), password).ping() } }
+                busy = false
+                r.onSuccess {
+                    val other = url.trim() != Store.str("subsonic.url", "") || user.trim() != Store.str("subsonic.user", "")
+                    Store.set("subsonic.url", url.trim())
+                    Store.set("subsonic.user", user.trim())
+                    Store.set("subsonic.password", password)
+                    if (other) SubsonicSource.forget()
+                    status = null
+                    onConnected()
+                    SubsonicSource.sync()
+                }.onFailure { status = serverError(it) }
+            }
+        }) { Text(action) }
+        status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    }
+}
+
+private fun serverError(t: Throwable) = when {
+    t is roma.core.SubsonicException && t.code == 40 -> "Wrong user or password."
+    t is roma.core.SubsonicException -> t.message ?: "The server refused."
+    generateSequence(t) { it.cause }.any { it is java.net.SocketTimeoutException } -> "The server took too long to answer. Check the address, then try again."
+    generateSequence(t) { it.cause }.any { it is java.net.UnknownHostException || it is java.net.ConnectException || it is java.net.NoRouteToHostException } -> "Couldn't reach the server. Check the address and the network, then try again."
+    else -> plainError(t)
+}
+
+/** First start: YouTube Music or a Subsonic server. Asked once, before the scripts; Settings → Music source changes it. */
+@Composable
+private fun SourcePicker() {
+    var pick by rememberSaveable { mutableStateOf("ytm") }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+        Text("Where does your music come from?", style = MaterialTheme.typography.headlineSmall)
+        Text("You can change this in Settings.", Modifier.padding(top = 8.dp, bottom = 16.dp), style = MaterialTheme.typography.bodyMedium)
+        Choice("YouTube Music", pick == "ytm") { pick = "ytm" }
+        Choice("A Subsonic server: oasis, Navidrome, …", pick == "subsonic") { pick = "subsonic" }
+        fun done(source: String) { Store.set("source", source); Store.set("source.picked", true) }
+        if (pick == "subsonic") ServerForm("Continue") { done("subsonic") }
+        else Button(onClick = { done("ytm") }, Modifier.padding(top = 24.dp).align(Alignment.End)) { Text("Continue") }
+    }
 }
 
 @Composable
@@ -1198,6 +1321,7 @@ fun DictionaryPrompt() {
 @Composable
 fun SetupScreen() {
     Store.version
+    if (!Store.bool("source.picked", false)) return SourcePicker()
     val read = Store.readScripts
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
         Text("Which scripts should roma romanize?", style = MaterialTheme.typography.headlineSmall)

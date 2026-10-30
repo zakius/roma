@@ -830,6 +830,7 @@ private var songComments: CommentList? = null
 private fun CommentsView() {
     Playback.tick // the restored queue arrives after the first frame
     val songId = Playback.shown()?.id ?: return if (Playback.restoring) Unit else Centered("Nothing playing.")
+    if (!Sources.of(songId).hasComments) return Centered("No comments for songs from ${Sources.of(songId).name}.")
     val state = remember(songId) { songComments?.takeIf { it.songId == songId } ?: CommentList({ roma.core.Comments.of(songId) }, songId).also { songComments = it } }
     val list = androidx.compose.foundation.lazy.rememberLazyListState()
     // The first page at once, the next when the list nears its end.

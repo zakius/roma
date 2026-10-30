@@ -268,6 +268,7 @@ fun OutlinedTextField(
     placeholder: String? = null,
     onSearch: (() -> Unit)? = null,
     autoFocus: Boolean = false,
+    password: Boolean = false,
 ) {
     val s = MaterialTheme.colorScheme
     var focused by remember { mutableStateOf(false) }
@@ -287,6 +288,7 @@ fun OutlinedTextField(
             textStyle = style,
             singleLine = singleLine,
             cursorBrush = SolidColor(s.primary),
+            visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
             keyboardOptions = KeyboardOptions(imeAction = if (onSearch != null) ImeAction.Search else ImeAction.Default),
             keyboardActions = KeyboardActions(onSearch = { onSearch?.invoke() }, onDone = { onSearch?.invoke() }),
             decorationBox = { inner ->

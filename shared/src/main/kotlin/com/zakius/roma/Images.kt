@@ -115,7 +115,8 @@ object Images {
             f.setLastModified(System.currentTimeMillis())
             return f.readBytes()
         }
-        val c = java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection
+        // A Subsonic cover's URL is made now, with fresh auth: the stored one carries no credentials.
+        val c = java.net.URI(SubsonicSource.coverUrl(url) ?: url).toURL().openConnection() as java.net.HttpURLConnection
         c.connectTimeout = 15_000
         c.readTimeout = 15_000
         if (c.responseCode != 200) throw java.io.IOException("HTTP ${c.responseCode}")
