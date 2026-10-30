@@ -388,9 +388,9 @@ private fun get(url: String, vararg headers: Pair<String, String>, body: String?
     httpText(url, body?.toByteArray(), mapOf("User-Agent" to "Mozilla/5.0 roma") + headers, timeoutMs = 12_000)
 
 private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
-private fun JsonElement?.str(): String? = (this as? JsonPrimitive)?.takeIf { it.isString || it.content != "null" }?.content
-private fun JsonElement?.obj(): JsonObject? = this as? JsonObject
-private fun JsonElement?.arr(): JsonArray? = this as? JsonArray
+internal fun JsonElement?.str(): String? = (this as? JsonPrimitive)?.takeIf { it.isString || it.content != "null" }?.content
+internal fun JsonElement?.obj(): JsonObject? = this as? JsonObject
+internal fun JsonElement?.arr(): JsonArray? = this as? JsonArray
 
 private fun foldTitle(s: String) = Romanizer.stripMarks(s).lowercase().replace(Regex("""[(\[（【].*?[)\]）】]"""), "").replace(Regex("""[\s\p{P}]+"""), "")
 
