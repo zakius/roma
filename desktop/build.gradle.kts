@@ -264,7 +264,8 @@ val skiaFull = tasks.register<Copy>("skiaFull") {
 tasks.register<JavaExec>("skiaCheck") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass = "com.zakius.roma.SkiaCheckKt"
-    args(skiaFull.get().destinationDir.path, layout.buildDirectory.dir("compose/binaries/main-release/app/roma/lib/app").get().asFile.path)
+    val app = "compose/binaries/main-release/app/roma/" + if (windowsHost) "app" else "lib/app" // jpackage's layouts
+    args(skiaFull.get().destinationDir.path, layout.buildDirectory.dir(app).get().asFile.path)
     dependsOn(skiaFull, "createReleaseDistributable")
 }
 tasks.register<JavaExec>("icuCheck") {
