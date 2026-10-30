@@ -88,7 +88,21 @@ Each step is a commit (or a few) on the `subsonic-source` branch; the app works 
 7. Scrobble routing, with unit tests for the decision and the server's queue.
 8. Checked on the emulator against a real oasis server with a generated test library (Japanese, Korean, Chinese, Cyrillic and Greek tags).
 
+## Checked on the emulator (2026-10-30)
+
+Against oasis (commit 18b9e5e, run from its venv) with a generated library of 15 songs in 7 albums: Japanese, Korean, Chinese, Russian, Greek and English tags; MP3, FLAC, Opus in Ogg and AAC in M4A; folder covers. From the AVD the host is 10.0.2.2.
+
+- First start on a cleared install: the source question, the scripts question, then Home. An existing install went straight to its YouTube Music queue, and YouTube Music still searched, played, found lyrics and loaded comments.
+- Connect: a wrong password says "Wrong user or password."; the right one syncs the library (15 songs, 7 albums, 7 artists).
+- Home's tiles and shelves (recently added from the index, recently and most played from the server), Library's albums and artists, album and artist pages, all romanized: Yoru ni Kakeru, Gunjō, Bampyeonji, Qíng Tiān, Gruppa krovi, Ta tragoudia mou.
+- Search over the index: "yoru ni" finds 夜に駆ける, "gunjo" finds 群青.
+- Playback of all four formats, the album queued and radio from the library after it; Like stars the song on the server; Starred plays the starred songs; Comments dimmed.
+- Scrobbling: a play past half the song reached oasis once, with the start time roma sent. With oasis stopped, the play waited in subsonic-scrobbles.json; after oasis came back, roma's next start sent it, and oasis stored the original time.
+- With oasis stopped, Search and Library still worked from the index.
+
 ## Known limits
 
 - Desktop: the shared code runs, but the desktop player decodes only Opus in WebM and AAC in MP4. MP3, FLAC and Ogg files from a server need decoders there (or a server that transcodes); Android plays them through MediaCodec.
 - No ReplayGain yet: Subsonic songs play at their own level.
+- Names get machine romanization only: a server has no official Latin names, so 米津玄師 reads "Yonetsu Genshi" (the dictionary's reading) where YouTube gives "Kenshi Yonezu". A correction for that artist fixes it.
+- oasis today answers `getSimilarSongs2` with nothing and has no `getLyricsBySongId`, so its radio is the library at random and its songs' lyrics come from the third-party providers only.

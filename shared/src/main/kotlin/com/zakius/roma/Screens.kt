@@ -688,7 +688,8 @@ fun HomeScreen() {
         // come before the later ones of any.
         if (shelves) PrefetchCovers(Home.sections.flatMap { it.items.withIndex() }.sortedBy { it.index }.map { it.value.thumb }, 128.dp, near = 40)
         LazyColumn(Modifier.fillMaxSize(), Home.list) {
-            item(key = "mixes") { Column(Modifier.heightIn(min = height)) { Mixes(Home.mixes, Home.mixesRead) } }
+            // A library's shelves don't change from start to start, so on a server they follow the tiles at once.
+            item(key = "mixes") { Column(if (Sources.chosen.mixes) Modifier.heightIn(min = height) else Modifier) { Mixes(Home.mixes, Home.mixesRead) } }
             if (!shelves) return@LazyColumn
             items(Home.sections) { sec ->
                 Box(Modifier.padding(start = 16.dp, top = 16.dp)) { Name(sec.title, Store.listMode, MaterialTheme.typography.titleMedium) }
@@ -1043,17 +1044,18 @@ private fun YouTubeSettings() = LazyColumn(Modifier.fillMaxSize()) {
 @Composable
 private fun SourceSettings() {
     var pick by rememberSaveable { mutableStateOf(Store.str("source", "ytm")) }
+    val configured = Store.str("subsonic.url", "").isNotBlank() // read through Store, so connecting redraws the page
     LazyColumn(Modifier.fillMaxSize()) {
         item { Header("Music source") }
         item {
             Column(Modifier.padding(horizontal = 16.dp)) {
                 Choice("YouTube Music", pick == "ytm") { pick = "ytm"; Store.set("source", "ytm") }
-                Choice("A Subsonic server: oasis, Navidrome, …", pick == "subsonic") { pick = "subsonic"; if (SubsonicSource.client != null) Store.set("source", "subsonic") }
+                Choice("A Subsonic server: oasis, Navidrome, …", pick == "subsonic") { pick = "subsonic"; if (configured) Store.set("source", "subsonic") }
             }
         }
         if (pick != "subsonic") return@LazyColumn
-        item { ServerForm(if (SubsonicSource.client == null) "Connect" else "Save") { Store.set("source", "subsonic") } }
-        if (SubsonicSource.client == null) return@LazyColumn
+        item { ServerForm(if (!configured) "Connect" else "Save") { Store.set("source", "subsonic") } }
+        if (!configured) return@LazyColumn
         item {
             SubsonicSource.changes
             val l = SubsonicSource.library

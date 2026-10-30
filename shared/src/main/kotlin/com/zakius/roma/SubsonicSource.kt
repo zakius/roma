@@ -37,7 +37,9 @@ object SubsonicSource : Source {
     const val STARRED = "s.~starred"
     const val SHUFFLE = "s.~shuffle"
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // One at a time, in order: a server change's deletion runs before the new server's sync.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val dir get() = File(Store.cache, "subsonic")
 
     // ---- The server, from the settings ----
@@ -288,7 +290,7 @@ object SubsonicSource : Source {
 
     override fun nowPlaying(s: Song) {
         val c = client ?: return
-        scope.launch { runCatching { c.scrobble(listOf(SubsonicIds.decode(s.id)), emptyList(), submission = false) } }
+        CoroutineScope(Dispatchers.IO).launch { runCatching { c.scrobble(listOf(SubsonicIds.decode(s.id)), emptyList(), submission = false) } }
     }
 
     // One instance: its lock keeps an add and a flush from losing or repeating plays.

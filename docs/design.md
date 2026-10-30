@@ -305,7 +305,7 @@ The Android app's screens and logic run on Linux and Windows, from the same sour
 - Build toolchain: mirror ~/dev/plainfin (AGP, Kotlin, Gradle, SDK at ~/Android/Sdk, JDK under ~/.local/share/JetBrains/Toolbox/apps/air/jbr). Read its build files first.
 - Test on an emulator. Never install on the user's own devices without asking first.
 - Leave one small runnable check per non-trivial piece: romanization (including the Japanese/Chinese decision), the lyrics parsers (LRC, enhanced LRC), queue filtering.
-  - `./gradlew :core:test`: romanization, lyrics parsers (LRC, enhanced LRC, KRC, YRC), radio filters, personal mix identification and order, scrobble rule, Last.fm signature.
+  - `./gradlew :core:test`: the Subsonic client and library sync (against a fake server on localhost), romanization, lyrics parsers (LRC, enhanced LRC, KRC, YRC), radio filters, personal mix identification and order, scrobble rule, Last.fm signature.
   - `./gradlew :core:networkCheck`: live check that innertube search, the direct stream lookup (Youngblood included), the InnerTubeX stream fallback and each lyrics provider still work, and which rule picks the lyrics for 4 songs (Japanese, English, Chinese).
   - `:core:test` also covers the lyrics rules, the similarity threshold, translation alignment and the parallel search's caching decision.
 
