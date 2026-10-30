@@ -184,7 +184,7 @@ tasks.register<JavaExec>("botGuardCheck") {
     if (project.hasProperty("cef")) systemProperty("cef", "")
 }
 
-// Skia's library carries ICU's whole data (10.4 MB) and reads only its line, word and grapheme breaking. The rest
+// Skia's library (Linux; on Windows its icudtl.dat) carries ICU's whole data (10.4 MB) and reads only its line, word and grapheme breaking. The rest
 // (collation, time zones, locale names, converters, the Chinese/Japanese word dictionary) goes: the blob keeps its
 // place and size, its table of contents lists only what stays, and what's freed is zeros. :desktop:skiaCheck shows
 // text lays out as with the full data.
@@ -225,8 +225,8 @@ fun trimSkiaIcu(lib: File) {
 // Linux: also Skia's symbol table (3 MB). Its exported symbols stay; the Java runtime keeps its own for crash logs.
 tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
     doLast {
-        val libs = outputs.files.asFileTree.matching { include("**/lib/app/*skiko*.so", "**/app/*skiko*.dll") }.files
-        check(libs.isNotEmpty()) { "no Skia library in ${outputs.files.files}" }
+        val libs = outputs.files.asFileTree.matching { include("**/lib/app/*skiko*.so", "**/app/icudtl.dat") }.files
+        check(libs.isNotEmpty()) { "no ICU data of Skia's in ${outputs.files.files}" }
         libs.forEach(::trimSkiaIcu)
         if (System.getProperty("os.name") != "Linux") return@doLast
         val strip = ProcessBuilder(listOf("strip", "--strip-unneeded") + libs.map { it.path }).inheritIO().start()
@@ -258,7 +258,7 @@ afterEvaluate {
 }
 val skiaFull = tasks.register<Copy>("skiaFull") {
     from({ configurations["runtimeClasspath"].filter { it.name.startsWith("skiko-awt-runtime-") }.map { zipTree(it) } })
-    include("*.so", "*.dll")
+    include("*.so", "*.dll", "icudtl.dat")
     into(layout.buildDirectory.dir("skia-full"))
 }
 tasks.register<JavaExec>("skiaCheck") {
