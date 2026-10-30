@@ -983,6 +983,7 @@ fun signedIn(cookie: String, visitorData: String?, dataSyncId: String?) {
     dataSyncId?.let { YouTube.dataSyncId = it.substringBefore("||"); Store.set("dataSyncId", it.substringBefore("||")) }
     Store.set("cookie", cookie)
     toast("Signed in")
+    if (SubsonicSource.linkAfterSignIn) SubsonicSource.linkYouTubeMusic()
     Nav.stacks[Nav.tab].clear()
     Playback.checkLike(Playback.current()?.song)
 }
@@ -1081,6 +1082,15 @@ private fun SourceSettings() {
                 else -> "Not synced yet"
             }
             Row1("Sync now", state, enabled = !SubsonicSource.syncing) { SubsonicSource.sync() }
+        }
+        // oasis keeps a YouTube Music link per user: the mixes on Home, YouTube Music history and the forwarded plays.
+        if (SubsonicSource.serverType == "oasis") item {
+            val account = SubsonicSource.youTubeAccount
+            if (account.isNotEmpty()) Row1("YouTube Music linked: $account", "The server's mixes and history are this account's · Tap to unlink") { SubsonicSource.unlinkYouTubeMusic() }
+            else Row1(
+                "Link YouTube Music to this server",
+                if (Store.signedIn) "Hands roma's YouTube Music sign-in to oasis, for your mixes and history there" else "Sign in to YouTube Music first; roma then hands the sign-in to oasis",
+            ) { SubsonicSource.linkYouTubeMusic() }
         }
         item {
             val oasis = SubsonicSource.serverType == "oasis"

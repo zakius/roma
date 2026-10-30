@@ -15,11 +15,14 @@ import kotlin.test.assertTrue
 class SubsonicTest {
     private val calls = ArrayList<Pair<String, List<Pair<String, String>>>>()
     private var ignoreOffset = false
+    private var posted = false
     private val songs = (1..7).map { """{"id":"tr-$it","title":"夜に駆ける $it","artist":"YOASOBI","artistId":"ar-1","album":"THE BOOK","albumId":"al-1","track":$it,"duration":${200 + it},"coverArt":"al-1"${if (it == 3) ""","starred":"2026-10-30T10:00:00Z"""" else ""}}""" }
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/rest/") { ex ->
             val method = ex.requestURI.path.removePrefix("/rest/")
-            val params = ex.requestURI.rawQuery.split("&").map { it.substringBefore("=") to URLDecoder.decode(it.substringAfter("="), "UTF-8") }
+            posted = ex.requestMethod == "POST"
+            val query = if (posted) ex.requestBody.readBytes().decodeToString() else ex.requestURI.rawQuery
+            val params = query.split("&").map { it.substringBefore("=") to URLDecoder.decode(it.substringAfter("="), "UTF-8") }
             fun p(k: String) = params.firstOrNull { it.first == k }?.second
             calls += method to params
             val authed = p("u") == "admin" && SubsonicClient.md5("secret" + p("s")) == p("t")
@@ -36,6 +39,7 @@ class SubsonicTest {
                 "getAlbum" -> """"album":{"id":"al-9","name":"STRAY SHEEP","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
                 "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"}]}"""
                 "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
+                "oasisLinkYouTubeMusic" -> """"youtubeMusic":{"account":"Zakius"}"""
                 "scrobble", "star" -> """"x":1"""
                 else -> """"x":1"""
             }
@@ -142,6 +146,12 @@ class SubsonicTest {
         assertEquals(listOf("al-9"), albums.map { it.id })
         assertEquals(listOf("tr-5"), c.similarSongs("tr-1").map { it.id })
         assertEquals("tr-1", calls.last().second.toMap()["id"])
+    }
+
+    @Test fun linkYouTubeMusicPostsTheCookie() {
+        assertEquals("Zakius", SubsonicClient(url, "admin", "secret").linkYouTubeMusic("SAPISID=a; __Secure-3PAPISID=b"))
+        assertTrue(posted)
+        assertEquals("SAPISID=a; __Secure-3PAPISID=b", calls.last().second.toMap()["cookie"])
     }
 
     @Test fun mediaUrlsCarryAuth() {

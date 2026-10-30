@@ -159,8 +159,42 @@ object SubsonicSource : Source {
         }
     }
 
+    // ---- oasis: the server's own YouTube Music link for this user ----
+
+    /** The YouTube Music account this server user is linked to, as far as roma linked it; empty when none. */
+    val youTubeAccount get() = Store.str("subsonic.ytm", "")
+    /** A link waits for the YouTube Music sign-in that was opened for it. */
+    var linkAfterSignIn = false
+
+    /**
+     * Hands roma's YouTube Music sign-in to oasis, so the server's mixes, history and plays are this account's.
+     * Without a sign-in yet, the sign-in page opens and the link follows it ([signedIn] calls back).
+     */
+    fun linkYouTubeMusic() {
+        val cookie = Store.cookie
+        if (!Store.signedIn || cookie == null) { linkAfterSignIn = true; Nav.open(Page("login", "")); return }
+        linkAfterSignIn = false
+        val c = client ?: return
+        scope.launch {
+            runCatching { c.linkYouTubeMusic(cookie) }
+                .onSuccess { name -> postMain { Store.set("subsonic.ytm", name.ifEmpty { "linked" }); toast("YouTube Music linked to the server: $name"); Store.dataChanged() } }
+                // oasis appends the YouTube library's own error after ': "'; the sentence before it is what to read.
+                .onFailure { e -> postMain { toast(if (e is roma.core.SubsonicException) e.message?.substringBefore(": \"") ?: "The server refused" else plainError(e), long = true) } }
+        }
+    }
+
+    fun unlinkYouTubeMusic() {
+        val c = client ?: return
+        scope.launch {
+            runCatching { c.unlinkYouTubeMusic() }
+                .onSuccess { postMain { Store.set("subsonic.ytm", null); mixTiles = emptyList(); Store.dataChanged() } }
+                .onFailure { e -> postMain { toast(plainError(e), long = true) } }
+        }
+    }
+
     /** The server changed or was removed: its library goes. */
     fun forget() {
+        Store.set("subsonic.ytm", null)
         library = null
         scope.launch { lock.withLock { dir.deleteRecursively() } }
         changes++

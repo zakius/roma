@@ -85,16 +85,19 @@ class SubsonicClient(url: String, val user: String, private val password: String
         private set
 
     /** The URL of [method] with auth and [params], for calls and for what the player and image loader fetch. */
-    fun url(method: String, params: List<Pair<String, String>> = emptyList()): String {
+    fun url(method: String, params: List<Pair<String, String>> = emptyList()) = "$base/rest/$method?" + query(params)
+
+    private fun query(params: List<Pair<String, String>>): String {
         val salt = ByteArray(8).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
         val token = md5(password + salt)
         val all = listOf("u" to user, "t" to token, "s" to salt, "v" to API, "c" to "roma", "f" to "json") + params
-        return "$base/rest/$method?" + all.joinToString("&") { (k, v) -> enc(k) + "=" + enc(v) }
+        return all.joinToString("&") { (k, v) -> enc(k) + "=" + enc(v) }
     }
 
-    /** The answer's "subsonic-response", after checking its status. */
-    fun call(method: String, params: List<Pair<String, String>> = emptyList()): JsonObject {
-        val (code, body) = httpCall(url(method, params), timeoutMs = 30_000)
+    /** The answer's "subsonic-response", after checking its status. [post]: the parameters go in a form body, not the URL. */
+    fun call(method: String, params: List<Pair<String, String>> = emptyList(), post: Boolean = false): JsonObject {
+        val (code, body) = if (post) httpCall("$base/rest/$method", query(params).toByteArray(), mapOf("Content-Type" to "application/x-www-form-urlencoded"), 30_000)
+        else httpCall(url(method, params), timeoutMs = 30_000)
         val root = runCatching { Json.parseToJsonElement(body).obj()?.get("subsonic-response").obj() }.getOrNull()
             ?: throw SubsonicException(0, if (code in 200..299) "Not a Subsonic server: no subsonic-response in the answer" else "The server answered HTTP $code")
         type = root["type"].str() ?: type
@@ -194,6 +197,16 @@ class SubsonicClient(url: String, val user: String, private val password: String
     fun scrobble(ids: List<String>, timesMs: List<Long>, submission: Boolean) {
         call("scrobble", ids.map { "id" to it } + timesMs.map { "time" to "$it" } + listOf("submission" to "$submission"))
     }
+
+    /**
+     * oasis only: hands roma's YouTube Music sign-in (the music.youtube.com Cookie header) to the server for this user,
+     * whose mixes, history and plays then follow that account. Posted, so the cookie stays out of URLs and logs.
+     * Returns the account's name.
+     */
+    fun linkYouTubeMusic(cookie: String): String =
+        call("oasisLinkYouTubeMusic", listOf("cookie" to cookie), post = true)["youtubeMusic"].obj()?.get("account").str() ?: ""
+
+    fun unlinkYouTubeMusic() { call("oasisUnlinkYouTubeMusic", post = true) }
 
     fun streamUrl(id: String) = url("stream", listOf("id" to id))
     fun coverUrl(id: String, size: Int?) = url("getCoverArt", listOf("id" to id) + listOfNotNull(size?.let { "size" to "$it" }))
