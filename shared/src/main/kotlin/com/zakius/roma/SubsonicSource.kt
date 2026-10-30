@@ -178,8 +178,7 @@ object SubsonicSource : Source {
         scope.launch {
             runCatching { c.linkYouTubeMusic(cookie) }
                 .onSuccess { name -> postMain { Store.set("subsonic.ytm", name.ifEmpty { "linked" }); toast("YouTube Music linked to the server: $name"); Store.dataChanged() } }
-                // oasis appends the YouTube library's own error after ': "'; the sentence before it is what to read.
-                .onFailure { e -> postMain { toast(if (e is roma.core.SubsonicException) e.message?.substringBefore(": \"") ?: "The server refused" else plainError(e), long = true) } }
+                .onFailure { e -> postMain { toast(if (e is roma.core.SubsonicException) e.message ?: "The server refused" else plainError(e), long = true) } }
         }
     }
 
