@@ -79,25 +79,37 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - run: tools/release.sh test
 
-  # The desktop app's Linux packages: the ProGuard-shrunk app on the distribution's Java (tools/linux-packages.sh),
-  # with roma-aac, which is built here for Windows too (tools/build-ffmpeg.sh cross-compiles it).
+  # roma-aac, the audio-only ffmpeg in the desktop packages (tools/build-ffmpeg.sh), for Linux and, cross-compiled, for
+  # Windows: its own job, cached per build script, so both desktop jobs start at once instead of Windows waiting on Linux.
+  roma-aac:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - id: cache
+        uses: actions/cache@v4
+        with: { path: aac, key: "roma-aac-${{ hashFiles('tools/build-ffmpeg.sh') }}" }
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: tools/build-ffmpeg.sh linux aac/linux && tools/build-ffmpeg.sh windows aac/windows
+      - uses: actions/upload-artifact@v7
+        with: { name: roma-aac, path: aac }
+
+  # The desktop app's Linux packages: the ProGuard-shrunk app on the distribution's Java (tools/linux-packages.sh).
   desktop-linux:
+    needs: roma-aac
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@v5
-      - run: sudo apt-get install -y rpm > /dev/null
-      - run: ./gradlew -q :desktop:createReleaseDistributable :desktop:icuCheck :desktop:skiaCheck
+      - uses: actions/download-artifact@v8
+        with: { name: roma-aac, path: aac }
+      - run: chmod +x aac/linux/roma-aac && sudo apt-get install -y rpm > /dev/null # artifacts drop the executable bit
+      - run: ./gradlew -q :desktop:createReleaseDistributable :desktop:icuCheck :desktop:skiaCheck "-Proma.aacDir=$GITHUB_WORKSPACE/aac"
       - run: desktop/build/compose/binaries/main-release/app/roma/bin/roma --check
       - run: tools/linux-packages.sh --no-gradle
       - uses: actions/upload-artifact@v7
         with: { name: desktop-linux, path: "dist/roma*" }
-      # Staged under a fixed path: with a wildcard in it, upload-artifact keeps the folders after the wildcard.
-      - run: mkdir -p aac/windows && cp ~/.gradle/caches/roma/roma-aac-*/windows/roma-aac.exe aac/windows/
-      - uses: actions/upload-artifact@v7
-        with: { name: roma-aac, path: aac }
       # ProGuard renames the desktop classes; the release keeps the mapping that reads their stack traces (retrace).
       - uses: actions/upload-artifact@v7
         with: { name: desktop-mapping, path: desktop/build/proguard-mapping.txt }
@@ -106,7 +118,7 @@ jobs:
   # (tools/windows-packages.sh). Each starts once with --check. Temurin 21, not 24+: those ship no jmods, which ProGuard
   # and jlink read.
   desktop-windows:
-    needs: desktop-linux
+    needs: roma-aac
     runs-on: windows-2025
     defaults: { run: { shell: bash } }
     steps:

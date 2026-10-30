@@ -60,7 +60,7 @@ tasks.named("compileKotlin") { dependsOn(buildConfig) }
 
 // roma-aac, the audio-only ffmpeg for the songs YouTube has only in AAC (tools/build-ffmpeg.sh), built once per version
 // into the Gradle cache. Linux builds both (Windows' by cross-compiling); elsewhere -Proma.aacDir=<dir> hands over
-// prebuilt ones (<dir>/linux/roma-aac, <dir>/windows/roma-aac.exe), as the Windows release job does.
+// prebuilt ones (<dir>/linux/roma-aac, <dir>/windows/roma-aac.exe), as the release's desktop jobs do.
 val ffmpegVersion = Regex("""FFMPEG=(\S+)""").find(rootProject.file("tools/build-ffmpeg.sh").readText())!!.groupValues[1]
 val aacDir = (findProperty("roma.aacDir") as String?)?.let(::File) ?: File(gradle.gradleUserHomeDir, "caches/roma/roma-aac-$ffmpegVersion")
 val windowsHost = System.getProperty("os.name").startsWith("Windows")
