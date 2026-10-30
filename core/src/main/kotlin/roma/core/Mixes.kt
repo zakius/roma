@@ -26,4 +26,8 @@ fun isPersonalMix(playlistId: String) = playlistId.removePrefix("VL").startsWith
 fun personalMixes(items: List<Item>): List<Item> =
     items.filter { it.kind == "playlist" && isPersonalMix(it.id) }
         .distinctBy { it.id.removePrefix("VL") }
-        .sortedWith(compareBy({ KNOWN_MIXES.indexOf(it.id.removePrefix("VL")).let { i -> if (i < 0) KNOWN_MIXES.size else i } }, { it.title.latin.lowercase() }))
+        .sortedWith(mixOrder { it.id })
+
+/** Orders mixes by the YouTube playlist id [youtubeId] gives (null when unknown): the known ones first, then by title. */
+fun mixOrder(youtubeId: (Item) -> String?): Comparator<Item> =
+    compareBy({ KNOWN_MIXES.indexOf(youtubeId(it)?.removePrefix("VL")).let { i -> if (i < 0) KNOWN_MIXES.size else i } }, { it.title.latin.lowercase() })

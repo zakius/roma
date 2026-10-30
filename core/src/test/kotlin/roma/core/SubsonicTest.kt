@@ -39,6 +39,10 @@ class SubsonicTest {
                 "getAlbum" -> """"album":{"id":"al-9","name":"STRAY SHEEP","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
                 "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"}]}"""
                 "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
+                "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin"},{"id":"2","name":"Liked Music","owner":"YouTube Music"},""" +
+                    """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true,"youtubeId":"RDTMAK5uy_nilrsVWxrKskY0ZUpVZ3zpB0u4LwWTVJ4"},""" +
+                    """{"id":"4","name":"Archive Mix","owner":"YouTube Music","oasisMix":true},""" +
+                    """{"id":"5","name":"My Supermix","owner":"YouTube Music","oasisMix":true,"youtubeId":"RDTMAK5uy_kset8DisdE7LSD4TNjEVvrKRTmG7a56sY"}]}"""
                 "oasisLinkYouTubeMusic" -> """"youtubeMusic":{"account":"Zakius"}"""
                 "scrobble", "star" -> """"x":1"""
                 else -> """"x":1"""
@@ -152,6 +156,16 @@ class SubsonicTest {
         assertEquals("Zakius", SubsonicClient(url, "admin", "secret").linkYouTubeMusic("SAPISID=a; __Secure-3PAPISID=b"))
         assertTrue(posted)
         assertEquals("SAPISID=a; __Secure-3PAPISID=b", calls.last().second.toMap()["cookie"])
+    }
+
+    @Test fun mixesMarkedAndOrdered() {
+        val all = SubsonicClient(url, "admin", "secret").playlists()
+        val mixes = all.filter { it.mix }
+        assertEquals(listOf("Radio", "Liked Music"), all.filter { !it.mix }.map { it.name })
+        val r = Romanizer(jvmIcu)
+        val ids = mixes.associate { SubsonicIds.encode(it.id) to it.youtubeId }
+        // The known mixes in YouTube Music's order, then the rest by title.
+        assertEquals(listOf("My Supermix", "Replay Mix", "Archive Mix"), mixes.map { r.item(it) }.sortedWith(mixOrder { ids[it.id] }).map { it.title.original })
     }
 
     @Test fun mediaUrlsCarryAuth() {

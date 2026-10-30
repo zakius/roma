@@ -59,8 +59,9 @@ class SubAlbum(val id: String, val name: String, val artist: String = "", val ar
 @Serializable
 class SubArtist(val id: String, val name: String, val coverArt: String? = null, val albumCount: Int = 0, val starred: Boolean = false)
 
+/** [mix]: one of the account's personal mixes (oasis's "oasisMix"); [youtubeId]: its YouTube playlist id, when the server gives it. */
 @Serializable
-class SubPlaylist(val id: String, val name: String, val owner: String = "", val songCount: Int = 0, val coverArt: String? = null)
+class SubPlaylist(val id: String, val name: String, val owner: String = "", val songCount: Int = 0, val coverArt: String? = null, val mix: Boolean = false, val youtubeId: String? = null)
 
 /** The whole library as of [syncedAt], with what the server said about itself. */
 @Serializable
@@ -145,7 +146,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
 
     fun playlists() = call("getPlaylists")["playlists"].obj()?.get("playlist").arr().orEmpty().mapNotNull { p ->
         val o = p.obj() ?: return@mapNotNull null
-        SubPlaylist(o["id"].str() ?: return@mapNotNull null, o["name"].str() ?: "", o["owner"].str() ?: "", o["songCount"].str()?.toIntOrNull() ?: 0, o["coverArt"].str())
+        SubPlaylist(o["id"].str() ?: return@mapNotNull null, o["name"].str() ?: "", o["owner"].str() ?: "", o["songCount"].str()?.toIntOrNull() ?: 0, o["coverArt"].str(), o["oasisMix"].str() == "true", o["youtubeId"].str())
     }
 
     fun playlist(id: String): Pair<SubPlaylist, List<SubSong>> {

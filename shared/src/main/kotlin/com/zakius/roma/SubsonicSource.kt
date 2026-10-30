@@ -36,8 +36,6 @@ object SubsonicSource : Source {
     /** Home's tiles: the starred songs, and the whole library at random. */
     const val STARRED = "s.~starred"
     const val SHUFFLE = "s.~shuffle"
-    /** The owner oasis gives the personal mixes it publishes as playlists. */
-    const val MIX_OWNER = "YouTube Music"
 
     // One at a time, in order: a server change's deletion runs before the new server's sync.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -177,7 +175,10 @@ object SubsonicSource : Source {
         val c = client ?: return
         scope.launch {
             runCatching { c.linkYouTubeMusic(cookie) }
-                .onSuccess { name -> postMain { Store.set("subsonic.ytm", name.ifEmpty { "linked" }); toast("YouTube Music linked to the server: $name"); Store.dataChanged() } }
+                .onSuccess { name ->
+                    postMain { Store.set("subsonic.ytm", name.ifEmpty { "linked" }); toast("YouTube Music linked to the server: $name"); Store.dataChanged() }
+                    CoroutineScope(Dispatchers.IO).launch { followNewMixes() }
+                }
                 .onFailure { e -> postMain { toast(if (e is roma.core.SubsonicException) e.message ?: "The server refused" else plainError(e), long = true) } }
         }
     }
@@ -201,14 +202,37 @@ object SubsonicSource : Source {
 
     // ---- Pages ----
 
-    /** The server's mixes (oasis: YouTube Music's personal mixes, owner "YouTube Music"), for Home's tiles. */
+    /** The server's mixes (oasis: YouTube Music's personal mixes, marked "oasisMix"), for Home's tiles. */
     var mixTiles by mutableStateOf<List<Item>>(emptyList())
         private set
+
+    /** Reads the mixes again; returns how many there are. Blocking. */
+    private fun refreshMixes(): Int {
+        val mixes = need().playlists().filter { it.mix }
+        val youtubeIds = mixes.associate { SubsonicIds.encode(it.id) to it.youtubeId }
+        val tiles = mixes.map { Store.romanizer.item(it) }.sortedWith(roma.core.mixOrder { youtubeIds[it.id] })
+        postMain { mixTiles = tiles }
+        return tiles.size
+    }
+
+    /**
+     * After a link oasis adds the account's mixes one by one, over a minute or so: read them every 10 s until two
+     * reads in a row find as many, at most 3 minutes.
+     */
+    private suspend fun followNewMixes() {
+        var last = -1
+        repeat(18) {
+            kotlinx.coroutines.delay(10_000)
+            val n = runCatching { refreshMixes() }.getOrNull() ?: return
+            if (n == last && n > 0) return
+            last = n
+        }
+    }
 
     override suspend fun home(from: String?): Pair<String?, List<Section>> {
         val l = lib()
         val r = Store.romanizer
-        runCatching { need().playlists().filter { it.owner == MIX_OWNER }.map { r.item(it) } }.onSuccess { postMain { mixTiles = it } }
+        runCatching { refreshMixes() }
         fun shelf(title: String, items: List<Item>) = Section(roma.core.Text(title, title), items)
         // Play counts live on the server; offline those shelves are left out and the library's own ones stay.
         fun server(type: String) = runCatching { need().albumList(type).map { l.albumById[SubsonicIds.encode(it.id)] ?: r.item(it) } }.getOrDefault(emptyList())
@@ -270,7 +294,8 @@ object SubsonicSource : Source {
         }
     }
 
-    private fun playlists() = need().playlists().map { Store.romanizer.item(it) }
+    // The mixes live in Home's tiles; Playlists holds the rest (oasis: YouTube Music's library playlists too).
+    private fun playlists() = need().playlists().filter { !it.mix }.map { Store.romanizer.item(it) }
 
     override suspend fun detail(p: Page, partial: suspend (Detail) -> Unit): Detail {
         val l = lib()
