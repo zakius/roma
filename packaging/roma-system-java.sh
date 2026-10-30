@@ -22,10 +22,6 @@ fi
 if [ -z "${J2D_UISCALE:-}" ] && dpi=$(xrdb -query 2>/dev/null | sed -n 's/^Xft\.dpi:[[:space:]]*//p') && [ -n "$dpi" ]; then
   export J2D_UISCALE=$(awk -v d="$dpi" 'BEGIN { s = int(d / 96 + 0.5); print (s < 1 ? 1 : s) }')
 fi
-# Plasma on Wayland hands the launch's activation token to X11 apps only as XDG_ACTIVATION_TOKEN; Java reads the X11
-# name, DESKTOP_STARTUP_ID. With it KWin at least marks the window as wanting attention; it doesn't focus Java's X11
-# window either way (Java sets no _NET_WM_USER_TIME).
-[ -z "${DESKTOP_STARTUP_ID:-}" ] && [ -n "${XDG_ACTIVATION_TOKEN:-}" ] && export DESKTOP_STARTUP_ID="$XDG_ACTIVATION_TOKEN"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/roma"
 mkdir -p "$cache"
 exec "$java" --enable-native-access=ALL-UNNAMED -XX:SharedArchiveFile="$cache/roma.jsa" -XX:+AutoCreateSharedArchive -Xlog:cds=off -Xlog:cds+dynamic=off \
