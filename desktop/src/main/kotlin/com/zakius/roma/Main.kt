@@ -23,9 +23,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.delay
+import java.awt.GraphicsEnvironment
 import java.io.File
 import kotlin.concurrent.thread
 
@@ -55,7 +57,13 @@ fun main(args: Array<String>) {
             onCloseRequest = ::exitApplication,
             title = "roma",
             icon = androidx.compose.ui.res.painterResource("roma.png"),
-            state = rememberWindowState(width = 440.dp, height = 900.dp),
+            // A phone's shape, but never past the screen's free area: the bottom bar is the only navigation, and a 768 px
+            // screen, or 1080 p at 150 %, has less than 900 dp.
+            state = rememberWindowState(
+                position = WindowPosition(Alignment.Center),
+                width = 440.dp,
+                height = minOf(900, GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds.height).dp,
+            ),
             onPreviewKeyEvent = { it.type == KeyEventType.KeyDown && it.key == Key.Escape && goBack() },
         ) {
             density = LocalDensity.current.density
