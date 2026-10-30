@@ -4,7 +4,8 @@ import java.io.File
 import java.net.URLClassLoader
 import java.security.MessageDigest
 
-// ./gradlew :desktop:icuCheck: the slim ICU4J (desktop/build.gradle.kts, icuSlim) transliterates as the full jar does:
+// ./gradlew :desktop:icuCheck: the released ICU4J (slimmed, desktop/build.gradle.kts icuSlim, and shrunk by ProGuard)
+// transliterates as the full jar does:
 // every assigned code point, by script in runs of 64, through each transliterator roma uses, compared by digest.
 fun main(args: Array<String>) {
     val ids = listOf("Han-Latin", "Traditional-Simplified", "Greek-Latin", "Greek-Latin/UNGEGN", "Cyrillic-Latin", "mn-mn_Latn/MNS", "Any-Latin")

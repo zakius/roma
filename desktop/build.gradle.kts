@@ -1,8 +1,11 @@
 // roma for Linux and Windows: the app's screens and playback logic (shared/, compiled into :app too) on Compose for
-// Desktop, with libVLC for audio and the system's Chromium-family browser for BotGuard and sign-in (docs/design.md).
+// Desktop, with roma's own audio decoding and the system's Chromium-family browser for BotGuard and sign-in (docs/design.md).
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.util.Arrays
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
@@ -83,9 +86,10 @@ val copyAppResources = tasks.register<Sync>("copyAppResources") {
 }
 tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach { dependsOn(copyAppResources) }
 
-// ICU4J without the locale data roma never reads (dates, zones, collation, units, names, line breaks, the CJ word
-// dictionary): it only transliterates. 15.2 to 4.9 MB. :desktop:icuCheck shows every transliterator roma uses gives the
-// full jar's output on every assigned code point.
+// ICU4J without the locale data roma never reads (dates, zones, collation, units, names, line breaks, word dictionaries
+// but Thai's): it only transliterates. ProGuard then drops the classes transliteration doesn't reach. 15.2 to 2.2 MB.
+// :desktop:icuCheck shows the released jar gives the full jar's output on every assigned code point, for every
+// transliterator roma uses.
 val icu = configurations.create("icu")
 val cef = configurations.create("cef")
 // "<path on Maven Central> <sha256>" per jar CEF's Java side needs, for BuildConfig.CEF_JARS.
@@ -105,7 +109,8 @@ val icuSlim = tasks.register<Jar>("icuSlim") {
     from({ zipTree(icu.singleFile) }) {
         exclude("$data/zone/**", "$data/coll/**", "$data/unit/**", "$data/lang/**", "$data/curr/**", "$data/region/**", "$data/rbnf/**")
         exclude("$data/brkitr/cjdict.dict", "$data/brkitr/line*.brk", "com/ibm/icu/impl/duration/impl/data/**")
-        exclude("$data/*.spp", "$data/confusables.cfu", "$data/uts46.nrm")
+        exclude("$data/*.spp", "$data/confusables.cfu", "$data/uts46.nrm", "$data/nfkc_*.nrm", "$data/unames.icu")
+        exclude("$data/brkitr/burmesedict.dict", "$data/brkitr/khmerdict.dict", "$data/brkitr/laodict.dict") // Thai's is read
         // Locale bundles at the top (ko.res, en_GB.res, …); ICU's own files stay.
         exclude { e -> e.path.matches(Regex("$data/[^/]+\\.res")) && e.name.removeSuffix(".res") !in keepTop }
     }
@@ -179,12 +184,52 @@ tasks.register<JavaExec>("botGuardCheck") {
     if (project.hasProperty("cef")) systemProperty("cef", "")
 }
 
-// Linux: Skia's symbol table (3 MB). Its exported symbols stay; the Java runtime keeps its own for crash logs.
+// Skia's library carries ICU's whole data (10.4 MB) and reads only its line, word and grapheme breaking. The rest
+// (collation, time zones, locale names, converters, the Chinese/Japanese word dictionary) goes: the blob keeps its
+// place and size, its table of contents lists only what stays, and what's freed is zeros. :desktop:skiaCheck shows
+// text lays out as with the full data.
+fun trimSkiaIcu(lib: File) {
+    val bytes = lib.readBytes()
+    val b = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    // ICU's common data: a header ("CmnD" at 12), then the table: count, (name offset, data offset) pairs, the names,
+    // the items in name order, each up to where the next begins. Offsets count from the table.
+    val header = (0 until bytes.size - 16).single { i ->
+        bytes[i + 2] == 0xda.toByte() && bytes[i + 3] == 0x27.toByte() && String(bytes, i + 12, 4) == "CmnD"
+    }
+    val toc = header + b.getShort(header).toInt()
+    val count = b.getInt(toc)
+    fun name(k: Int) = String(bytes, toc + b.getInt(toc + 4 + 8 * k), 64).substringBefore('\u0000').substringAfter('/')
+    fun data(k: Int) = toc + b.getInt(toc + 8 + 8 * k)
+    val keepTop = setOf("root", "pool", "res_index", "supplementalData", "metadata", "icuver", "icustd", "keyTypeData", "langInfo")
+    val kept = (0 until count).filter { k ->
+        val n = name(k)
+        if (n.startsWith("brkitr/")) n != "brkitr/cjdict.dict"
+        else '/' !in n && (n.endsWith(".icu") || n.endsWith(".nrm") || n.removeSuffix(".res") in keepTop)
+    }
+    // The last item's size isn't recorded; it's a locale's (zu_ZA.res), which goes.
+    check(kept.size in 20 until count && count - 1 !in kept) { "${lib.name}: unexpected ICU data" }
+    val out = bytes.copyOf()
+    val o = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+    Arrays.fill(out, toc + 4 + 8 * kept.size, toc + 4 + 8 * count, 0)
+    Arrays.fill(out, data(0), data(count - 1), 0)
+    o.putInt(toc, kept.size)
+    var at = data(0)
+    kept.forEachIndexed { i, k ->
+        o.putInt(toc + 4 + 8 * i, b.getInt(toc + 4 + 8 * k))
+        o.putInt(toc + 8 + 8 * i, at - toc)
+        System.arraycopy(bytes, data(k), out, at, data(k + 1) - data(k))
+        at += data(k + 1) - data(k)
+    }
+    lib.writeBytes(out)
+}
+// Linux: also Skia's symbol table (3 MB). Its exported symbols stay; the Java runtime keeps its own for crash logs.
 tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
     doLast {
+        val libs = outputs.files.asFileTree.matching { include("**/lib/app/*skiko*.so", "**/app/*skiko*.dll") }.files
+        check(libs.isNotEmpty()) { "no Skia library in ${outputs.files.files}" }
+        libs.forEach(::trimSkiaIcu)
         if (System.getProperty("os.name") != "Linux") return@doLast
-        val libs = outputs.files.asFileTree.matching { include("**/lib/app/*.so") }.files.map { it.path }
-        val strip = ProcessBuilder(listOf("strip", "--strip-unneeded") + libs).inheritIO().start()
+        val strip = ProcessBuilder(listOf("strip", "--strip-unneeded") + libs.map { it.path }).inheritIO().start()
         check(strip.waitFor() == 0) { "strip failed" }
     }
 }
@@ -211,9 +256,23 @@ afterEvaluate {
         defaultComposeRulesFile.set(trimmed)
     }
 }
+val skiaFull = tasks.register<Copy>("skiaFull") {
+    from({ configurations["runtimeClasspath"].filter { it.name.startsWith("skiko-awt-runtime-") }.map { zipTree(it) } })
+    include("*.so", "*.dll")
+    into(layout.buildDirectory.dir("skia-full"))
+}
+tasks.register<JavaExec>("skiaCheck") {
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass = "com.zakius.roma.SkiaCheckKt"
+    args(skiaFull.get().destinationDir.path, layout.buildDirectory.dir("compose/binaries/main-release/app/roma/lib/app").get().asFile.path)
+    dependsOn(skiaFull, "createReleaseDistributable")
+}
 tasks.register<JavaExec>("icuCheck") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass = "com.zakius.roma.IcuCheckKt"
-    args(icu.singleFile.path, icuSlim.get().archiveFile.get().asFile.path)
-    dependsOn(icuSlim)
+    val app = layout.buildDirectory.dir("compose/binaries/main-release/app/roma/lib/app")
+    argumentProviders += CommandLineArgumentProvider {
+        listOf(icu.singleFile.path, app.get().asFile.listFiles()!!.single { it.name.startsWith("icu4j-slim") }.path)
+    }
+    dependsOn("createReleaseDistributable")
 }

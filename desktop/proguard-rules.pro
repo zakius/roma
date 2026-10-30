@@ -31,8 +31,9 @@
 -keep class com.worksap.nlp.sudachi.** { *; }
 -keep class org.glassfish.json.JsonProviderImpl { <init>(); }
 
-# ICU loads its transliterators and data classes by name.
--keep class com.ibm.icu.** { *; }
+# ICU's transliteration reaches its classes without reflection, so ProGuard shrinks it as roma's code. Its entry
+# points keep their names for :desktop:icuCheck, which runs the released jar.
+-keep class com.ibm.icu.text.Transliterator { public static ** getInstance(java.lang.String); public java.lang.String transliterate(java.lang.String); }
 # CEF's process (CefHost.kt) runs with jars that aren't packaged (Browser.kt downloads them): its main class and
 # what it calls keep their names, and its references to those jars aren't checked here.
 -keep class com.zakius.roma.CefHostKt { *; }
