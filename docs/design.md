@@ -3,6 +3,8 @@
 A YouTube Music client for Android, Linux and Windows. It shows a romanized form of every non-Latin string, and its controls never move.
 Working name; rename freely.
 
+A second backend, any Subsonic server (first of all oasis), is planned in [subsonic.md](subsonic.md) (2026-10-30).
+
 ## Rules
 
 - No exceptions fitted to examples. Romanization and lyrics logic use general rules (a script, a part of speech, a sound rule, a standard) and data from their sources; never a list of words or songs that happened to come out wrong. A wrong result for one song or word is a user correction or a dictionary limit, recorded as a known limit if it matters. (User, 2026-10-24.)
