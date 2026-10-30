@@ -1,6 +1,5 @@
 package com.zakius.roma
 
-import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
@@ -88,8 +87,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.media3.common.Player
-import androidx.compose.ui.platform.LocalContext
 import roma.core.Line
 import roma.core.Lyrics
 import roma.core.attachTranslation
@@ -104,7 +101,7 @@ fun PlayerScreen() {
     Playback.tick
     var view by Nav::playerView
     // Back closes the lyrics or queue view first, then leaves the player as usual.
-    androidx.activity.compose.BackHandler(enabled = view != "song" && LocalTabShown.current) { view = "song" }
+    BackHandler(enabled = view != "song" && LocalTabShown.current) { view = "song" }
     var menuOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
     // Where a seek-bar drag would land, -1 when there's no drag: the upper area shows the lyric line there.
@@ -189,7 +186,7 @@ fun PlayerScreen() {
                 Slot(painterResource(R.drawable.shuffle), "Shuffle", entry != null, Playback.shuffled, iconSize = 26, state = if (Playback.shuffled) "on" else "off") { Playback.toggleShuffle() }
                 Slot(painterResource(R.drawable.previous), "Previous", entry != null, iconSize = 30) { Playback.previous() }
                 // Shows what the user asked for: Pause while a song buffers or waits for the network, too.
-                val showPlay = androidx.media3.common.util.Util.shouldShowPlayButton(p)
+                val showPlay = p.showPlayButton
                 // Long press: the sleep timer. A hidden extra on a button that's there anyway, so the row stays as it is.
                 Slot(
                     painterResource(if (showPlay) R.drawable.play else R.drawable.pause), if (showPlay) "Play" else "Pause", entry != null, iconSize = 44,
@@ -197,20 +194,20 @@ fun PlayerScreen() {
                 ) { Playback.togglePlay() }
                 Slot(painterResource(R.drawable.next), "Next", Playback.neighbour(Playback.shownIndex(), 1) >= 0, iconSize = 30) { Playback.next() }
                 val repeatIcon = when (p.repeatMode) {
-                    Player.REPEAT_MODE_ONE -> R.drawable.repeat_one
-                    Player.REPEAT_MODE_ALL -> R.drawable.repeat
+                    AudioPlayer.REPEAT_MODE_ONE -> R.drawable.repeat_one
+                    AudioPlayer.REPEAT_MODE_ALL -> R.drawable.repeat
                     else -> R.drawable.repeat // off is shown as muted (see Slot), not as another icon
                 }
-                val repeatState = when (p.repeatMode) { Player.REPEAT_MODE_ONE -> "this song"; Player.REPEAT_MODE_ALL -> "all"; else -> "off" }
-                Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != Player.REPEAT_MODE_OFF, iconSize = 26, state = repeatState) { Playback.cycleRepeat() }
+                val repeatState = when (p.repeatMode) { AudioPlayer.REPEAT_MODE_ONE -> "this song"; AudioPlayer.REPEAT_MODE_ALL -> "all"; else -> "off" }
+                Slot(painterResource(repeatIcon), "Repeat", entry != null, p.repeatMode != AudioPlayer.REPEAT_MODE_OFF, iconSize = 26, state = repeatState) { Playback.cycleRepeat() }
             }
         } }
     }
 
     // Landscape (a phone on its side, the MatePad): the song, lyrics or queue on the left, the same bottom block on the
     // right. Otherwise one column; on a wide portrait screen the block keeps a phone's width, so the thumb reaches it.
-    val config = androidx.compose.ui.platform.LocalConfiguration.current
-    if (config.screenWidthDp > config.screenHeightDp) {
+    val screen = screenSizeDp()
+    if (screen.width > screen.height) {
         Row(Modifier.fillMaxSize()) {
             upper(Modifier.weight(1f).fillMaxHeight())
             Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) { controls(Modifier.widthIn(max = 560.dp).fillMaxWidth()) }
@@ -245,7 +242,7 @@ private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
     if (LocalTabShown.current) Playback.clock // counts down on the half-second clock, also while paused; not hidden
     val text = when {
         Playback.sleepAfterSong -> "Sleep when this song ends"
-        Playback.sleepAt != 0L -> "Sleep in ${((Playback.sleepAt - SystemClock.elapsedRealtime()) / 60_000 + 1).coerceAtLeast(1)} min"
+        Playback.sleepAt != 0L -> "Sleep in ${((Playback.sleepAt - elapsedRealtime()) / 60_000 + 1).coerceAtLeast(1)} min"
         else -> return
     }
     // One line, at most about 60% of a phone's width: with a large font it ends in "…" rather than reaching Translate.
@@ -261,7 +258,6 @@ private fun SleepChip(modifier: Modifier, onClick: () -> Unit) {
  */
 @Composable
 private fun TranslateChip(found: LyricsState, lyricsShown: Boolean, modifier: Modifier) {
-    val context = LocalContext.current
     var busy by remember(found.songId) { mutableStateOf(false) }
     val lang = Store.translationLanguages().first()
     val enabled = !busy && lyricsShown && found.translations.none { it.language == lang }
@@ -270,7 +266,7 @@ private fun TranslateChip(found: LyricsState, lyricsShown: Boolean, modifier: Mo
             if (busy) "Translating…" else "Translate",
             Modifier.clickable(enabled) {
                 busy = true
-                Playback.googleTranslate(found.songId) { msg -> busy = false; if (msg != null) android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show() }
+                Playback.googleTranslate(found.songId) { msg -> busy = false; if (msg != null) toast(msg, long = true) }
             }.padding(horizontal = 12.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelMedium,
         )
@@ -553,7 +549,7 @@ private fun QueueView() {
             } else {
                 val e = all[i]
                 // "saved": the whole song is on the phone, so it plays with no network.
-                val extra = listOfNotNull(e.song.reason, "saved".takeIf { Playback.fullyCached(e.song.id) }).joinToString(" · ").ifEmpty { null }
+                val extra = listOfNotNull(e.song.reason, "saved".takeIf { Playback.player.fullyCached(e.song.id) }).joinToString(" · ").ifEmpty { null }
                 SongRow(e.song, highlight = i == cur, extra = extra, onMenu = { menuFor = i }) { Playback.skipTo(i) }
             }
         }
@@ -596,7 +592,7 @@ private fun LyricsView(found: LyricsState, bare: Lyrics, songId: String?) {
             val next = minOf(lines.getOrNull(line + 1)?.startMs ?: Long.MAX_VALUE, words?.getOrNull(word + 1)?.startMs ?: Long.MAX_VALUE)
             val change = snapshotFlow { Playback.tick to Playback.pending }.filter { it != seen }
             if (!Playback.player.isPlaying || pos < 0 || next == Long.MAX_VALUE) change.first()
-            else withTimeoutOrNull(((next - pos) / Playback.player.playbackParameters.speed).toLong().coerceAtLeast(1)) { change.first() }
+            else withTimeoutOrNull(((next - pos) / Playback.player.speed).toLong().coerceAtLeast(1)) { change.first() }
         }
     }
     val state = remember(lines) { LazyListState(firstVisibleItemIndex = if (startLine > 2) startLine - 2 else 0) }
@@ -808,7 +804,7 @@ private class CommentList(var next: (() -> roma.core.CommentPage)?, val songId: 
             val page = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val p = fetch()
                 p to p.comments.map { c ->
-                    val text = androidx.core.text.HtmlCompat.fromHtml(c.text, androidx.core.text.HtmlCompat.FROM_HTML_MODE_LEGACY).toString().trim { it.isWhitespace() || it == '\u200B' } // a reply starting with an @mention has a zero-width space first
+                    val text = htmlToText(c.text).trim { it.isWhitespace() || it == '\u200B' } // a reply starting with an @mention has a zero-width space first
                         .replace(Regex("\n\\s*\n\\s*\n+"), "\n\n") // at most one blank line in a row
                     val latin = if (!Romanizer.hasNonLatin(text) || Store.reads(text)) null
                         else text.lines().joinToString("\n") { Store.romanizer.machine(it, sentence = true) }
@@ -888,13 +884,12 @@ private fun CommentRow(s: ShownComment, list: CommentList, avatar: androidx.comp
     val c = s.c
     // Sent to Google only after the user's tap, one comment at a time: comments mix languages, and Google detects
     // one language per request.
-    val context = LocalContext.current
     LaunchedEffect(list.translate) {
         if (!list.translate || s.translated) return@LaunchedEffect
         val lang = Store.translationLanguages().first()
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { roma.core.GoogleTranslate.text(s.text, lang) } }
             .onSuccess { s.translation = it; s.translated = true }
-            .onFailure { if (list.translate) { list.translate = false; android.widget.Toast.makeText(context, "Couldn't translate. Check Wi-Fi or mobile data, then try again.", android.widget.Toast.LENGTH_LONG).show() } }
+            .onFailure { if (list.translate) { list.translate = false; toast("Couldn't translate. Check Wi-Fi or mobile data, then try again.", long = true) } }
     }
     val type = MaterialTheme.typography
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -971,6 +966,4 @@ val CommentsIcon: ImageVector by lazy {
     }.build()
 }
 
-// Balanced wrapping evens out the line lengths instead of leaving one word on the last line; Phrase keeps Japanese
-// phrases (bunsetsu) together instead of breaking between any two characters (Android 13+, ignored before).
-private val LYRIC_BREAK = LineBreak(LineBreak.Strategy.Balanced, LineBreak.Strictness.Normal, LineBreak.WordBreak.Phrase)
+private val LYRIC_BREAK = lyricBreak

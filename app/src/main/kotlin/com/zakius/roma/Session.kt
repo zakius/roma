@@ -72,7 +72,7 @@ class PlaybackService : MediaBrowserService() {
         sessionToken = session.sessionToken
         getSystemService(NotificationManager::class.java)
             .createNotificationChannel(NotificationChannel(CHANNEL, "Playback", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
-        Playback.player.addListener(listener)
+        Playback.exo.addListener(listener)
         update()
     }
 
@@ -90,13 +90,13 @@ class PlaybackService : MediaBrowserService() {
     private inner class Callback : MediaSession.Callback() {
         override fun onPlay() = Playback.afterRestore {
             goForeground()
-            Util.handlePlayButtonAction(Playback.player)
+            Util.handlePlayButtonAction(Playback.exo)
         }
-        override fun onPause() { Util.handlePauseButtonAction(Playback.player) }
-        override fun onStop() { Util.handlePauseButtonAction(Playback.player) }
-        override fun onSkipToNext() = Playback.player.seekToNext()
-        override fun onSkipToPrevious() = Playback.player.seekToPrevious()
-        override fun onSeekTo(pos: Long) = Playback.player.seekTo(pos)
+        override fun onPause() { Util.handlePauseButtonAction(Playback.exo) }
+        override fun onStop() { Util.handlePauseButtonAction(Playback.exo) }
+        override fun onSkipToNext() = Playback.exo.seekToNext()
+        override fun onSkipToPrevious() = Playback.exo.seekToPrevious()
+        override fun onSeekTo(pos: Long) = Playback.exo.seekTo(pos)
         override fun onCustomAction(action: String, extras: Bundle?) { if (action == LIKE) Playback.toggleLike() }
 
         // A headset's single button: one press plays or pauses, two quick presses skip to the next song (as Media3 did).
@@ -107,7 +107,7 @@ class PlaybackService : MediaBrowserService() {
             if (key.keyCode != KeyEvent.KEYCODE_HEADSETHOOK && key.keyCode != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) return super.onMediaButtonEvent(intent)
             if (key.action != KeyEvent.ACTION_DOWN || key.repeatCount > 0) return true
             pressed?.let { main.removeCallbacks(it); pressed = null; onSkipToNext(); return true }
-            pressed = Runnable { pressed = null; if (Playback.player.playWhenReady) onPause() else onPlay() }.also { main.postDelayed(it, 300) }
+            pressed = Runnable { pressed = null; if (Playback.exo.playWhenReady) onPause() else onPlay() }.also { main.postDelayed(it, 300) }
             return true
         }
     }
@@ -118,7 +118,7 @@ class PlaybackService : MediaBrowserService() {
     fun updateLikeButton() = update()
 
     private fun update() {
-        val p = Playback.player
+        val p = Playback.exo
         val entry = Playback.current()
         val liked = entry?.song?.id in Playback.liked
         val state = when {
@@ -178,7 +178,7 @@ class PlaybackService : MediaBrowserService() {
     }
 
     private fun notification(): Notification {
-        val p = Playback.player
+        val p = Playback.exo
         val m = p.currentMediaItem?.mediaMetadata
         val liked = Playback.current()?.song?.id in Playback.liked
         fun action(icon: Int, title: String, key: Int) = Notification.Action.Builder(
@@ -215,7 +215,7 @@ class PlaybackService : MediaBrowserService() {
     override fun onLoadChildren(parentId: String, result: Result<MutableList<MediaBrowser.MediaItem>>) {
         result.detach()
         Playback.afterRestore {
-            val m = Playback.player.currentMediaItem
+            val m = Playback.exo.currentMediaItem
             result.sendResult(
                 if (m == null) mutableListOf()
                 else mutableListOf(MediaBrowser.MediaItem(MediaDescription.Builder().setMediaId(m.mediaId).setTitle(m.mediaMetadata.title).setSubtitle(m.mediaMetadata.artist).build(), MediaBrowser.MediaItem.FLAG_PLAYABLE)),
@@ -224,12 +224,12 @@ class PlaybackService : MediaBrowserService() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (!Playback.player.isPlaying) stopSelf()
+        if (!Playback.exo.isPlaying) stopSelf()
     }
 
     override fun onDestroy() {
         instance = null
-        Playback.player.removeListener(listener)
+        Playback.exo.removeListener(listener)
         scope.cancel()
         session.release()
         super.onDestroy()

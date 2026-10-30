@@ -305,13 +305,17 @@ class Romanizer(
     // A Sudachi tokenizer isn't thread-safe: calls take turns on it (a line takes well under a millisecond).
     @Volatile private var loaded: Tokenizer? = null
     private var failedAt = 0L
+    private var told = false
     private val tokenizerLock = Any()
 
     private fun tokenizer(): Tokenizer? = loaded ?: synchronized(tokenizerLock) {
         loaded ?: if (failedAt != 0L && System.currentTimeMillis() - failedAt < 60_000) null else runCatching {
             // roma's config: Sudachi's default with the slim dictionary's renumbered unknown-word ids (:dict-tool).
             RomaDictionary(dictionary()).tokenizer(Config.fromClasspath("roma-sudachi.json"))
-        }.onSuccess { loaded = it }.onFailure { failedAt = System.currentTimeMillis() }.getOrNull()
+        }.onSuccess { loaded = it }.onFailure {
+            failedAt = System.currentTimeMillis()
+            if (!told) { told = true; println("roma dictionary: not loaded: $it") } // why kanji stay as written; once a run
+        }.getOrNull()
     }
 
     /** Loads the dictionary now, so the first Japanese string doesn't wait for it. Call off the main thread. */

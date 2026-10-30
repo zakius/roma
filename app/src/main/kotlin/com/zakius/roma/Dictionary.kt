@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
-import android.content.res.AssetManager
 import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,6 +27,8 @@ import kotlin.concurrent.thread
  */
 object Dictionary {
     const val DOWNLOAD = "31 MB download, 62 MB on the phone"
+    /** How it is installed, for roma's question (DictionaryPrompt). */
+    const val HOW = "It's a separate app ($DOWNLOAD). Android will ask you to confirm the installation."
     private const val ACTION = "com.zakius.roma.DICTIONARY_INSTALL"
 
     var installed by mutableStateOf(false)
@@ -60,14 +61,16 @@ object Dictionary {
         check(version >= BuildConfig.DICT_VERSION) { "The Japanese dictionary is out of date" }
     }
 
-    /** The dictionary app's assets; throws if it is missing, out of date or not signed by roma's key. */
-    fun assets(c: Context): AssetManager {
-        verify(c)
-        return c.createPackageContext(BuildConfig.DICT_PACKAGE, 0).assets
+    /** The dictionary, mapped from the dictionary app's APK; throws if it is missing, out of date or not signed by roma's key. */
+    fun map(): java.nio.ByteBuffer {
+        verify(appContext)
+        val fd = appContext.createPackageContext(BuildConfig.DICT_PACKAGE, 0).assets.openFd("system_core.dic")
+        return fd.createInputStream().channel.use { it.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.length) }.order(java.nio.ByteOrder.LITTLE_ENDIAN)
     }
 
-    fun install(c: Context) {
-        val app = c.applicationContext
+    fun install() {
+        val app = appContext
+        val c = app
         confirm?.let { runCatching { c.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }; return }
         if (busy || installed) return
         // Asked first: Android's own detour to this switch cancels the install, which would read as a refusal.
@@ -105,16 +108,16 @@ object Dictionary {
         offer = if (present) "update" else "install"
     }
 
-    fun answer(c: Context, yes: Boolean) {
+    fun answer(yes: Boolean) {
         offer = null
-        if (yes) install(c) else status = "Not installed: kanji stay as written. Tap to install (${DOWNLOAD})"
+        if (yes) install() else status = "Not installed: kanji stay as written. Tap to install (${DOWNLOAD})"
     }
 
     /** Back from the "install unknown apps" switch: on, the install goes on; off counts as declining. */
     fun resumed(c: Context) {
         if (!askedPermission) return
         askedPermission = false
-        if (c.packageManager.canRequestPackageInstalls()) install(c) else declined()
+        if (c.packageManager.canRequestPackageInstalls()) install() else declined()
     }
 
     private fun declined() {

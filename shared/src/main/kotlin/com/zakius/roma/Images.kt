@@ -1,9 +1,5 @@
 package com.zakius.roma
 
-import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
@@ -14,7 +10,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -37,24 +32,34 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object Images {
     private lateinit var dir: File
-    private val memory = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 8).toInt()) {
-        override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
-    }
-    private val loading = ConcurrentHashMap<String, Deferred<Bitmap?>>()
+    private val memory = Lru()
+    private val loading = ConcurrentHashMap<String, Deferred<Pic?>>()
     // ponytail: 6 at a time (6 connections over HTTP/1.1); a priority queue for the visible rows if scrolling lags.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val io = Dispatchers.IO.limitedParallelism(6)
     private val scope = CoroutineScope(SupervisorJob() + io)
 
-    fun init(c: Context) {
-        dir = File(c.cacheDir, "img")
-        // Sized from the phone's RAM, not the Java heap: most covers are hardware bitmaps, whose pixels sit in
-        // graphics memory. 1/32 of RAM, 48–128 MB: about 80–200 home cards, or 600+ list rows.
-        val ram = android.app.ActivityManager.MemoryInfo().also { c.getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(it) }.totalMem
-        memory.resize((ram / 32).coerceIn(48L shl 20, 128L shl 20).toInt())
+    /** [memoryBytes]: how much the decoded covers may take (see [picMemory]). */
+    fun init(cache: File, memoryBytes: Long) {
+        dir = File(cache, "img")
+        memory.max = memoryBytes
         scope.launch {
-            File(c.cacheDir, "image_cache").deleteRecursively() // Coil's, up to 0.1.39
+            File(cache, "image_cache").deleteRecursively() // Coil's, up to 0.1.39
             trim()
+        }
+    }
+
+    /** The decoded covers, least recently used out first past [max] bytes. */
+    private class Lru {
+        var max = Runtime.getRuntime().maxMemory() / 8
+        private val map = LinkedHashMap<String, Pic>(64, 0.75f, true)
+        private var size = 0L
+        @Synchronized fun get(k: String) = map[k]
+        @Synchronized fun put(k: String, v: Pic) {
+            map.put(k, v)?.let { size -= picBytes(it) }
+            size += picBytes(v)
+            val i = map.values.iterator()
+            while (size > max && i.hasNext()) { size -= picBytes(i.next()); i.remove() }
         }
     }
 
@@ -74,13 +79,13 @@ object Images {
      * [px]: the side it's shown at; the bitmap is at least that, so it stays sharp. [exact]: scaled to [px] across
      * (the blurred backdrop, the colour sample). [software]: pixels readable with getPixel.
      */
-    suspend fun load(url: String, px: Int, exact: Boolean = false, software: Boolean = false): Bitmap? {
+    suspend fun load(url: String, px: Int, exact: Boolean = false, software: Boolean = false): Pic? {
         val k = key(url, px, exact, software)
         memory.get(k)?.let { return it }
         val job = loading.computeIfAbsent(k) {
             scope.async(start = CoroutineStart.LAZY) {
                 try {
-                    runCatching { decode(bytes(url), px, exact, software) }.getOrNull()?.also { memory.put(k, it) }
+                    runCatching { decodePic(bytes(url), px, exact, software) }.getOrNull()?.also { memory.put(k, it) }
                 } finally {
                     loading.remove(k)
                 }
@@ -121,22 +126,6 @@ object Images {
         tmp.renameTo(f)
         return data
     }
-
-    private fun decode(data: ByteArray, px: Int, exact: Boolean, software: Boolean): Bitmap? {
-        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(data, 0, data.size, o)
-        if (o.outWidth <= 0) return null
-        var sample = 1
-        while (minOf(o.outWidth, o.outHeight) / (sample * 2) >= px) sample *= 2
-        val opts = BitmapFactory.Options().apply {
-            inSampleSize = sample
-            inPreferredConfig = if (software || exact) Bitmap.Config.ARGB_8888 else Bitmap.Config.HARDWARE
-        }
-        val b = BitmapFactory.decodeByteArray(data, 0, data.size, opts) ?: return null
-        if (!exact) return b
-        val h = maxOf(1, px * b.height / b.width)
-        return Bitmap.createScaledBitmap(b, px, h, true)
-    }
 }
 
 /** A cover at [size]; empty until it's loaded, or [placeholder] meanwhile. */
@@ -148,7 +137,7 @@ fun Thumb(
     contentScale: ContentScale = ContentScale.Fit,
     alpha: Float = 1f,
     exact: Boolean = false,
-    placeholder: Bitmap? = null,
+    placeholder: Pic? = null,
 ) {
     val px = with(LocalDensity.current) { size.roundToPx() }
     ThumbPx(url, px, modifier, contentScale, alpha, exact, placeholder)
@@ -162,7 +151,7 @@ fun ThumbPx(
     contentScale: ContentScale = ContentScale.Fit,
     alpha: Float = 1f,
     exact: Boolean = false,
-    placeholder: Bitmap? = null,
+    placeholder: Pic? = null,
 ) {
     // Keyed on the picture: a row reused for another song never shows the previous one's cover.
     val state = remember(url, px) { mutableStateOf(url?.let { Images.peek(it, px, exact) } ?: placeholder) }
@@ -170,7 +159,7 @@ fun ThumbPx(
     // between composing this and running the effect, and the box then stayed empty until something recomposed it.
     LaunchedEffect(url, px) { if (url != null) Images.load(url, px, exact)?.let { state.value = it } }
     val b = state.value
-    if (b == null) Box(modifier) else Image(remember(b) { b.asImageBitmap() }, null, modifier, contentScale = contentScale, alpha = alpha)
+    if (b == null) Box(modifier) else Image(remember(b) { b.toImage() }, null, modifier, contentScale = contentScale, alpha = alpha)
 }
 
 /**
