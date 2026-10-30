@@ -412,43 +412,72 @@ class ChromeBotGuard private constructor(private val chrome: Chrome, private val
 }
 
 /**
- * The YouTube Music sign-in, in a browser window with roma's own sign-in profile: when the window reaches
- * music.youtube.com with the account's cookies, they are taken (as Android's WebView sign-in does) and the window
- * closes. Returns false when the window was closed first.
+ * The YouTube Music sign-in, in a browser window with roma's own sign-in profile. Google refuses to sign in a browser
+ * whose DevTools port is open ("This browser or app may not be secure"), so a system browser's window has none: once
+ * it closes, a hidden browser on the same profile reads the account's cookies (as Android's WebView sign-in does).
+ * Without a system browser, CEF's window, watched until it reaches music.youtube.com. Returns false when the window
+ * closed without a sign-in.
  */
 suspend fun browserSignIn(): Boolean {
     val url = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmusic.youtube.com"
+    val profile = Browser.profileDir("signin")
     var chrome: Chrome? = null
+    var window: Process? = null
     try {
         val found = Browser.order().filter { File(it).canExecute() }
-        val last = Store.str("browser.worked", "")
-        for (exe in listOf(last).filter { it in found } + found.filter { it != last }) {
-            chrome = runCatching { Chrome.launch(exe, Browser.profileDir("signin"), headless = false) }.getOrNull() ?: continue
-            chrome.page().call("Page.navigate", buildJsonObject { put("url", url) })
-            break
+        val exe = (listOf(Store.str("browser.worked", "")).filter { it in found } + found).firstOrNull()
+        if (exe != null) {
+            profile.mkdirs()
+            window = withContext(Dispatchers.IO) {
+                ProcessBuilder(exe, "--user-data-dir=${profile.path}", "--no-first-run", "--no-default-browser-check", url)
+                    .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+            }
+            // A wrapper script may hand over to the browser and end: the profile's lock (Linux, "<host>-<pid>") names
+            // the browser. A browser that was killed leaves its lock behind, so the process is what counts.
+            val lock = File(profile, "SingletonLock").toPath()
+            fun browser() = runCatching { java.nio.file.Files.readSymbolicLink(lock).toString().substringAfterLast('-').toLong() }
+                .getOrNull()?.let { ProcessHandle.of(it).isPresent } == true
+            while (window.isAlive || browser()) delay(500)
+            chrome = Chrome.launch(exe, profile, headless = true)
+            return take(chrome.page())
         }
-        val c = chrome ?: Cef.start(url).also { chrome = it }
+        val c = Cef.start(url).also { chrome = it }
         var music: Tab? = null
         while (c.alive) {
             delay(1_000)
             if (c.urls().none { it.startsWith("https://music.youtube.com") }) continue
-            val page = music ?: c.page("https://music.youtube.com").also { music = it }
-            val cookie = page.cookies("https://music.youtube.com")
-            if ("SAPISID" !in cookie) continue
-            val ids = page.eval("[window.yt && yt.config_ ? yt.config_.VISITOR_DATA : null, window.yt && yt.config_ ? yt.config_.DATASYNC_ID : null]")?.jsonArray
-            fun id(i: Int) = ids?.getOrNull(i)?.jsonPrimitive?.contentOrNull
-            withContext(Dispatchers.Main) { signedIn(cookie, id(0), id(1)) }
-            return true
+            if (take(music ?: c.page("https://music.youtube.com").also { music = it })) return true
         }
         return false // the window was closed
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         // No browser started, CEF couldn't, or the window went mid-call.
-        if (chrome?.alive == true) toast("Couldn't sign in: ${e.message}", long = true)
-        else if (chrome == null) toast("Couldn't open a browser to sign in: ${e.message}", long = true)
+        toast((if (chrome == null && window == null) "Couldn't open a browser to sign in: " else "Couldn't sign in: ") + e.message, long = true)
         return false
     } finally {
+        window?.destroy()
         chrome?.close()
     }
+}
+
+/**
+ * Signs in with [page]'s browser's YouTube Music cookies, when they hold an account's. The visitor and account ids come
+ * from music.youtube.com's page fetched with them: a headless browser's copy of the page never sets them.
+ */
+private suspend fun take(page: Tab): Boolean {
+    val cookie = page.cookies("https://music.youtube.com")
+    if ("SAPISID" !in cookie) return false
+    val html = withContext(Dispatchers.IO) {
+        runCatching {
+            java.net.http.HttpClient.newHttpClient().send(
+                java.net.http.HttpRequest.newBuilder(java.net.URI("https://music.youtube.com/")).header("Cookie", cookie)
+                    .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36").build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString(),
+            ).body()
+        }.getOrDefault("")
+    }
+    fun id(key: String) = Regex("\"$key\":\"([^\"]+)\"").find(html)?.groupValues?.get(1)
+    withContext(Dispatchers.Main) { signedIn(cookie, id("VISITOR_DATA"), id("DATASYNC_ID")) }
+    return true
 }

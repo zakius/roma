@@ -16,6 +16,12 @@ if [ -z "$java" ]; then
   echo "roma needs Java 21 or newer, with the desktop part (not a headless runtime)." >&2
   exit 1
 fi
+# KDE (on Wayland, with X11 apps scaling themselves) and other desktops give the scale only as Xft.dpi, which Java never
+# reads (it follows GDK_SCALE, which KDE sets to 1), so roma came up at 1x on a 2x screen. Java's scale from Xft.dpi,
+# then, unless J2D_UISCALE sets one; a whole number, as Java's X11 windows need (1.5 rounds to 2). As finimal's.
+if [ -z "${J2D_UISCALE:-}" ] && dpi=$(xrdb -query 2>/dev/null | sed -n 's/^Xft\.dpi:[[:space:]]*//p') && [ -n "$dpi" ]; then
+  export J2D_UISCALE=$(awk -v d="$dpi" 'BEGIN { s = int(d / 96 + 0.5); print (s < 1 ? 1 : s) }')
+fi
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/roma"
 mkdir -p "$cache"
 exec "$java" --enable-native-access=ALL-UNNAMED -XX:SharedArchiveFile="$cache/roma.jsa" -XX:+AutoCreateSharedArchive -Xlog:cds=off -Xlog:cds+dynamic=off \

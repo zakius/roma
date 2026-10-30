@@ -15,7 +15,7 @@ fun LoginScreen() {
         if (!browserSignIn()) Nav.stacks[Nav.tab].removeLastOrNull()
     }
     Column(Modifier.padding(16.dp)) {
-        Text("Sign in to YouTube Music in the browser window roma opened. It closes by itself once you are signed in.")
+        Text("Sign in to YouTube Music in the browser window roma opened, then close the window.")
         Cef.status?.let { Text(it, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall) }
     }
 }
