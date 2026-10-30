@@ -67,7 +67,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.metrolist.innertube.YouTube
-import com.metrolist.innertube.models.SongItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -216,13 +215,12 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             MenuItem("Play next", true) { Playback.playNext(s); onClose() }
             MenuItem("Add to queue", true) { Playback.addToQueue(s); onClose() }
             MenuItem("Start radio", true) { Playback.startRadio(s); Nav.tab = TAB_PLAYER; onClose() }
-            MenuItem(if (liked) "Unlike" else "Like", Store.signedIn) { Playback.toggleLike(s); onClose() }
+            MenuItem(if (liked) "Unlike" else "Like", Sources.of(s.id).canLike) { Playback.toggleLike(s); onClose() }
             MenuItem("Go to artist", s.firstArtistId != null) { Nav.open(Page("artist", s.firstArtistId!!)); onClose() }
             MenuItem("Go to album", s.album?.id != null) { Nav.open(Page("album", s.album!!.id!!)); onClose() }
-            // The same video ID plays on both: on YouTube a song is its "Topic" upload.
-            MenuItem("Share…", true) {
-                val host = if (Store.str("share.site", "music") == "music") "music.youtube.com" else "www.youtube.com"
-                share("https://$host/watch?v=${s.id}", "${s.title.latin} · ${s.artistLatin}")
+            val link = Sources.of(s.id).shareUrl(s)
+            MenuItem("Share…", link != null) {
+                share(link!!, "${s.title.latin} · ${s.artistLatin}")
                 onClose()
             }
             MenuItem("Correct romanization…", s.romanizable) { fixing = true }
@@ -472,9 +470,6 @@ private fun Header(text: String) {
 
 // ---------------------------------------------------------------- Home
 
-@Serializable
-class Section(val title: roma.core.Text, val items: List<Item>)
-
 private const val MIX_PAGES = 10
 
 /**
@@ -530,10 +525,10 @@ object Home {
     fun start() {
         val stale = System.currentTimeMillis() - fetchedAt > 30 * 60_000 || dataVersion != Store.dataVersion
         if (job != null && failed == null && !stale) return
-        if (dataVersion != Store.dataVersion || account != Store.cookie) saved = emptyList()
+        if (dataVersion != Store.dataVersion || account != Sources.chosen.account) saved = emptyList()
         dataVersion = Store.dataVersion
-        if (account != Store.cookie) {
-            account = Store.cookie
+        if (account != Sources.chosen.account) {
+            account = Sources.chosen.account
             if (job != null) {
                 sections = emptyList()
                 mixes = null // Store.set dropped the other account's mixes from disk
@@ -549,7 +544,7 @@ object Home {
             found.clear()
             fresh.clear()
             more = true
-            looking = Store.signedIn
+            looking = Sources.chosen.mixes && Store.signedIn
         }
         failed = null
         fetchedAt = System.currentTimeMillis()
@@ -632,18 +627,10 @@ object Home {
             if (!looking && page > 0) snapshotFlow { list.layoutInfo.run { (visibleItemsInfo.lastOrNull()?.index ?: 0) >= totalItemsCount - 3 } }.first { it }
             val from = cont
             val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    Store.ensureVisitorData()
-                    val p = YouTube.home(from).getOrThrow()
-                    p.continuation to p.sections.map { sec ->
-                        val items = sec.items.mapNotNull { Store.romanizer.item(it) }
-                        Store.remember(items.mapNotNull { it.song })
-                        Section(Store.romanizer.text(sec.title), items)
-                    }
-                }
+                runCatching { Sources.chosen.home(from) }
             }
             val (next, shelves) = result.getOrElse { failed = plainError(it); fetchedAt = 0; return@coroutineScope }
-            if (account != Store.cookie) return@coroutineScope // loaded for the account before a switch: not shown or saved
+            if (account != Sources.chosen.account) return@coroutineScope // loaded for the account before a switch: not shown or saved
             page++
             cont = next
             more = next != null
@@ -777,14 +764,7 @@ private fun Mixes(mixes: List<Item>?, read: Boolean) {
 
 // ---------------------------------------------------------------- Search
 
-private val FILTERS = listOf(
-    "Songs" to YouTube.SearchFilter.FILTER_SONG,
-    "Albums" to YouTube.SearchFilter.FILTER_ALBUM,
-    "Artists" to YouTube.SearchFilter.FILTER_ARTIST,
-    "Playlists" to YouTube.SearchFilter.FILTER_COMMUNITY_PLAYLIST,
-)
-
-private class Found(val items: List<Item>, val corrected: String?, val autoCorrected: Boolean, val originalParams: String?)
+private val FILTERS = listOf("Songs", "Albums", "Artists", "Playlists")
 
 @Composable
 fun SearchScreen() {
@@ -802,6 +782,7 @@ fun SearchScreen() {
     LaunchedEffect(shown) { if (!shown) focusManager.clearFocus() else if (query.isEmpty()) focus.requestFocus() }
     // The results take the keyboard's place.
     fun search(q: String) { query = q; submitted = q.trim(); asTyped = null; focusManager.clearFocus() }
+    val source = Sources.chosen
     Column(Modifier.fillMaxSize()) {
         OutlinedTextField(
             query, { query = it },
@@ -813,7 +794,7 @@ fun SearchScreen() {
         // Fixed order; videos are left out on purpose. With a large system font they wrap onto a second line, in the
         // same order, instead of squeezing the last one into a column of letters.
         androidx.compose.foundation.layout.FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FILTERS.forEachIndexed { i, (label, _) -> FilterChip(filter == i, { filter = i; asTyped = null }, label = { Text(label) }) }
+            FILTERS.forEachIndexed { i, label -> FilterChip(filter == i, { filter = i; asTyped = null }, label = { Text(label) }) }
         }
         // While the text differs from the last search, YouTube's suggestions take the results' place. The ones shown
         // stay while the next keystroke's load, so typing doesn't flash the old results between them.
@@ -821,7 +802,7 @@ fun SearchScreen() {
         LaunchedEffect(query) {
             if (query.isBlank() || query.trim() == submitted) { suggestions = emptyList(); return@LaunchedEffect }
             delay(250)
-            suggestions = withContext(Dispatchers.IO) { YouTube.searchSuggestions(query).getOrNull()?.queries.orEmpty() }
+            suggestions = withContext(Dispatchers.IO) { source.suggestions(query) }
         }
         if (suggestions.isNotEmpty() && query.trim() != submitted) {
             LazyColumn(Modifier.fillMaxSize()) {
@@ -832,7 +813,7 @@ fun SearchScreen() {
             // show as soon as the local lookup is done and keep their place when YouTube's results arrive below them.
             // The lookup runs off the main thread, once per search, before this search's own results join the index.
             val local by produceState(emptyList<Song>(), submitted, filter) {
-                value = if (filter == 0) withContext(Dispatchers.IO) { Store.searchLocal(submitted) } else emptyList()
+                value = if (filter == 0 && !source.searchIsLocal) withContext(Dispatchers.IO) { Store.searchLocal(submitted) } else emptyList()
             }
             // The top row is the likely tap: the first "Seen before" song at once, YouTube's top song when it comes.
             LaunchedEffect(local) { Playback.prepare(local.take(1)) }
@@ -840,16 +821,9 @@ fun SearchScreen() {
                 if (local.isEmpty()) return
                 item { Header("Seen before") }
                 items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
-                item { Header("YouTube Music") }
+                item { Header(source.name) }
             }
-            Loader(listOf(submitted, filter, asTyped).toString(), {
-                val r = YouTube.search(submitted, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter].second).getOrThrow()
-                val items = r.items
-                    .filter { it !is SongItem || !it.isVideoSong || filter != 0 }
-                    .mapNotNull { Store.romanizer.item(it) }
-                    .also { list -> Store.remember(list.mapNotNull { it.song }) }
-                Found(items, r.correctedQuery, r.autoCorrected, r.originalParams)
-            }, loading = {
+            Loader(listOf(submitted, filter, asTyped).toString(), { source.search(submitted, filter, asTyped) }, loading = {
                 LazyColumn(Modifier.fillMaxSize()) {
                     localRows()
                     item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
@@ -891,7 +865,8 @@ fun SearchScreen() {
 
 @Composable
 fun LibraryScreen() {
-    if (!Store.signedIn) {
+    val source = Sources.chosen
+    if (!source.libraryReady) {
         Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Sign in to YouTube Music to see your playlists and albums.", textAlign = TextAlign.Center)
             Spacer(Modifier.height(12.dp))
@@ -900,14 +875,13 @@ fun LibraryScreen() {
         return
     }
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = listOf("Playlists" to "FEmusic_liked_playlists", "Albums" to "FEmusic_liked_albums", "Artists" to "FEmusic_library_corpus_track_artists")
+    val tabs = listOf("Playlists", "Albums", "Artists")
     Column(Modifier.fillMaxSize()) {
-        TabRow(tab) { tabs.forEachIndexed { i, (label, _) -> Tab(tab == i, { tab = i }, text = { Text(label) }) } }
-        val id = tabs[tab].second
+        TabRow(tab) { tabs.forEachIndexed { i, label -> Tab(tab == i, { tab = i }, text = { Text(label) }) } }
         val list = key(tab) { rememberLazyListState() }
-        Loader("library:$id", { partial -> loadLibrary(id, partial) }, list, { items -> items.map { it.id } }, ListSerializer(Item.serializer())) { items ->
+        Loader("library:${source.libraryKey(tab)}", { partial -> source.library(tab, partial) }, list, { items -> items.map { it.id } }, ListSerializer(Item.serializer())) { items ->
             PrefetchCovers(items.map { it.thumb }, 56.dp, list)
-            if (items.isEmpty()) Centered("Nothing here yet. ${tabs[tab].first} you save in YouTube Music show here.")
+            if (items.isEmpty()) Centered("Nothing here yet. ${tabs[tab]} you save in ${source.name} show here.")
             Box {
                 LazyColumn(Modifier.fillMaxSize(), list) { items(items) { item -> ItemRow(item) { openItem(item) } } }
                 FastScroll(list)
@@ -918,16 +892,13 @@ fun LibraryScreen() {
 
 // ---------------------------------------------------------------- Album, playlist, artist pages
 
-@Serializable
-class Detail(val title: roma.core.Text, val subtitle: String, val thumb: String?, val songs: List<Song>, val items: List<Item>)
-
 @Composable
 fun PageScreen(p: Page) {
     if (p.kind == "login") return LoginScreen()
     if (p.kind == "settings") return SettingsPage(p.id)
     var menuFor by remember { mutableStateOf<Song?>(null) }
     val list = rememberLazyListState()
-    Loader("${p.kind}:${p.id}", { partial -> loadDetail(p, partial) }, list, ::detailRows, Detail.serializer()) { d ->
+    Loader("${p.kind}:${p.id}", { partial -> Sources.of(p.id).detail(p, partial) }, list, ::detailRows, Detail.serializer()) { d ->
         // Play and the first row are the likely taps; not while another page covers this one.
         val shown = LocalTabShown.current
         LaunchedEffect(d.songs.firstOrNull()?.id, shown) { if (shown) Playback.prepare(d.songs.take(1)) }
@@ -966,48 +937,6 @@ private fun playList(p: Page, songs: List<Song>) =
 private fun detailRows(d: Detail): List<Any?> =
     listOf(listOf(d.title.original, d.subtitle, d.thumb, d.songs.isEmpty())) + d.songs.map { it.id } +
         (if (d.items.isEmpty()) emptyList() else listOf("more") + d.items.map { it.id })
-
-private suspend fun loadDetail(p: Page, partial: suspend (Detail) -> Unit): Detail {
-    val r = Store.romanizer
-    return when (p.kind) {
-        "album" -> {
-            val a = YouTube.album(p.id).getOrThrow()
-            val artists = a.album.artists.orEmpty().joinToString(", ") { it.name }
-            val songs = a.songs.map { r.song(it) }
-            Store.remember(songs)
-            Detail(r.text(a.album.title, listOf(artists)), listOfNotNull(r.text(artists).latin, a.album.year?.toString()).joinToString(" · "), a.album.thumbnail, songs, emptyList())
-        }
-        "playlist" -> {
-            val id = p.id.removePrefix("VL")
-            val pl = YouTube.playlist(id).getOrThrow()
-            val title = r.text(pl.playlist.title)
-            val author = pl.playlist.author?.name?.let { r.text(it).latin } ?: ""
-            // Generated playlists (RD…) loop: their continuations return songs already listed.
-            val songs = ArrayList<Song>()
-            val seen = HashSet<String>()
-            fun add(items: List<SongItem>) = items.filter { seen.add(it.id) }.map { r.song(it) }.also { songs += it; Store.remember(it) }
-            add(pl.songs)
-            var cont = pl.songsContinuation
-            // ponytail: loads at most 10 continuation pages (about 1000 songs); page on scroll if libraries get bigger.
-            repeat(10) {
-                val c = cont ?: return@repeat
-                partial(Detail(title, author, pl.playlist.thumbnail, songs.toList(), emptyList()))
-                val more = YouTube.playlistContinuation(c).getOrNull() ?: return@repeat
-                add(more.songs)
-                cont = more.continuation
-            }
-            if (id == "LM") Playback.markLiked(songs.map { it.id })
-            Detail(title, author, pl.playlist.thumbnail, songs, emptyList())
-        }
-        else -> {
-            val a = YouTube.artist(p.id).getOrThrow()
-            val songs = a.sections.flatMap { it.items }.filterIsInstance<SongItem>().map { r.song(it) }
-            Store.remember(songs)
-            val items = a.sections.flatMap { it.items }.filter { it !is SongItem }.mapNotNull { r.item(it) }
-            Detail(r.text(a.artist.title, artistId = a.artist.id), a.monthlyListenerCount ?: a.subscriberCountText ?: "", a.artist.thumbnail, songs, items)
-        }
-    }
-}
 
 // ---------------------------------------------------------------- Sign-in
 
@@ -1334,22 +1263,6 @@ private fun Options(title: String, key: String, def: String, options: List<Pair<
         Text(title, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
         options.forEach { (v, label) -> Choice(label, value == v) { Store.set(key, v) } }
     }
-}
-
-/** All pages of a library tab: the first page holds only about 25 items; each page shows as it arrives. */
-private suspend fun loadLibrary(browseId: String, partial: suspend (List<Item>) -> Unit): List<Item> {
-    val first = YouTube.library(browseId).getOrThrow()
-    val all = first.items.mapNotNull { Store.romanizer.item(it) }.toMutableList()
-    var cont = first.continuation
-    // ponytail: stops at 50 pages (about 1,250 items); raise it if a library is bigger.
-    repeat(50) {
-        val c = cont ?: return@repeat
-        partial(all.toList())
-        val more = YouTube.libraryContinuation(c).getOrNull() ?: return@repeat
-        all.addAll(more.items.mapNotNull { Store.romanizer.item(it) })
-        cont = more.continuation
-    }
-    return all
 }
 
 /** "1 song", "3 songs"; null for none. */

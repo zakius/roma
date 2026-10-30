@@ -170,11 +170,11 @@ fun PlayerScreen() {
                 val slots: List<@Composable RowScope.() -> Unit> = listOf(
                     { Slot(rememberVectorPainter(Icons.Default.MoreVert), "More", entry != null, label = "More") { menuOpen = true } },
                     { Spacer(Modifier.weight(1f)) }, // deliberately empty: no icon, no label, not tappable
-                    { Slot(rememberVectorPainter(CommentsIcon), "Comments", entry != null, view == "comments", label = "Comments", state = if (view == "comments") "shown" else null) { view = if (view == "comments") "song" else "comments" } },
+                    { Slot(rememberVectorPainter(CommentsIcon), "Comments", entry != null && Sources.of(entry.song.id).hasComments, view == "comments", label = "Comments", state = if (view == "comments") "shown" else null) { view = if (view == "comments") "song" else "comments" } },
                     { Slot(rememberVectorPainter(LyricsIcon), "Lyrics", hasLyrics || view == "lyrics", view == "lyrics", label = "Lyrics", state = if (view == "lyrics") "shown" else null) { view = if (view == "lyrics") "song" else "lyrics" } },
                     { Slot(rememberVectorPainter(Icons.AutoMirrored.Filled.List), "Queue", entry != null, view == "queue", label = "Queue", state = if (view == "queue") "shown" else null) { view = if (view == "queue") "song" else "queue" } },
                     {
-                        Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), "Like", entry != null && Store.signedIn, liked, label = "Like", state = if (liked) "liked" else "not liked") {
+                        Slot(rememberVectorPainter(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp), "Like", Playback.canLike(entry?.song), liked, label = "Like", state = if (liked) "liked" else "not liked") {
                             haptic.performHapticFeedback(if (liked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
                             Playback.toggleLike()
                         }
@@ -407,7 +407,7 @@ private fun SongView() {
                 detectTapGestures(onDoubleTap = {
                     // Only likes, never unlikes: a double tap by accident shouldn't undo one.
                     val song = Playback.shown() ?: return@detectTapGestures
-                    if (!Store.signedIn) return@detectTapGestures haptic.performHapticFeedback(HapticFeedbackType.Reject)
+                    if (!Playback.canLike(song)) return@detectTapGestures haptic.performHapticFeedback(HapticFeedbackType.Reject)
                     if (song.id !in Playback.liked) Playback.toggleLike(song)
                     haptic.performHapticFeedback(HapticFeedbackType.ToggleOn)
                     scope.launch { pop.snapTo(1f); pop.animateTo(0f, tween(700)) }

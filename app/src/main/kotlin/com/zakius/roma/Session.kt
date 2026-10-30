@@ -132,7 +132,7 @@ class PlaybackService : MediaBrowserService() {
         val playback = PlaybackState.Builder()
             .setState(state, p.currentPosition, if (p.isPlaying) p.playbackParameters.speed else 0f)
             .setActions(actions)
-        if (Store.signedIn) playback.addCustomAction(PlaybackState.CustomAction.Builder(LIKE, if (liked) "Unlike" else "Like", if (liked) R.drawable.thumb_up else R.drawable.thumb_up_outline).build())
+        if (Playback.canLike(Playback.current()?.song)) playback.addCustomAction(PlaybackState.CustomAction.Builder(LIKE, if (liked) "Unlike" else "Like", if (liked) R.drawable.thumb_up else R.drawable.thumb_up_outline).build())
         session.setPlaybackState(playback.build())
 
         val item = p.currentMediaItem
@@ -198,7 +198,7 @@ class PlaybackService : MediaBrowserService() {
             .addAction(if (p.playWhenReady) action(R.drawable.pause, "Pause", KeyEvent.KEYCODE_MEDIA_PAUSE) else action(R.drawable.play, "Play", KeyEvent.KEYCODE_MEDIA_PLAY))
             .addAction(action(R.drawable.next, "Next", KeyEvent.KEYCODE_MEDIA_NEXT))
             .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
-        if (Store.signedIn) b.addAction(
+        if (Playback.canLike(Playback.current()?.song)) b.addAction(
             Notification.Action.Builder(
                 android.graphics.drawable.Icon.createWithResource(this, if (liked) R.drawable.thumb_up else R.drawable.thumb_up_outline), if (liked) "Unlike" else "Like",
                 PendingIntent.getBroadcast(this, 1, Intent(LIKE).setClass(this, MediaButtons::class.java), PendingIntent.FLAG_IMMUTABLE),

@@ -77,14 +77,17 @@ object LyricsProviders {
     val all: List<LyricsProvider> = listOf(NetEase, KuGou, LrcLib, LyricsPlus, YouTubeLyrics)
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "lyrics").apply { isDaemon = true } }
 
-    /** Asks every provider at once, each for at most [timeoutMs], then picks by [chooseLyrics]. */
-    fun find(q: LyricsQuery, providers: List<LyricsProvider>, icu: Icu? = null, timeoutMs: Long = 5000): LyricsSearch {
+    /**
+     * Asks every provider at once, each for at most [timeoutMs], then picks by [chooseLyrics], with [reference] (the
+     * music source's own lyrics) in YouTube Music's place.
+     */
+    fun find(q: LyricsQuery, providers: List<LyricsProvider>, icu: Icu? = null, timeoutMs: Long = 5000, reference: LyricsProvider? = YouTubeLyrics): LyricsSearch {
         val futures = pool.invokeAll(providers.map { p -> Callable { p.fetch(q) } }, timeoutMs, TimeUnit.MILLISECONDS)
         val got = providers.zip(futures).map { (p, f) -> p to runCatching { f.get() } }
         val found = got.mapNotNull { (p, r) -> r.getOrNull()?.let { withoutCredits(unescaped(it), q) }?.takeIf { it.lines.any { l -> l.text.isNotBlank() } }?.let { p to it } }
         val complete = got.all { it.second.isSuccess }
-        val ytm = found.firstOrNull { it.first == YouTubeLyrics }?.second
-        val chosen = chooseLyrics(ytm, found.filter { it.first != YouTubeLyrics }.map { it.second }, icu) ?: return LyricsSearch(null, complete)
+        val ytm = found.firstOrNull { it.first == reference }?.second
+        val chosen = chooseLyrics(ytm, found.filter { it.first != reference }.map { it.second }, icu) ?: return LyricsSearch(null, complete)
         val translations = found.mapNotNull { translationOf(it.second) }
         val bare = Lyrics(chosen.first.source, chosen.first.lines.map { Line(it.startMs, it.text, it.words) }, chosen.first.synced)
         return LyricsSearch(LyricsResult(bare, translations, chosen.second), complete)
