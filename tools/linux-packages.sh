@@ -2,7 +2,6 @@
 # The desktop app for Debian/Ubuntu and Fedora: dist/roma_<version>_amd64.deb and dist/roma-<version>-1.x86_64.rpm,
 # from the release app image's app files (ProGuard-shrunk). Both install to /opt/roma with /usr/bin/roma and run on
 # the distribution's Java 21+, so its fixes come with system updates; as finimal's packages.
-# The jars go in stored, not deflated: the package's xz then compresses across all classes.
 # rpmbuild comes from the host (Ubuntu: the rpm package) or, without it, a Fedora container.
 # Usage: tools/linux-packages.sh [--no-gradle]
 set -euo pipefail
@@ -14,14 +13,10 @@ trap 'rm -rf "$stage"' EXIT
 root=$stage/root
 mkdir -p "$root/opt/roma" "$root/usr/bin" "$root/usr/share/applications" "$root/usr/share/icons/hicolor/scalable/apps" "$root/usr/share/metainfo" dist
 app=$PWD/desktop/build/compose/binaries/main-release/app/roma/lib/app
-cp -a "$app"/libskiko-*.so "$root/opt/roma/"
+cp -a "$app"/libskiko-*.so "$app"/*.jar "$root/opt/roma/"
 cp -a "$app/resources" "$root/opt/roma/"
 rm -rf "$root/opt/roma/resources/windows"
 chmod 755 "$root/opt/roma/resources/roma-aac" # the app image loses its executable bit
-for jar in "$app"/*.jar; do
-  rm -rf "$stage/x"; mkdir "$stage/x"; (cd "$stage/x" && unzip -q "$jar" && zip -q -0 -r -X "$root/opt/roma/$(basename "$jar")" .)
-done
-rm -rf "$stage/x"
 sed -e 's|@APPDIR@|/opt/roma|' packaging/roma-system-java.sh > "$root/usr/bin/roma"
 chmod 755 "$root/usr/bin/roma"
 install -m644 packaging/io.github.zakius.roma.desktop "$root/usr/share/applications/"
