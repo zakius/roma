@@ -21,12 +21,12 @@ The music stack:
 
 | What | YouTube Music (`YouTubeMusic`, the code that is there now, moved) | Subsonic (`SubsonicSource`) |
 |---|---|---|
-| Home | `YouTube.home` pages; the personal mixes row; Liked music | Shelves from `getAlbumList2` (recently added, recently played, most played, random), one page. Pinned tiles: Starred and Shuffle all; no mixes. |
-| Search | `YouTube.search` with filters, spelling correction, suggestions; "Seen before" from the local index | The synced index, romanized forms included (`matchDistance`, as "Seen before"). Same filters; Playlists from the playlist list. No suggestions, no correction line, no "Seen before" section (the whole result is local). |
+| Home | `YouTube.home` pages; the personal mixes row; Liked music | Shelves from `getAlbumList2` (recently added, recently played, most played, random), one page. Pinned tiles: the server's mixes (playlists owned by "YouTube Music", which oasis publishes from YouTube Music's personal mixes), then Starred and Shuffle all. |
+| Search | `YouTube.search` with filters, spelling correction, suggestions; "Seen before" from the local index | The synced index first, at once, romanized forms included (`matchDistance`); then the server's own `search3` results not already listed (on oasis, YouTube Music's). Same filters; Playlists from the playlist list. No suggestions, no correction line, no "Seen before" section. |
 | Library tabs | Playlists, Albums, Artists from the account | Playlists (`getPlaylists`), Albums and Artists from the index. |
-| Album, artist, playlist pages | `YouTube.album/artist/playlist` | Album and artist from the index (instant, offline); playlist from `getPlaylist`. An artist page lists the artist's albums and plays all their songs. |
+| Album, artist, playlist pages | `YouTube.album/artist/playlist` | Album and artist from the index (instant, offline), else `getAlbum`/`getArtist` (oasis: a YouTube Music album seen in search or radio, which it keeps out of the library lists); playlist from `getPlaylist`. An artist page lists the artist's albums and plays all their songs. |
 | Stream | `Streams.audio` (VISIONOS, then InnerTubeX), loudness | `stream?id=…`, no transcoding asked; no loudness (ReplayGain later). |
-| Radio and queue | YouTube's autoplay (`next`), related artists for the leash | `getSimilarSongs2` on the seed's artist; when the server has none (oasis today), random songs from the index. The same filters and leash (`filterRadio`). |
+| Radio and queue | YouTube's autoplay (`next`), related artists for the leash | `getSimilarSongs` on the seed song, each next page on the last song of the one before (oasis answers with YouTube Music's radio); when the server has none, random songs from the index. The same filters and leash (`filterRadio`). |
 | Mixes, Liked music | Personal mixes, `LM` | Starred songs (`getStarred2`) for the Liked tile; Shuffle all plays the index at random. |
 | Like | `likeVideo`, `likeStatus` | `star`/`unstar`; the status from the song's `starred`, kept from the sync and from `getSong`. |
 | Lyrics: the reference provider | `YouTubeLyrics` (ANDROID_MUSIC browse) | OpenSubsonic `getLyricsBySongId`, only when the server lists the `songLyrics` extension. The third-party providers run as before. |
@@ -39,7 +39,7 @@ What stays as it is: romanization (every name enters through `Romanizer` once, a
 What Subsonic can't provide, and what the UI does:
 
 - No home feed and no personal mixes: Home shows the server's album lists and two fixed tiles. "Your mixes" becomes "Your library" on Subsonic.
-- Similar songs only through `getSimilarSongs2`. A server without them (oasis today answers an empty list) gets radio from the index at random, leash applied, so "close" still keeps the seed's artist.
+- Similar songs only through `getSimilarSongs`. A server without them gets radio from the index at random, leash applied, so "close" still keeps the seed's artist.
 - Lyrics from the server only with OpenSubsonic `getLyricsBySongId`; otherwise the third-party providers alone, under rule 5 (no reference text).
 - No comments and no share link; their slots stay, dimmed (a control never moves).
 - No spelling correction or suggestions in Search; the local search tolerates typos already.
@@ -105,4 +105,4 @@ Against oasis (commit 18b9e5e, run from its venv) with a generated library of 15
 - Desktop: the shared code runs, but the desktop player decodes only Opus in WebM and AAC in MP4. MP3, FLAC and Ogg files from a server need decoders there (or a server that transcodes); Android plays them through MediaCodec.
 - No ReplayGain yet: Subsonic songs play at their own level.
 - Names get machine romanization only: a server has no official Latin names, so 米津玄師 reads "Yonetsu Genshi" (the dictionary's reading) where YouTube gives "Kenshi Yonezu". A correction for that artist fixes it.
-- oasis today answers `getSimilarSongs2` with nothing and has no `getLyricsBySongId`, so its radio is the library at random and its songs' lyrics come from the third-party providers only.
+- oasis 5194342 (2026-10-30) added mixes as playlists, similar songs, `getLyricsBySongId` and transcoding. Checked against it from the JVM: search with YouTube results, a YouTube album and artist on demand, radio, `.lrc` lyrics. The mixes need a signed-in YouTube Music account on the server and are untested live. The desktop could ask for `stream?format=opus` to play MP3 and FLAC; not done (transcoded streams have no Range, which the desktop's audio cache uses).

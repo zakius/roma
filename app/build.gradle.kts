@@ -14,7 +14,9 @@ android {
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        applicationId = "com.zakius.roma"
+        // `-Proma.appId=… -Proma.appLabel=…`: a test build installed beside roma, e.g. the Subsonic one.
+        applicationId = (findProperty("roma.appId") as String?) ?: "com.zakius.roma"
+        manifestPlaceholders["appLabel"] = (findProperty("roma.appLabel") as String?) ?: "roma"
         minSdk = 26
         targetSdk = 36
         versionCode = 58

@@ -36,6 +36,8 @@ object SubsonicSource : Source {
     /** Home's tiles: the starred songs, and the whole library at random. */
     const val STARRED = "s.~starred"
     const val SHUFFLE = "s.~shuffle"
+    /** The owner oasis gives the personal mixes it publishes as playlists. */
+    const val MIX_OWNER = "YouTube Music"
 
     // One at a time, in order: a server change's deletion runs before the new server's sync.
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -166,9 +168,14 @@ object SubsonicSource : Source {
 
     // ---- Pages ----
 
+    /** The server's mixes (oasis: YouTube Music's personal mixes, owner "YouTube Music"), for Home's tiles. */
+    var mixTiles by mutableStateOf<List<Item>>(emptyList())
+        private set
+
     override suspend fun home(from: String?): Pair<String?, List<Section>> {
         val l = lib()
         val r = Store.romanizer
+        runCatching { need().playlists().filter { it.owner == MIX_OWNER }.map { r.item(it) } }.onSuccess { postMain { mixTiles = it } }
         fun shelf(title: String, items: List<Item>) = Section(roma.core.Text(title, title), items)
         // Play counts live on the server; offline those shelves are left out and the library's own ones stay.
         fun server(type: String) = runCatching { need().albumList(type).map { l.albumById[SubsonicIds.encode(it.id)] ?: r.item(it) } }.getOrDefault(emptyList())
@@ -187,7 +194,24 @@ object SubsonicSource : Source {
     override val searchIsLocal = true
     override suspend fun suggestions(query: String) = emptyList<String>()
 
-    override suspend fun search(query: String, filter: Int, asTyped: String?): Found {
+    /** The index's matches at once, then the server's own results after them (on oasis, YouTube Music's too). */
+    override suspend fun search(query: String, filter: Int, asTyped: String?, partial: suspend (Found) -> Unit): Found {
+        val local = searchLocal(query, filter)
+        if (filter == 3) return local
+        partial(local)
+        val l = lib()
+        val r = Store.romanizer
+        val found = runCatching { need().search(query) }.getOrNull() ?: return local
+        val remote = when (filter) {
+            0 -> found.first.map { l.byId[SubsonicIds.encode(it.id)] ?: r.song(it) }.map { Item("song", it.id, it.title, it.artistText, it.thumb, it) }
+            1 -> found.second.map { l.albumById[SubsonicIds.encode(it.id)] ?: r.item(it) }
+            else -> found.third.map { l.artistById[SubsonicIds.encode(it.id)] ?: r.item(it) }
+        }
+        val seen = local.items.map { it.id }.toSet()
+        return Found(local.items + remote.filter { it.id !in seen })
+    }
+
+    private suspend fun searchLocal(query: String, filter: Int): Found {
         val l = lib()
         fun <T> best(list: List<T>, texts: (T) -> List<String>) = list.mapNotNull { x -> matchDistance(texts(x), query)?.let { x to it } }.sortedBy { it.second }.take(100).map { it.first }
         fun Item.texts() = listOf(title.original, title.latin, subtitle.original, subtitle.latin, subtitle.latin + title.latin)
@@ -220,6 +244,13 @@ object SubsonicSource : Source {
         val r = Store.romanizer
         return when (p.kind) {
             "album" -> {
+                // An album the synced lists don't hold (oasis: one seen in search or radio) comes from the server.
+                if (l.albumSongs[p.id].isNullOrEmpty()) {
+                    val (a, subs) = need().album(SubsonicIds.decode(p.id))
+                    val songs = subs.map { l.byId[SubsonicIds.encode(it.id)] ?: r.song(it) }
+                    val item = r.item(a)
+                    return Detail(item.title, listOfNotNull(item.subtitle.latin, a.year.takeIf { it > 0 }?.toString()).joinToString(" · "), item.thumb ?: songs.firstOrNull()?.thumb, songs, emptyList())
+                }
                 val a = l.albumById[p.id]
                 val sub = l.index.albums.firstOrNull { SubsonicIds.encode(it.id) == p.id }
                 val songs = l.albumSongs[p.id].orEmpty()
@@ -232,6 +263,12 @@ object SubsonicSource : Source {
                 Detail(r.text(pl.name), pl.owner, songs.firstOrNull()?.thumb, songs, emptyList())
             }
             else -> {
+                if (p.id !in l.artistById && l.artistSongs[p.id].isNullOrEmpty()) {
+                    val (a, subs) = need().artist(SubsonicIds.decode(p.id))
+                    val albums = subs.map { l.albumById[SubsonicIds.encode(it.id)] ?: r.item(it) }
+                    val item = r.item(a)
+                    return Detail(item.title, "${albums.size} album" + if (albums.size == 1) "" else "s", item.thumb ?: albums.firstOrNull()?.thumb, emptyList(), albums)
+                }
                 val a = l.artistById[p.id]
                 val albums = l.index.albums.filter { it.artistId?.let(SubsonicIds::encode) == p.id }.mapNotNull { l.albumById[SubsonicIds.encode(it.id)] }
                 val songs = l.artistSongs[p.id].orEmpty()
@@ -243,12 +280,16 @@ object SubsonicSource : Source {
 
     // ---- Radio, playlists played as one, likes ----
 
-    /** Similar songs when the server knows any (getSimilarSongs2); otherwise the library at random. The leash applies either way. */
+    /**
+     * Songs like the seed when the server knows any (getSimilarSongs); each next page is seeded from the last song of
+     * the page before, so the radio drifts on as YouTube's does. Otherwise the library at random. The leash applies.
+     */
     override suspend fun radio(seed: Song, from: String?): SongPage? {
         val l = runCatching { lib() }.getOrNull() ?: return null
-        val artist = seed.firstArtistId?.let(SubsonicIds::decode)
-        val similar = if (from == null && artist != null) runCatching { need().similarSongs(artist) }.getOrDefault(emptyList()).map { l.byId[SubsonicIds.encode(it.id)] ?: Store.romanizer.song(it) } else emptyList()
-        return SongPage(similar.ifEmpty { l.songs.shuffled().take(25) }, "more")
+        val similar = runCatching { need().similarSongs(SubsonicIds.decode(from ?: seed.id)) }.getOrDefault(emptyList())
+            .map { l.byId[SubsonicIds.encode(it.id)] ?: Store.romanizer.song(it) }
+        if (similar.isEmpty()) return SongPage(l.songs.shuffled().take(25), "more")
+        return SongPage(similar, similar.last().id)
     }
 
     override suspend fun relatedArtists(seed: Song) = emptySet<String>()

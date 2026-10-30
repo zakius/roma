@@ -153,7 +153,25 @@ class SubsonicClient(url: String, val user: String, private val password: String
 
     fun starredSongs() = call("getStarred2")["starred2"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
 
-    fun similarSongs(artistId: String, count: Int = 50) = call("getSimilarSongs2", listOf("id" to artistId, "count" to "$count"))["similarSongs2"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
+    /** Songs like the song, album or artist [id] (getSimilarSongs takes any of the three). */
+    fun similarSongs(id: String, count: Int = 50) = call("getSimilarSongs", listOf("id" to id, "count" to "$count"))["similarSongs"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
+
+    /** An album and its songs, for one the synced lists don't hold (oasis: a YouTube Music album seen in search or radio). */
+    fun album(id: String): Pair<SubAlbum, List<SubSong>> {
+        val a = call("getAlbum", listOf("id" to id))["album"] ?: throw SubsonicException(70, "No such album")
+        return (album(a) ?: throw SubsonicException(70, "No such album")) to a.obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
+    }
+
+    fun artist(id: String): Pair<SubArtist, List<SubAlbum>> {
+        val a = call("getArtist", listOf("id" to id))["artist"] ?: throw SubsonicException(70, "No such artist")
+        return (artist(a) ?: throw SubsonicException(70, "No such artist")) to a.obj()?.get("album").arr().orEmpty().mapNotNull { album(it) }
+    }
+
+    /** The server's own search, which on oasis reaches YouTube Music too. */
+    fun search(query: String, count: Int = 30): Triple<List<SubSong>, List<SubAlbum>, List<SubArtist>> {
+        val r = call("search3", listOf("query" to query, "songCount" to "$count", "albumCount" to "$count", "artistCount" to "$count"))["searchResult3"].obj()
+        return Triple(r?.get("song").arr().orEmpty().mapNotNull { song(it) }, r?.get("album").arr().orEmpty().mapNotNull { album(it) }, r?.get("artist").arr().orEmpty().mapNotNull { artist(it) })
+    }
 
     fun song(id: String) = call("getSong", listOf("id" to id))["song"]?.let { song(it) } ?: throw SubsonicException(70, "No such song")
 

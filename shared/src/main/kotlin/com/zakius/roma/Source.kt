@@ -45,7 +45,7 @@ interface Source {
     val searchIsLocal: Boolean
     suspend fun suggestions(query: String): List<String>
     /** [filter]: Songs, Albums, Artists, Playlists, as Search lists them. [asTyped]: YouTube's params without correction. */
-    suspend fun search(query: String, filter: Int, asTyped: String?): Found
+    suspend fun search(query: String, filter: Int, asTyped: String?, partial: suspend (Found) -> Unit): Found
 
     /** The Library tab has something to show (YouTube Music: signed in). */
     val libraryReady: Boolean
@@ -124,7 +124,7 @@ object YouTubeMusic : Source {
     override val searchIsLocal = false
     override suspend fun suggestions(query: String) = YouTube.searchSuggestions(query).getOrNull()?.queries.orEmpty()
 
-    override suspend fun search(query: String, filter: Int, asTyped: String?): Found {
+    override suspend fun search(query: String, filter: Int, asTyped: String?, partial: suspend (Found) -> Unit): Found {
         val r = YouTube.search(query, asTyped?.let { YouTube.SearchFilter(it) } ?: FILTERS[filter]).getOrThrow()
         val items = r.items
             .filter { it !is SongItem || !it.isVideoSong || filter != 0 }

@@ -766,20 +766,35 @@ private fun Mixes(mixes: List<Item>?, read: Boolean) {
     }
 }
 
-/** Home's pinned row on a source without personal mixes: its starred songs, and the whole library at random. */
+/**
+ * Home's pinned tiles on a server: its mixes (oasis publishes YouTube Music's personal mixes as playlists), then the
+ * starred songs and the whole library at random, three to a row as the YouTube Music mixes are.
+ */
 @Composable
 private fun LibraryTiles() {
-    val (_, _, side) = mixGrid(screenSizeDp().width, 0)
+    val mixes = SubsonicSource.mixTiles
+    val (cols, _, side) = mixGrid(screenSizeDp().width, mixes.size)
+    val tint = MaterialTheme.colorScheme.onSecondaryContainer
     @Composable
-    fun Tile(title: String, id: String, icon: @Composable () -> Unit) = Column(Modifier.width(side).clickable { Playback.playMix(id, title = title); Nav.tab = TAB_PLAYER }) {
-        Box(Modifier.size(side).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) { icon() }
+    fun Tile(title: String, id: String, picture: @Composable () -> Unit) = Column(Modifier.width(side).clickable { Playback.playMix(id, title = title); Nav.tab = TAB_PLAYER }) {
+        picture()
         Spacer(Modifier.height(4.dp))
         Text(title, style = MaterialTheme.typography.bodySmall, maxLines = 3)
     }
-    val tint = MaterialTheme.colorScheme.onSecondaryContainer
-    Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Tile("Starred", SubsonicSource.STARRED) { Icon(Icons.Filled.ThumbUp, null, Modifier.size(side / 3), tint = tint) }
-        Tile("Shuffle all", SubsonicSource.SHUFFLE) { Icon(androidx.compose.ui.res.painterResource(R.drawable.shuffle), null, Modifier.size(side / 3), tint = tint) }
+    @Composable
+    fun Drawn(icon: @Composable () -> Unit) = Box(Modifier.size(side).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) { icon() }
+    // (title, id, the mix's card); Starred and Shuffle all are drawn.
+    val tiles = mixes.map { Triple(Store.shown(it.title), it.id, it) } + listOf(Triple("Starred", SubsonicSource.STARRED, null), Triple("Shuffle all", SubsonicSource.SHUFFLE, null))
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (line in tiles.chunked(cols)) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            for ((title, id, m) in line) Tile(title, id) {
+                if (m != null) Thumb(shownThumb(m.thumb, side), side, Modifier.size(side).clip(RoundedCornerShape(8.dp)))
+                else Drawn {
+                    if (id == SubsonicSource.STARRED) Icon(Icons.Filled.ThumbUp, null, Modifier.size(side / 3), tint = tint)
+                    else Icon(androidx.compose.ui.res.painterResource(R.drawable.shuffle), null, Modifier.size(side / 3), tint = tint)
+                }
+            }
+        }
     }
 }
 
@@ -844,7 +859,7 @@ fun SearchScreen() {
                 items(local) { s -> SongRow(s, onMenu = { menuFor = s }) { Playback.play(listOf(s)); Nav.tab = TAB_PLAYER } }
                 item { Header(source.name) }
             }
-            Loader(listOf(submitted, filter, asTyped).toString(), { source.search(submitted, filter, asTyped) }, loading = {
+            Loader(listOf(submitted, filter, asTyped).toString(), { partial -> source.search(submitted, filter, asTyped, partial) }, loading = {
                 LazyColumn(Modifier.fillMaxSize()) {
                     localRows()
                     item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
