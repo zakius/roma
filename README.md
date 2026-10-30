@@ -40,7 +40,7 @@ The desktop app shares the Android app's screens and logic (`shared/`, see [docs
 tools/linux-packages.sh                     # dist/roma_<version>_amd64.deb and dist/roma-<version>-1.x86_64.rpm
 ```
 
-Its first build also builds roma-aac (`tools/build-ffmpeg.sh`), the small ffmpeg that decodes the few songs YouTube has only in AAC.
+Its first build also builds roma-aac (`tools/build-ffmpeg.sh`, needs musl-gcc: Debian's and Ubuntu's `musl-tools`), the small ffmpeg that decodes the few songs YouTube has only in AAC.
 
 ## Install
 
