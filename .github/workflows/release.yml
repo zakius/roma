@@ -103,7 +103,7 @@ jobs:
         with: { name: desktop-mapping, path: desktop/build/proguard-mapping.txt }
 
   # Windows: the full .msi (its own Java) and the small .msi and .zip, which find Java 21+ or download it once
-  # (tools/windows-small.sh). Each starts once with --check. Temurin 21, not 24+: those ship no jmods, which ProGuard
+  # (tools/windows-packages.sh). Each starts once with --check. Temurin 21, not 24+: those ship no jmods, which ProGuard
   # and jlink read.
   desktop-windows:
     needs: desktop-linux
@@ -123,16 +123,13 @@ jobs:
           $p = Start-Process desktop/build/compose/binaries/main-release/app/roma/roma.exe -ArgumentList --check -Wait -PassThru -RedirectStandardOutput check.txt -RedirectStandardError check-err.txt
           Get-Content check.txt, check-err.txt
           exit $p.ExitCode
-      - run: tools/windows-small.sh
+      - run: tools/windows-packages.sh
       - name: Check the small build
         shell: pwsh
         run: |
           $p = Start-Process desktop/build/windows-small/roma/roma.exe -ArgumentList --check -Wait -PassThru -RedirectStandardOutput check.txt -RedirectStandardError check-err.txt
           Get-Content check.txt, check-err.txt
           exit $p.ExitCode
-      - run: |
-          v=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
-          cp desktop/build/compose/binaries/main-release/msi/roma-*.msi "dist/roma-$v-x64-full.msi"
       - uses: actions/upload-artifact@v7
         with: { name: desktop-windows, path: "dist/roma*" }
 

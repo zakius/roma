@@ -1,7 +1,7 @@
 // roma.exe of the small Windows build, which carries no Java runtime (finimal's launcher, Java only). It starts the
 // app on the newest installed Java 21 or later; without one it downloads Eclipse Temurin's JRE once to
 // %LOCALAPPDATA%\roma\java (not runtime: the full build installs its own there), checked against the SHA-256 pinned
-// at build time (Pins.cs, from tools/windows-small.sh).
+// at build time (Pins.cs, from tools/windows-packages.sh).
 // The Java options come from app\roma.cfg, which jpackage writes for the full build's own launcher.
 // C# 5: the compiler that comes with .NET Framework 4, which every Windows 10 and 11 has, builds it.
 using System;

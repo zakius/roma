@@ -145,8 +145,9 @@ compose.desktop {
         }
         nativeDistributions {
             appResourcesRootDir.set(appResources)
-            // Linux ships as a .deb and .rpm on the distribution's Java (tools/linux-packages.sh); Windows as this
-            // .msi with its own Java ("full") and a small one that finds or downloads Java (tools/windows-small.sh).
+            // Linux ships as a .deb and .rpm on the distribution's Java (tools/linux-packages.sh); Windows as an .msi
+            // with its own Java ("full") and a small one that finds or downloads Java (tools/windows-packages.sh, from
+            // the release app image; this .msi target only brings the WiX toolset).
             targetFormats(TargetFormat.Msi)
             packageName = "roma"
             packageVersion = versionName.split('.').let { (it + listOf("0", "0")).take(3) }.joinToString(".")
