@@ -379,12 +379,13 @@ object SubsonicSource : Source {
     // A starred album or artist is in the library; on oasis that also has Lidarr fetch what's missing.
     override fun saved(p: Page) = runCatching {
         val id = SubsonicIds.decode(p.id)
-        val (starred, wanted) = when (p.kind) {
-            "album" -> need().album(id).first.let { it.starred to it.wanted }
-            "artist" -> need().artist(id).first.let { it.starred to it.wanted }
+        val (starred, wanted, why) = when (p.kind) {
+            "album" -> need().album(id).first.let { Triple(it.starred, it.wanted, it.wantedError) }
+            "artist" -> need().artist(id).first.let { Triple(it.starred, it.wanted, it.wantedError) }
             else -> return null
         }
-        InLibrary(starred, when (wanted) { "wanted" -> "Lidarr is getting it"; "downloading" -> "Downloading"; "failed" -> "Lidarr couldn't find it"; else -> null })
+        val state = when (wanted) { "wanted" -> "Lidarr is getting it"; "downloading" -> "Downloading"; "failed" -> "Lidarr couldn't find it"; else -> null }
+        InLibrary(starred, state?.let { listOfNotNull(it, why).joinToString(": ") })
     }.getOrNull()
     override fun save(p: Page, on: Boolean) = runCatching { need().star(SubsonicIds.decode(p.id), on, if (p.kind == "album") "albumId" else "artistId") }.isSuccess
 
