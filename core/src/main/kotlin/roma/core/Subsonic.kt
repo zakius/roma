@@ -60,7 +60,7 @@ class SubSong(
 )
 
 @Serializable
-class SubAlbum(val id: String, val name: String, val artist: String = "", val artistId: String? = null, val year: Int = 0, val coverArt: String? = null, val songCount: Int = 0, val created: String? = null, val starred: Boolean = false, val wanted: String? = null)
+class SubAlbum(val id: String, val name: String, val artist: String = "", val artistId: String? = null, val year: Int = 0, val coverArt: String? = null, val songCount: Int = 0, val created: String? = null, val starred: Boolean = false, val wanted: String? = null, val releaseType: String? = null)
 
 /** [wanted]: oasis's "oasisWanted", how Lidarr is getting a starred album or artist: wanted, downloading or failed. */
 @Serializable
@@ -179,6 +179,9 @@ class SubsonicClient(url: String, val user: String, private val password: String
     }
 
     /** The server's own search, which on oasis reaches YouTube Music too. */
+    /** The artist's top songs (oasis: the most played library songs, then YouTube Music's list). */
+    fun topSongs(artist: String, count: Int = 50) = call("getTopSongs", listOf("artist" to artist, "count" to "$count"))["topSongs"].obj()?.get("song").arr().orEmpty().mapNotNull { song(it) }
+
     fun search(query: String, count: Int = 30): Triple<List<SubSong>, List<SubAlbum>, List<SubArtist>> {
         val r = call("search3", listOf("query" to query, "songCount" to "$count", "albumCount" to "$count", "artistCount" to "$count"))["searchResult3"].obj()
         return Triple(r?.get("song").arr().orEmpty().mapNotNull { song(it) }, r?.get("album").arr().orEmpty().mapNotNull { album(it) }, r?.get("artist").arr().orEmpty().mapNotNull { artist(it) })
@@ -238,7 +241,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
 
         fun album(e: JsonElement): SubAlbum? {
             val o = e.obj() ?: return null
-            return SubAlbum(o["id"].str() ?: return null, o["name"].str() ?: o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["year"].int(), o["coverArt"].str(), o["songCount"].int(), o["created"].str(), o["starred"] != null, o["oasisWanted"].str())
+            return SubAlbum(o["id"].str() ?: return null, o["name"].str() ?: o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["year"].int(), o["coverArt"].str(), o["songCount"].int(), o["created"].str(), o["starred"] != null, o["oasisWanted"].str(), o["releaseTypes"].arr()?.firstOrNull().str())
         }
 
         fun artist(e: JsonElement): SubArtist? {

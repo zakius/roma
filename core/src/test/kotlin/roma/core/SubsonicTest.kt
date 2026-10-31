@@ -38,7 +38,8 @@ class SubsonicTest {
                 "getLyricsBySongId" -> """"lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"plain"}]},{"synced":true,"offset":-100,"line":[{"start":1000,"value":"沈むように"},{"start":4000,"value":"溶けてゆくように"}]}]}"""
                 "getSong" -> """"song":{"id":"tr-8","title":"Lyra","artist":"Breaking Benjamin","youtubeId":"RSqEs80gkr4","suffix":"flac","bitRate":1411,"path":"Breaking Benjamin/Lyra.flac"}"""
                 "getAlbum" -> """"album":{"id":"al-9","name":"STRAY SHEEP","starred":"2026-10-31T01:00:00Z","oasisWanted":"downloading","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
-                "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"}]}"""
+                "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"},{"id":"yt-al-1","name":"Lemon","year":2018,"releaseTypes":["Single"]}]}"""
+                "getTopSongs" -> """"topSongs":{"song":[${songs[2]}]}"""
                 "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
                 "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin"},{"id":"2","name":"Liked Music","owner":"YouTube Music"},""" +
                     """{"id":"3","name":"Replay Mix","owner":"YouTube Music","oasisMix":true,"youtubeId":"RDTMAK5uy_nilrsVWxrKskY0ZUpVZ3zpB0u4LwWTVJ4"},""" +
@@ -150,7 +151,10 @@ class SubsonicTest {
         assertEquals(listOf("tr-1", "tr-2"), tracks.map { it.id })
         val (artist, albums) = c.artist("ar-9")
         assertEquals("米津玄師", artist.name)
-        assertEquals(listOf("al-9"), albums.map { it.id })
+        assertEquals(listOf("al-9", "yt-al-1"), albums.map { it.id })
+        assertEquals(listOf(null, "Single"), albums.map { it.releaseType })
+        assertEquals(listOf("tr-3"), c.topSongs("米津玄師").map { it.id })
+        assertEquals("米津玄師", calls.last().second.toMap()["artist"])
         assertEquals(listOf("tr-5"), c.similarSongs("tr-1").map { it.id })
         assertEquals("tr-1", calls.last().second.toMap()["id"])
     }

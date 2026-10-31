@@ -322,17 +322,25 @@ object SubsonicSource : Source {
                 Detail(r.text(pl.name), pl.owner, songs.firstOrNull()?.thumb, songs, emptyList())
             }
             else -> {
-                if (p.id !in l.artistById && l.artistSongs[p.id].isNullOrEmpty()) {
-                    val (a, subs) = need().artist(SubsonicIds.decode(p.id))
-                    val albums = subs.map { l.albumById[SubsonicIds.encode(it.id)] ?: r.item(it) }
-                    val item = r.item(a)
-                    return Detail(item.title, "${albums.size} album" + if (albums.size == 1) "" else "s", item.thumb ?: albums.firstOrNull()?.thumb, emptyList(), albums)
-                }
+                fun count(n: Int, what: String) = "$n $what" + if (n == 1) "" else "s"
+                // The library's own first, at once; then the server's page, which on oasis holds the whole YouTube Music
+                // discography and top songs. Offline the library's stays.
                 val a = l.artistById[p.id]
-                val albums = l.index.albums.filter { it.artistId?.let(SubsonicIds::encode) == p.id }.mapNotNull { l.albumById[SubsonicIds.encode(it.id)] }
                 val songs = l.artistSongs[p.id].orEmpty()
-                val name = a?.title ?: songs.firstOrNull()?.artists?.firstOrNull()?.name ?: roma.core.Text("", "")
-                Detail(name, listOfNotNull(albums.size.takeIf { it > 0 }?.let { "$it album" + if (it == 1) "" else "s" }, "${songs.size} songs").joinToString(" · "), a?.thumb ?: albums.firstOrNull()?.thumb, songs, albums)
+                val albums = l.index.albums.filter { it.artistId?.let(SubsonicIds::encode) == p.id }.mapNotNull { l.albumById[SubsonicIds.encode(it.id)] }
+                val name = a?.title ?: songs.firstOrNull()?.artists?.firstOrNull()?.name
+                val local = name?.let { Detail(it, listOfNotNull(count(albums.size, "album").takeIf { albums.isNotEmpty() }, count(songs.size, "song")).joinToString(" · "), a?.thumb ?: albums.firstOrNull()?.thumb, songs, albums) }
+                local?.let { partial(it) }
+                val server = runCatching { need().artist(SubsonicIds.decode(p.id)) }.getOrElse { if (local != null) return local else throw it }
+                val (sa, subs) = server
+                // A release the library doesn't hold is labelled as YouTube Music does: Single · 2021.
+                val all = subs.map { s -> l.albumById[SubsonicIds.encode(s.id)] ?: r.item(s).let { i ->
+                    val label = listOfNotNull(s.releaseType?.replace("Ep", "EP"), s.year.takeIf { it > 0 }?.toString()).joinToString(" · ")
+                    if (label.isEmpty()) i else Item(i.kind, i.id, i.title, roma.core.Text(label, label), i.thumb)
+                } }
+                val top = runCatching { need().topSongs(sa.name) }.getOrDefault(emptyList()).map { l.byId[SubsonicIds.encode(it.id)] ?: r.song(it) }
+                val allSongs = songs + top.filter { t -> songs.none { it.id == t.id } }
+                Detail(local?.title ?: r.item(sa).title, count(all.size, "release"), local?.thumb ?: r.item(sa).thumb ?: all.firstOrNull()?.thumb, allSongs, all)
             }
         }
     }
