@@ -81,6 +81,8 @@ interface Source {
     val hasComments: Boolean
     /** Blocking. A link to the song for Share; null when there's none. */
     fun shareUrl(s: Song): String?
+    /** Blocking. Where the song's audio comes from, shown in its menu for debugging; null when there's nothing to tell. */
+    fun origin(s: Song): String? = null
 
     /** roma scrobbles this source's songs to Last.fm itself ([roma.core.scrobblesToLastFm]). */
     val lastFm: Boolean

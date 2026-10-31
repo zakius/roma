@@ -381,8 +381,19 @@ object SubsonicSource : Source {
     private val ownLyrics = SubsonicLyrics(::need)
     override val lyrics: LyricsProvider? get() = ownLyrics.takeIf { library?.index?.extensions?.contains("songLyrics") == true }
     override val hasComments = false
+    // The song menu asks shareUrl, then origin: one getSong serves both.
+    private var asked: SubSong? = null
+    private fun asked(s: Song) = runCatching { asked?.takeIf { it.id == SubsonicIds.decode(s.id) } ?: need().song(SubsonicIds.decode(s.id)).also { asked = it } }.getOrNull()
+
     // oasis knows the song on YouTube Music; getSong looks a local file up the first time it's asked.
-    override fun shareUrl(s: Song) = runCatching { need().song(SubsonicIds.decode(s.id)).youtubeId }.getOrNull()?.let(YouTubeMusic::link)
+    override fun shareUrl(s: Song) = asked(s)?.youtubeId?.let(YouTubeMusic::link)
+
+    // oasis: a file has a path; songs streamed from YouTube have none and ids starting "yt-".
+    override fun origin(s: Song) = asked(s)?.let { a ->
+        val format = listOfNotNull(a.suffix?.uppercase(), a.bitRate.takeIf { it > 0 }?.let { "$it kbps" }).joinToString(" ")
+        val from = if (a.path != null) "File ${a.path}" else if (a.id.startsWith("yt-")) "Streamed from YouTube" else "From the server"
+        listOf(from, format).filter { it.isNotEmpty() }.joinToString(" · ")
+    }
 
     // ---- Scrobbling: see docs/subsonic.md ----
 

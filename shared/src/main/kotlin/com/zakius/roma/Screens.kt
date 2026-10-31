@@ -203,6 +203,8 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     val inQueue = queueIndex != null && queueIndex != Playback.player.currentMediaItemIndex
     val liked = s.id in Playback.liked
     LaunchedEffect(s.id) { Playback.checkLike(s) }
+    val about by produceState<Pair<String?, String?>>(null to null, s.id) { value = withContext(Dispatchers.IO) { Sources.of(s.id).let { it.shareUrl(s) to it.origin(s) } } }
+    val (link, origin) = about
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Fully open at once: half open, the bans at the bottom would need a drag first.
     ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -210,6 +212,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             Column(Modifier.padding(horizontal = 24.dp)) {
                 Name(s.title, "both", MaterialTheme.typography.titleMedium)
                 Text(s.artistLatin, style = MaterialTheme.typography.bodySmall)
+                origin?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
@@ -219,7 +222,6 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             MenuItem(if (liked) "Unlike" else "Like", Sources.of(s.id).canLike) { Playback.toggleLike(s); onClose() }
             MenuItem("Go to artist", s.firstArtistId != null) { Nav.open(Page("artist", s.firstArtistId!!)); onClose() }
             MenuItem("Go to album", s.album?.id != null) { Nav.open(Page("album", s.album!!.id!!)); onClose() }
-            val link by produceState<String?>(null, s.id) { value = withContext(Dispatchers.IO) { Sources.of(s.id).shareUrl(s) } }
             MenuItem("Share…", link != null) {
                 share(link!!, "${s.title.latin} · ${s.artistLatin}")
                 onClose()
