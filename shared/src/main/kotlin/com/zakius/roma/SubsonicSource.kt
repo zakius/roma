@@ -19,6 +19,7 @@ import roma.core.ScrobbleQueue
 import roma.core.Song
 import roma.core.SubSong
 import roma.core.SubsonicClient
+import roma.core.SubsonicException
 import roma.core.SubsonicIds
 import roma.core.SubsonicIndex
 import roma.core.SubsonicLyrics
@@ -416,6 +417,16 @@ object SubsonicSource : Source {
     /** Sends the plays that couldn't go yet, 50 to a call, each with its start time in ms. */
     private fun flushPlays() {
         val c = client ?: return
-        runCatching { plays.flush { batch -> c.scrobble(batch.map { SubsonicIds.decode(it.id!!) }, batch.map { it.timestamp * 1000 }, submission = true) } }
+        fun send(batch: List<Scrobble>) = c.scrobble(batch.map { SubsonicIds.decode(it.id!!) }, batch.map { it.timestamp * 1000 }, submission = true)
+        // A song the server no longer has (oasis swaps a stream for a local copy) fails the whole batch, which would stay
+        // queued for good: then the plays go one by one, and the missing songs' are dropped.
+        runCatching {
+            plays.flush { batch ->
+                try { send(batch) } catch (e: SubsonicException) {
+                    if (e.code != 70) throw e
+                    batch.forEach { one -> try { send(listOf(one)) } catch (e: SubsonicException) { if (e.code != 70) throw e } }
+                }
+            }
+        }
     }
 }
