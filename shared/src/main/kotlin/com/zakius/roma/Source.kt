@@ -70,6 +70,10 @@ interface Source {
     fun like(id: String, like: Boolean): Boolean
     /** Blocking. Null when the server couldn't say. */
     fun liked(id: String): Boolean?
+    /** Blocking. Whether an album or artist page is in the library; null where the source can't add pages. */
+    fun saved(p: Page): Boolean? = null
+    /** Blocking. Adds the page to the library or takes it out; whether the server took it. */
+    fun save(p: Page, on: Boolean) = false
 
     /** Blocking, on the player's loader thread: the song's stream URL. */
     fun streamUrl(id: String, full: Boolean): String

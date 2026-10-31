@@ -951,7 +951,10 @@ fun PageScreen(p: Page) {
                     Column(Modifier.weight(1f)) {
                         Name(d.title, Store.listMode, MaterialTheme.typography.titleLarge)
                         if (d.subtitle.isNotBlank()) Text(d.subtitle, style = MaterialTheme.typography.bodySmall)
-                        if (d.songs.isNotEmpty()) TextButton(onClick = { playList(p, d.songs); Nav.tab = TAB_PLAYER }) { Text("Play") }
+                        Row {
+                            if (d.songs.isNotEmpty()) TextButton(onClick = { playList(p, d.songs); Nav.tab = TAB_PLAYER }) { Text("Play") }
+                            SaveButton(p)
+                        }
                     }
                 }
             }
@@ -965,6 +968,19 @@ fun PageScreen(p: Page) {
         }
     }
     menuFor?.let { SongMenu(it, null) { menuFor = null } }
+}
+
+/** Add to library / Remove from library on a page its source can save; nothing until the source has said. */
+@Composable
+private fun SaveButton(p: Page) {
+    val scope = rememberCoroutineScope()
+    var saved by remember(p) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(p) { saved = withContext(Dispatchers.IO) { Sources.of(p.id).saved(p) } }
+    val now = saved ?: return
+    TextButton(onClick = {
+        saved = !now
+        scope.launch { if (!withContext(Dispatchers.IO) { Sources.of(p.id).save(p, !now) }) { saved = now; toast("Couldn't reach the server") } }
+    }) { Text(if (now) "Remove from library" else "Add to library") }
 }
 
 /** Generated playlists (mixes, editorial RD… lists) page on as they play; anything else plays what the page holds. */

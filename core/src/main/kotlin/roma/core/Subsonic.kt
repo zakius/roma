@@ -185,7 +185,8 @@ class SubsonicClient(url: String, val user: String, private val password: String
 
     fun song(id: String) = call("getSong", listOf("id" to id))["song"]?.let { song(it) } ?: throw SubsonicException(70, "No such song")
 
-    fun star(id: String, on: Boolean) { call(if (on) "star" else "unstar", listOf("id" to id)) }
+    /** [param]: "id" for a song, "albumId" or "artistId". */
+    fun star(id: String, on: Boolean, param: String = "id") { call(if (on) "star" else "unstar", listOf(param to id)) }
 
     /** OpenSubsonic getLyricsBySongId: the synced lyrics if the server has any, else its plain ones; null for none. */
     fun lyrics(id: String, source: String): Lyrics? {
