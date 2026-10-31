@@ -60,10 +60,11 @@ class SubSong(
 )
 
 @Serializable
-class SubAlbum(val id: String, val name: String, val artist: String = "", val artistId: String? = null, val year: Int = 0, val coverArt: String? = null, val songCount: Int = 0, val created: String? = null, val starred: Boolean = false)
+class SubAlbum(val id: String, val name: String, val artist: String = "", val artistId: String? = null, val year: Int = 0, val coverArt: String? = null, val songCount: Int = 0, val created: String? = null, val starred: Boolean = false, val wanted: String? = null)
 
+/** [wanted]: oasis's "oasisWanted", how Lidarr is getting a starred album or artist: wanted, downloading or failed. */
 @Serializable
-class SubArtist(val id: String, val name: String, val coverArt: String? = null, val albumCount: Int = 0, val starred: Boolean = false)
+class SubArtist(val id: String, val name: String, val coverArt: String? = null, val albumCount: Int = 0, val starred: Boolean = false, val wanted: String? = null)
 
 /** [mix]: one of the account's personal mixes (oasis's "oasisMix"); [youtubeId]: its YouTube playlist id, when the server gives it. */
 @Serializable
@@ -237,12 +238,12 @@ class SubsonicClient(url: String, val user: String, private val password: String
 
         fun album(e: JsonElement): SubAlbum? {
             val o = e.obj() ?: return null
-            return SubAlbum(o["id"].str() ?: return null, o["name"].str() ?: o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["year"].int(), o["coverArt"].str(), o["songCount"].int(), o["created"].str(), o["starred"] != null)
+            return SubAlbum(o["id"].str() ?: return null, o["name"].str() ?: o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["year"].int(), o["coverArt"].str(), o["songCount"].int(), o["created"].str(), o["starred"] != null, o["oasisWanted"].str())
         }
 
         fun artist(e: JsonElement): SubArtist? {
             val o = e.obj() ?: return null
-            return SubArtist(o["id"].str() ?: return null, o["name"].str() ?: "", o["coverArt"].str(), o["albumCount"].int(), o["starred"] != null)
+            return SubArtist(o["id"].str() ?: return null, o["name"].str() ?: "", o["coverArt"].str(), o["albumCount"].int(), o["starred"] != null, o["oasisWanted"].str())
         }
 
         private fun JsonElement?.int() = str()?.toIntOrNull() ?: 0

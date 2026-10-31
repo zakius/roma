@@ -71,7 +71,7 @@ interface Source {
     /** Blocking. Null when the server couldn't say. */
     fun liked(id: String): Boolean?
     /** Blocking. Whether an album or artist page is in the library; null where the source can't add pages. */
-    fun saved(p: Page): Boolean? = null
+    fun saved(p: Page): InLibrary? = null
     /** Blocking. Adds the page to the library or takes it out; whether the server took it. */
     fun save(p: Page, on: Boolean) = false
 
@@ -100,6 +100,9 @@ interface Source {
 // start "yt-"; every other server song is taken as a file.
 const val SHOW_ORIGIN = true
 fun originTag(s: Song) = if (!SHOW_ORIGIN || !roma.core.SubsonicIds.of(s.id)) null else if (s.id.startsWith("s.yt-")) "[YT]" else "[FILE]"
+
+/** [note]: how getting it is going, when the server fetches what's added (oasis through Lidarr). */
+class InLibrary(val saved: Boolean, val note: String? = null)
 
 object Sources {
     /** The backend the screens browse. */
@@ -232,7 +235,7 @@ object YouTubeMusic : Source {
     // An album is saved through its audio playlist, an artist by subscribing: the page says which and its state.
     private val libraryTargets = java.util.concurrent.ConcurrentHashMap<String, String>()
     override fun saved(p: Page) = if (!Store.signedIn || p.kind !in setOf("album", "artist")) null else
-        kotlinx.coroutines.runBlocking { YouTube.libraryState(p.id).getOrNull() }?.let { (saved, target) -> libraryTargets[p.id] = target; saved }
+        kotlinx.coroutines.runBlocking { YouTube.libraryState(p.id).getOrNull() }?.let { (saved, target) -> libraryTargets[p.id] = target; InLibrary(saved) }
     override fun save(p: Page, on: Boolean) = libraryTargets[p.id]?.let { kotlinx.coroutines.runBlocking { YouTube.saveToLibrary(it, on).isSuccess } } ?: false
 
     override fun streamUrl(id: String, full: Boolean): String {

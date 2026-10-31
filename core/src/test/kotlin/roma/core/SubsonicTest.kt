@@ -37,7 +37,7 @@ class SubsonicTest {
                 "getArtists" -> """"artists":{"index":[{"name":"Y","artist":[{"id":"ar-1","name":"YOASOBI","albumCount":1}]}]}"""
                 "getLyricsBySongId" -> """"lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"plain"}]},{"synced":true,"offset":-100,"line":[{"start":1000,"value":"沈むように"},{"start":4000,"value":"溶けてゆくように"}]}]}"""
                 "getSong" -> """"song":{"id":"tr-8","title":"Lyra","artist":"Breaking Benjamin","youtubeId":"RSqEs80gkr4","suffix":"flac","bitRate":1411,"path":"Breaking Benjamin/Lyra.flac"}"""
-                "getAlbum" -> """"album":{"id":"al-9","name":"STRAY SHEEP","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
+                "getAlbum" -> """"album":{"id":"al-9","name":"STRAY SHEEP","starred":"2026-10-31T01:00:00Z","oasisWanted":"downloading","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
                 "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"}]}"""
                 "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
                 "getPlaylists" -> """"playlists":{"playlist":[{"id":"1","name":"Radio","owner":"admin"},{"id":"2","name":"Liked Music","owner":"YouTube Music"},""" +
@@ -145,6 +145,8 @@ class SubsonicTest {
         val c = SubsonicClient(url, "admin", "secret")
         val (album, tracks) = c.album("al-9")
         assertEquals("STRAY SHEEP", album.name)
+        assertTrue(album.starred)
+        assertEquals("downloading", album.wanted)
         assertEquals(listOf("tr-1", "tr-2"), tracks.map { it.id })
         val (artist, albums) = c.artist("ar-9")
         assertEquals("米津玄師", artist.name)

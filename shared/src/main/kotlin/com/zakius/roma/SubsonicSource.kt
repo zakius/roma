@@ -370,7 +370,12 @@ object SubsonicSource : Source {
     // A starred album or artist is in the library; on oasis that also has Lidarr fetch what's missing.
     override fun saved(p: Page) = runCatching {
         val id = SubsonicIds.decode(p.id)
-        when (p.kind) { "album" -> need().album(id).first.starred; "artist" -> need().artist(id).first.starred; else -> null }
+        val (starred, wanted) = when (p.kind) {
+            "album" -> need().album(id).first.let { it.starred to it.wanted }
+            "artist" -> need().artist(id).first.let { it.starred to it.wanted }
+            else -> return null
+        }
+        InLibrary(starred, when (wanted) { "wanted" -> "Lidarr is getting it"; "downloading" -> "Downloading"; "failed" -> "Lidarr couldn't find it"; else -> null })
     }.getOrNull()
     override fun save(p: Page, on: Boolean) = runCatching { need().star(SubsonicIds.decode(p.id), on, if (p.kind == "album") "albumId" else "artistId") }.isSuccess
 
