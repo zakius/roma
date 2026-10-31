@@ -347,7 +347,8 @@ object SubsonicSource : Source {
         val l = runCatching { lib() }.getOrNull() ?: return null
         val similar = runCatching { need().similarSongs(SubsonicIds.decode(from ?: seed.id)) }.getOrDefault(emptyList())
             .map { l.byId[SubsonicIds.encode(it.id)] ?: Store.romanizer.song(it) }
-        if (similar.isEmpty()) return SongPage(l.songs.shuffled().take(25), "more")
+        // oasis always finds similar songs when there are any; other servers often have no recommendations at all.
+        if (similar.isEmpty()) return if (serverType == "oasis") SongPage(emptyList(), null) else SongPage(l.songs.shuffled().take(25), "more")
         return SongPage(similar, similar.last().id)
     }
 
