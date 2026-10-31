@@ -96,10 +96,12 @@ interface Source {
     fun played(s: roma.core.Scrobble)
 }
 
-// Debugging aid, to remove: a server song's tag on song rows and the player. oasis ids of songs streamed from YouTube
-// start "yt-"; every other server song is taken as a file.
-const val SHOW_ORIGIN = true
-fun originTag(s: Song) = if (!SHOW_ORIGIN || !roma.core.SubsonicIds.of(s.id)) null else if (s.id.startsWith("s.yt-")) "[YT]" else "[FILE]"
+/** Debug builds show where server songs come from and how Lidarr gets what's added; release builds only whether it's in the library. */
+var showDetails = false
+
+// A server song's tag on song rows and the player. oasis ids of songs streamed from YouTube start "yt-"; every other
+// server song is taken as a file.
+fun originTag(s: Song) = if (!showDetails || !roma.core.SubsonicIds.of(s.id)) null else if (s.id.startsWith("s.yt-")) "[YT]" else "[FILE]"
 
 /** [note]: how getting it is going, when the server fetches what's added (oasis through Lidarr). */
 class InLibrary(val saved: Boolean, val note: String? = null)

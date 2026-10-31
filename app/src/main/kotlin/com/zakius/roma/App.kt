@@ -37,6 +37,7 @@ class App : Application() {
         if (fontWait) thread(name = "fonts") { superOnCreate() } else super.onCreate()
         appContext = this
         Store.init(getSharedPreferences("roma", MODE_PRIVATE), filesDir, cacheDir)
+        showDetails = BuildConfig.DEBUG || BuildConfig.SHOW_DETAILS
         Images.init(cacheDir, picMemory())
         if (Store.prefs.getInt("ui.tab", TAB_HOME) == TAB_HOME) Home.preload()
         Dictionary.init(this)

@@ -203,7 +203,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
     val inQueue = queueIndex != null && queueIndex != Playback.player.currentMediaItemIndex
     val liked = s.id in Playback.liked
     LaunchedEffect(s.id) { Playback.checkLike(s) }
-    val about by produceState<Pair<String?, String?>>(null to null, s.id) { value = withContext(Dispatchers.IO) { Sources.of(s.id).let { it.shareUrl(s) to it.origin(s) } } }
+    val about by produceState<Pair<String?, String?>>(null to null, s.id) { value = withContext(Dispatchers.IO) { Sources.of(s.id).let { it.shareUrl(s) to it.origin(s).takeIf { showDetails } } } }
     val (link, origin) = about
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Fully open at once: half open, the bans at the bottom would need a drag first.
@@ -987,7 +987,7 @@ private fun PageButtons(p: Page, d: Detail) {
             }) { Text(if (now.saved) "Remove from library" else "Add to library") }
         }
     }
-    state?.note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    state?.note?.takeIf { showDetails }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 }
 
 /** Generated playlists (mixes, editorial RD… lists) page on as they play; anything else plays what the page holds. */

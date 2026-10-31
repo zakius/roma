@@ -23,6 +23,8 @@ android {
         versionName = "0.1.57"
         // Testing only: `-Proma.refuseVisionOs=true` acts as if YouTube refused the VISIONOS client (Streams.refuseVisionOs),
         // so songs play through InnerTubeX's other clients. Never set for a release.
+        // `-Proma.details=true`: a release build that shows the debug details too (song origins, Lidarr's progress).
+        buildConfigField("boolean", "SHOW_DETAILS", (findProperty("roma.details") == "true").toString())
         buildConfigField("boolean", "REFUSE_VISIONOS", (findProperty("roma.refuseVisionOs") == "true").toString())
         // The dictionary app, gzipped. `-Proma.dictBase=<url>` points a build at another folder holding it.
         val dictBase = (findProperty("roma.dictBase") as String?) ?: "https://github.com/zakius/roma/releases/download/dict-$dictVersion"
