@@ -150,7 +150,7 @@ fun SongRow(s: Song, highlight: Boolean = false, extra: String? = null, onMenu: 
         Column(Modifier.weight(1f)) {
             val style = if (highlight) MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) else MaterialTheme.typography.bodyLarge
             Name(s.title, Store.listMode, style)
-            val sub = s.artistLatin + (extra?.let { " · $it" } ?: "")
+            val sub = listOfNotNull(originTag(s), s.artistLatin).joinToString(" ") + (extra?.let { " · $it" } ?: "")
             Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         IconButton(onClick = onMenu) { Icon(Icons.Default.MoreVert, "Song menu") }

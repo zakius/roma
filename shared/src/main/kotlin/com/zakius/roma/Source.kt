@@ -92,6 +92,11 @@ interface Source {
     fun played(s: roma.core.Scrobble)
 }
 
+// Debugging aid, to remove: a server song's tag on song rows and the player. oasis ids of songs streamed from YouTube
+// start "yt-"; every other server song is taken as a file.
+const val SHOW_ORIGIN = true
+fun originTag(s: Song) = if (!SHOW_ORIGIN || !roma.core.SubsonicIds.of(s.id)) null else if (s.id.startsWith("s.yt-")) "[YT]" else "[FILE]"
+
 object Sources {
     /** The backend the screens browse. */
     val chosen: Source get() = if (Store.str("source", "ytm") == "subsonic") SubsonicSource else YouTubeMusic
