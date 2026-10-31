@@ -381,7 +381,8 @@ object SubsonicSource : Source {
     private val ownLyrics = SubsonicLyrics(::need)
     override val lyrics: LyricsProvider? get() = ownLyrics.takeIf { library?.index?.extensions?.contains("songLyrics") == true }
     override val hasComments = false
-    override fun shareUrl(s: Song): String? = null
+    // oasis knows the song on YouTube Music; getSong looks a local file up the first time it's asked.
+    override fun shareUrl(s: Song) = runCatching { need().song(SubsonicIds.decode(s.id)).youtubeId }.getOrNull()?.let(YouTubeMusic::link)
 
     // ---- Scrobbling: see docs/subsonic.md ----
 

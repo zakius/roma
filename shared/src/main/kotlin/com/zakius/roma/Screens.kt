@@ -219,7 +219,7 @@ fun SongMenu(s: Song, queueIndex: Int?, onClose: () -> Unit) {
             MenuItem(if (liked) "Unlike" else "Like", Sources.of(s.id).canLike) { Playback.toggleLike(s); onClose() }
             MenuItem("Go to artist", s.firstArtistId != null) { Nav.open(Page("artist", s.firstArtistId!!)); onClose() }
             MenuItem("Go to album", s.album?.id != null) { Nav.open(Page("album", s.album!!.id!!)); onClose() }
-            val link = Sources.of(s.id).shareUrl(s)
+            val link by produceState<String?>(null, s.id) { value = withContext(Dispatchers.IO) { Sources.of(s.id).shareUrl(s) } }
             MenuItem("Share…", link != null) {
                 share(link!!, "${s.title.latin} · ${s.artistLatin}")
                 onClose()

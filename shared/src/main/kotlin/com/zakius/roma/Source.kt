@@ -79,7 +79,7 @@ interface Source {
     /** The source's own lyrics, the reference the other providers' text is matched against; null when it has none. */
     val lyrics: LyricsProvider?
     val hasComments: Boolean
-    /** A link to the song for Share; null when there's none. */
+    /** Blocking. A link to the song for Share; null when there's none. */
     fun shareUrl(s: Song): String?
 
     /** roma scrobbles this source's songs to Last.fm itself ([roma.core.scrobblesToLastFm]). */
@@ -228,11 +228,10 @@ object YouTubeMusic : Source {
     override val lyrics: LyricsProvider = YouTubeLyrics
     override val hasComments = true
 
+    override fun shareUrl(s: Song) = link(s.id)
+
     // The same video ID plays on both: on YouTube a song is its "Topic" upload.
-    override fun shareUrl(s: Song): String {
-        val host = if (Store.str("share.site", "music") == "music") "music.youtube.com" else "www.youtube.com"
-        return "https://$host/watch?v=${s.id}"
-    }
+    fun link(videoId: String) = if (Store.str("share.site", "music") == "music") "https://music.youtube.com/watch?v=$videoId" else "https://www.youtube.com/watch?v=$videoId"
 
     // YouTube Music never hears of plays from roma (not even its history); Last.fm does.
     override val lastFm = true

@@ -36,6 +36,7 @@ class SubsonicTest {
                 "getAlbumList2" -> """"albumList2":{"album":[{"id":"al-1","name":"THE BOOK","artist":"YOASOBI","artistId":"ar-1","songCount":7,"coverArt":"al-1"}]}"""
                 "getArtists" -> """"artists":{"index":[{"name":"Y","artist":[{"id":"ar-1","name":"YOASOBI","albumCount":1}]}]}"""
                 "getLyricsBySongId" -> """"lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"plain"}]},{"synced":true,"offset":-100,"line":[{"start":1000,"value":"沈むように"},{"start":4000,"value":"溶けてゆくように"}]}]}"""
+                "getSong" -> """"song":{"id":"tr-8","title":"Lyra","artist":"Breaking Benjamin","youtubeId":"RSqEs80gkr4"}"""
                 "getAlbum" -> """"album":{"id":"al-9","name":"STRAY SHEEP","artist":"米津玄師","artistId":"ar-9","song":[${songs[0]},${songs[1]}]}"""
                 "getArtist" -> """"artist":{"id":"ar-9","name":"米津玄師","album":[{"id":"al-9","name":"STRAY SHEEP"}]}"""
                 "getSimilarSongs" -> """"similarSongs":{"song":[${songs[4]}]}"""
@@ -150,6 +151,11 @@ class SubsonicTest {
         assertEquals(listOf("al-9"), albums.map { it.id })
         assertEquals(listOf("tr-5"), c.similarSongs("tr-1").map { it.id })
         assertEquals("tr-1", calls.last().second.toMap()["id"])
+    }
+
+    @Test fun songOnYouTube() {
+        assertEquals("RSqEs80gkr4", SubsonicClient(url, "admin", "secret").song("tr-8").youtubeId)
+        assertNull(SubsonicClient.song(kotlinx.serialization.json.Json.parseToJsonElement(songs[0]))!!.youtubeId)
     }
 
     @Test fun linkYouTubeMusicPostsTheCookie() {

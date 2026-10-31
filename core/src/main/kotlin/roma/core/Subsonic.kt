@@ -51,6 +51,8 @@ class SubSong(
     val coverArt: String? = null,
     val starred: Boolean = false,
     val created: String? = null,
+    /** The same song on YouTube Music, when oasis knows it. */
+    val youtubeId: String? = null,
 )
 
 @Serializable
@@ -224,6 +226,7 @@ class SubsonicClient(url: String, val user: String, private val password: String
             return SubSong(
                 o["id"].str() ?: return null, o["title"].str() ?: "", o["artist"].str() ?: "", o["artistId"].str(), o["album"].str(), o["albumId"].str(),
                 o["track"].int(), o["discNumber"].int(), o["year"].int(), o["duration"].int(), o["coverArt"].str(), o["starred"] != null, o["created"].str(),
+                o["youtubeId"].str(),
             )
         }
 
