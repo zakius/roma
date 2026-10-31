@@ -117,6 +117,12 @@ class InnerTube {
         videoId: String,
     ) = innerTubeX.unlikeVideo(client, videoId).requireSuccess("unlikeVideo")
 
+    suspend fun likePlaylist(client: YouTubeClient, playlistId: String, like: Boolean) =
+        innerTubeX.likePlaylist(client, playlistId, like).requireSuccess("likePlaylist")
+
+    suspend fun subscribe(client: YouTubeClient, channelId: String, subscribe: Boolean) =
+        innerTubeX.subscribe(client, channelId, subscribe).requireSuccess("subscribe")
+
     private fun HttpResponse.requireSuccess(operation: String): HttpResponse {
         if (!ok) throw InnerTubeHttpException(operation, status)
         return this

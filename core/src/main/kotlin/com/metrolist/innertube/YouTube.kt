@@ -952,6 +952,32 @@ object YouTube {
             innerTube.next(WEB, videoId, null, null, null, null, continuation).body<kotlinx.serialization.json.JsonObject>()
         }
 
+    /**
+     * Whether the signed-in account has an album or artist page in its library: the album saved, the artist subscribed.
+     * Also what to send to change it: the album's audio playlist id or the artist's channel id. Null when YouTube didn't say.
+     */
+    suspend fun libraryState(browseId: String): Result<Pair<Boolean, String>?> =
+        runCatching {
+            // Library artist pages (MPLA…) have no subscribe button; their channel page does.
+            val json = innerTube.browse(WEB_REMIX, browseId.removePrefix("MPLA"), setLogin = true).body<kotlinx.serialization.json.JsonObject>()
+            fun all(e: kotlinx.serialization.json.JsonElement, key: String): Sequence<kotlinx.serialization.json.JsonObject> = when (e) {
+                is kotlinx.serialization.json.JsonObject -> e.entries.asSequence().flatMap { (k, v) -> (if (k == key && v is kotlinx.serialization.json.JsonObject) sequenceOf(v) else emptySequence()) + all(v, key) }
+                is kotlinx.serialization.json.JsonArray -> e.asSequence().flatMap { all(it, key) }
+                else -> emptySequence()
+            }
+            fun kotlinx.serialization.json.JsonObject.at(vararg path: String) = path.fold<String, kotlinx.serialization.json.JsonElement?>(this) { o, k -> (o as? kotlinx.serialization.json.JsonObject)?.get(k) }
+            fun kotlinx.serialization.json.JsonElement?.text() = (this as? kotlinx.serialization.json.JsonPrimitive)?.content
+            all(json, "subscribeButtonRenderer").firstNotNullOfOrNull { b ->
+                b.at("channelId").text()?.let { (b.at("subscribed").text() == "true") to it }
+            } ?: all(json, "toggleButtonRenderer").firstNotNullOfOrNull { b ->
+                b.at("defaultServiceEndpoint", "likeEndpoint", "target", "playlistId").text()?.let { (b.at("isToggled").text() == "true") to it }
+            }
+        }
+
+    suspend fun saveToLibrary(target: String, save: Boolean) = runCatching {
+        if (target.startsWith("UC")) innerTube.subscribe(WEB_REMIX, target, save) else innerTube.likePlaylist(WEB_REMIX, target, save)
+    }
+
     /** Whether the signed-in user likes the video: true, false, or null when YouTube didn't say. */
     suspend fun likeStatus(videoId: String): Result<Boolean?> =
         runCatching {

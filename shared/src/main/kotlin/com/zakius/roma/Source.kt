@@ -229,6 +229,12 @@ object YouTubeMusic : Source {
     override fun like(id: String, like: Boolean) = kotlinx.coroutines.runBlocking { YouTube.likeVideo(id, like).isSuccess }
     override fun liked(id: String) = kotlinx.coroutines.runBlocking { YouTube.likeStatus(id).getOrNull() }
 
+    // An album is saved through its audio playlist, an artist by subscribing: the page says which and its state.
+    private val libraryTargets = java.util.concurrent.ConcurrentHashMap<String, String>()
+    override fun saved(p: Page) = if (!Store.signedIn || p.kind !in setOf("album", "artist")) null else
+        kotlinx.coroutines.runBlocking { YouTube.libraryState(p.id).getOrNull() }?.let { (saved, target) -> libraryTargets[p.id] = target; saved }
+    override fun save(p: Page, on: Boolean) = libraryTargets[p.id]?.let { kotlinx.coroutines.runBlocking { YouTube.saveToLibrary(it, on).isSuccess } } ?: false
+
     override fun streamUrl(id: String, full: Boolean): String {
         kotlinx.coroutines.runBlocking { Store.ensureVisitorData() } // without it YouTube refuses the direct path's client as a bot
         return Streams.audio(id, full = full).url

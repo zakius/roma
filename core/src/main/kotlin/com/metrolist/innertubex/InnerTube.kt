@@ -6,6 +6,7 @@ import com.metrolist.innertubex.models.YouTubeLocale
 import com.metrolist.innertubex.models.body.BrowseBody
 import com.metrolist.innertubex.models.body.GetSearchSuggestionsBody
 import com.metrolist.innertubex.models.body.LikeBody
+import com.metrolist.innertubex.models.body.SubscribeBody
 import com.metrolist.innertubex.models.body.NextBody
 import com.metrolist.innertubex.models.body.PlayerBody
 import com.metrolist.innertubex.models.body.SearchBody
@@ -858,6 +859,24 @@ class InnerTube(
             )
         }
     }
+
+    /** Saves a playlist or album (its audio playlist) to the library, or removes it. */
+    suspend fun likePlaylist(client: YouTubeClient, playlistId: String, like: Boolean) =
+        executeMutation("likePlaylist", sessionSnapshot()) { requestSession ->
+            post(if (like) "like/like" else "like/removelike") {
+                ytClient(client, requestSession, setLogin = true)
+                setBody(LikeBody(client.toContext(requestSession.locale, requestSession.visitorData, requestSession.dataSyncId), LikeBody.Target.playlist(playlistId)))
+            }
+        }
+
+    /** Subscribes to an artist's channel, or unsubscribes. */
+    suspend fun subscribe(client: YouTubeClient, channelId: String, subscribe: Boolean) =
+        executeMutation("subscribe", sessionSnapshot()) { requestSession ->
+            post(if (subscribe) "subscription/subscribe" else "subscription/unsubscribe") {
+                ytClient(client, requestSession, setLogin = true)
+                setBody(SubscribeBody(client.toContext(requestSession.locale, requestSession.visitorData, requestSession.dataSyncId), listOf(channelId)))
+            }
+        }
 
     suspend fun fetchFreshVisitorData(): String? = fetchFreshVisitorData(sessionSnapshot(), forceRefresh = true)
 
